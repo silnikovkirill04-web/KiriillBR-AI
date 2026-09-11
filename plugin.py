@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 DESCRIPTION = ("AI-заместитель продавца FunPay на OpenAI-compatible API с автообновлениями. "
                "Помнит диалог, видит лот покупателя и игровые параметры лота, соблюдает правила FunPay, "
                "отвечает на языке покупателя, спокойно на агрессию, не выдумывает скидки/бонусы.")
