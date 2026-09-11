@@ -3,7 +3,7 @@
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
   "version": "2.1.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "7434fd8a0624047595d3d488e788a7d9913af10c8b26f54461603a048b2ca0f8",
-  "notes": "Убрана фраза «Продавец уже ответил…», вернул /ai, чистка ответа AI.",
+  "sha256": "b21cb88d872b0a727181c2c1d410d11c91fc336384af0fdcdbfc170ca276634b",
+  "notes": "Исправлена ошибка unmatched ')' на строке 2129. Восстановлена /ai.",
   "mandatory": false
 }
