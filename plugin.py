@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from FunPayAPI.updater.events import NewMessageEvent
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "3.2.3"
-DESCRIPTION = "AI-заместитель продавца FunPay. Статусы заказов + защита от выдумок."
+VERSION = "3.2.4"
+DESCRIPTION = "AI-помощник продавца FunPay. Сохраняет историю и заказы на диск."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -26,6 +26,7 @@ UPDATE_MAX_BYTES = 3 * 1024 * 1024
 UPDATE_USER_AGENT = f"KiriillBRAI/{VERSION} ({UUID})"
 CFG_PATH = "storage/plugins/kiriillbr_ai.json"
 ORDERS_PATH = "storage/plugins/kiriillbr_orders.json"
+HISTORY_PATH = "storage/plugins/kiriillbr_history.json"
 CB = "KBAI"
 ST_MODEL, ST_PROMPT, ST_SELLER = f"{CB}_model", f"{CB}_prompt", f"{CB}_seller"
 ST_URL, ST_KEY, ST_TIMEOUT, ST_BUDGET = f"{CB}_url", f"{CB}_key", f"{CB}_timeout", f"{CB}_budget"
@@ -42,48 +43,44 @@ _VISION_PROMPT = ("Ты — AI-заместитель продавца FunPay. �
     "Если есть текст (чек, скриншот, номер заказа, сумма) — перечисли ключевое дословно.\n"
     "Не выдумывай того, чего не видно.")
 DEFAULT_PROMPT = (
-    "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n"
-    "СТАТУСЫ ЗАКАЗОВ В ЭТОМ ЧАТЕ (ВАЖНО):\n"
-    "- Ниже — список заказов чата с номерами и статусами. Свежие первыми.\n"
-    "- САМЫЙ СВЕЖИЙ ЗАКАЗ В ЧАТЕ: #XXXX (статус) — используй, если номер не назван.\n"
-    "- paid — оплата пришла. На «оплатил?» / «видно?» отвечай «Да, заказ #XXXX оплачен, спасибо!»\n"
-    "- confirmed — заказ закрыт. Отвечай «Заказ #XXXX подтверждён и закрыт.»\n"
-    "- refunded — возврат. Отвечай «Заказ #XXXX возвращён, деньги вернулись покупателю.»\n"
-    "- Если покупатель просит возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос.»\n"
-    "- Статус относится ТОЛЬКО к заказу с указанным номером. Не переноси на другие.\n\n"
-    "НЕ ОФОРМЛЯЙ ЗАКАЗ И НЕ ПРИДУМЫВАЙ СОБЫТИЯ (ВАЖНО):\n"
-    "- Ты НЕ оформляешь заказы. Заказ оформляет покупатель сам через FunPay.\n"
-    "- НИКОГДА не пиши «Заказ оформлен», «Я оформил заказ», «Заказ принят», если покупатель этого не сказал.\n"
-    "- НИКОГДА не пиши «Подтвердите, и я оформлю заказ», «Готов оформить», «Оформить заказ?».\n"
-    "- НИКОГДА не предлагай «перейти к оплате», «оплатить сейчас» — оплата на стороне FunPay.\n"
-    "- Если покупатель написал «на 5», «5 штук», «два комплекта» — это количество товара. "
-    "Отвечай: «Чтобы купить 5 шт., измените количество в лоте на FunPay перед оформлением. "
-    "Итоговая сумма с комиссией будет видна при оформлении заказа.»\n"
-    "- Если покупатель пишет «ой», «блин», «слушай», «подожди» — это продолжение диалога. "
-    "Отвечай по контексту, не придумывай, что он что-то заказал.\n"
-    "- Ты НЕ знаешь, оформлен ли заказ, пока FunPay не прислал событие. Не утверждай.\n\n"
-    "ЧТО ТЫ ДЕЛАЕШЬ (НЕ ОФФТОП): оплата, заказ, статус, сроки, доставка, автовыдача, товар, лот, "
-    "цена, наличие, количество, характеристики, скидка, торг, отзывы, подтверждение, вопросы после покупки.\n\n"
-    "ЧТО ТЫ НЕ ДЕЛАЕШЬ (оффтоп): код, скрипты, SQL, Python, C++, Java; задачи по учёбе; сочинения, рефераты; "
+    "Ты — AI-помощник продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения. "
+    "Общайся как живой человек, не как робот.\n\n"
+    "СТИЛЬ ОБЩЕНИЯ (ОЧЕНЬ ВАЖНО):\n"
+    "- Пиши живо, естественно, как обычный продавец в чате.\n"
+    "- НЕ отвечай формулами типа «Чтобы купить 1 шт., оформите заказ на FunPay». Так пишут боты — так не пиши.\n"
+    "- На «я возьму 1 штуку» отвечай «Да, оформляйте 👍» или «Отлично, жду заказ».\n"
+    "- На «оформлю заказ?» отвечай «Да, конечно!» или «Да, оформляйте — всё готово».\n"
+    "- На «куплю» / «беру» — «Отлично! Оформляйте 😊».\n"
+    "- КОРОТКО: 1-3 предложения, без длинных нравоучений и инструкций.\n\n"
+    "СТАТУСЫ ЗАКАЗОВ В ЭТОМ ЧАТЕ:\n"
+    "- Ниже — список заказов чата с номерами и статусами.\n"
+    "- paid → «Да, заказ #XXX оплачен, спасибо!»\n"
+    "- confirmed → «Заказ #XXX подтверждён и закрыт.»\n"
+    "- refunded → «Заказ #XXX возвращён, деньги вернулись покупателю.»\n"
+    "- Статус относится ТОЛЬКО к указанному номеру. Не переноси на другие заказы.\n"
+    "- Если просят возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос.»\n\n"
+    "ЗАПРЕЩЕНО:\n"
+    "- НЕ оформляй заказы и НЕ пиши «Заказ оформлен», «Я оформлю заказ», «Подтвердите, и я оформлю».\n"
+    "- НЕ пиши «измените количество в лоте» — это инструкция, покупатель сам знает как купить.\n"
+    "- НЕ пиши «Оформление заказа происходит на стороне FunPay» — это звучит как робот.\n"
+    "- НЕ предлагай «перейти к оплате» — оплата на стороне FunPay.\n\n"
+    "ЧТО ТЫ ДЕЛАЕШЬ: отвечаешь по товару, лоту, цене, наличию, срокам, доставке, "
+    "автовыдаче, оплате, статусу заказа, отзывам, скидке (передаёшь продавцу).\n\n"
+    "ЧТО НЕ ДЕЛАЕШЬ (оффтоп): код, скрипты, SQL, Python, C++, Java; задачи по учёбе; сочинения, рефераты; "
     "взлом, брутфорс, эксплойты, читы, дюп, DDoS; боты для игр, автофарм; ключи, токены, пароли, "
     "промокоды; погода, новости, политика, здоровье, знакомства; переводы; медицина, юридика.\n"
     "На оффтоп: «Извините, я помощник продавца FunPay и могу отвечать только по вопросам, "
     "связанным с покупкой и товаром в этом чате.»\n"
     "НИКОГДА не используй эту фразу на вопросы про оплату/заказ/товар.\n\n"
-    "ПРО ОПЛАТУ И ЗАКАЗ (сам, без продавца):\n"
-    "- Оплата, статус заказа, подтверждение, выдача, доставка, отзыв — ты УПОЛНОМОЧЕН отвечать сам.\n"
-    "- НИКОГДА не пиши «продавец свяжется с вами», «передам продавцу» по этим вопросам.\n\n"
-    "ПРО СЛОЖНЫЕ ВОПРОСЫ (направь к продавцу):\n"
-    "- Возраст, «можно ли школьнику/несовершеннолетнему», разрешения, гарантии, особые условия, "
-    "юридические тонкости, споры, жалобы, доп. услуги, возврат после подтверждения — НЕ решай сам.\n"
-    "- Ответ: «Этот вопрос лучше уточнить у продавца, я передам ему — он ответит в этом чате.»\n"
-    "- Никогда не выдумывай ответ и не давай обещаний от лица продавца.\n\n"
-    "ПАМЯТЬ: видишь всю историю чата. Не здоровайся повторно. Отвечай ТОЛЬКО на последнее сообщение. "
-    "Подстраивайся под стиль. Начинай ответ СРАЗУ с сути.\n"
-    "ЗАПРЕЩЕНЫ вступления: «Продавец уже ответил», «Я уже отвечал», «Смотрите выше».\n\n"
-    "КОНТЕКСТ ТОВАРА: ТЕКУЩИЙ ТОВАР — лот покупателя, отвечай сразу по нему.\n\n"
-    "ПРАВИЛА: определяй смысл, а не слова. Не раскрывай баланс, пароли, токены, cookies, контакты, "
-    "реквизиты. Не выдумывай цену, наличие, гарантию, сроки. Соблюдай ПРАВИЛА FUNPAY."
+    "ПРО ОПЛАТУ: оплата, статус, подтверждение, выдача — ты уполномочен сам. "
+    "Не пиши «продавец свяжется», «передам продавцу» по этим вопросам.\n\n"
+    "ПРО СЛОЖНЫЕ ВОПРОСЫ (возраст, гарантии, споры, юридические тонкости): "
+    "«Этот вопрос лучше уточнить у продавца, я передам ему — он ответит в этом чате.»\n\n"
+    "ПАМЯТЬ: видишь всю историю чата. Не здоровайся повторно. Отвечай ТОЛЬКО на последнее сообщение.\n"
+    "ЗАПРЕЩЕНЫ вступления: «Продавец уже ответил», «Я уже отвечал», «Смотрите выше».\n"
+    "Начинай ответ СРАЗУ с сути.\n\n"
+    "ПРАВИЛА: не раскрывай баланс, пароли, токены, cookies, контакты, реквизиты. "
+    "Не выдумывай цену, наличие, гарантию, сроки. Соблюдай ПРАВИЛА FUNPAY."
 )
 FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [1.1] Не передавай и не запрашивай контакты.
@@ -102,7 +99,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 персданных, вредоносного ПО, аккаунтов соцсетей, телефонных номеров, аккаунтов оптом,
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
-DEFAULTS = {"version": 35, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 36, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -196,15 +193,11 @@ def load_config():
             SETTINGS.setdefault("auto_thank_text", DEFAULTS["auto_thank_text"])
             SETTINGS["version"] = 25
             save_config()
-        if cv < 33:
-            SETTINGS.setdefault("orders_refresh_sec", 30)
-            SETTINGS["version"] = 33
-            save_config()
-        if cv < 35:
+        if cv < 36:
             cur = str(SETTINGS.get("system_prompt") or "")
-            if cur.startswith("Ты — AI-заместитель продавца") and "НЕ ОФОРМЛЯЙ ЗАКАЗ" not in cur:
+            if cur.startswith("Ты — AI-заместитель продавца"):
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
-            SETTINGS["version"] = 35
+            SETTINGS["version"] = 36
             save_config()
     except Exception:
         pass
@@ -299,6 +292,66 @@ def load_orders_state():
         logger.info("orders state loaded: %d заказов, %d чатов", loaded, len(CHAT_ORDERS))
     except Exception:
         logger.debug("load_orders_state failed", exc_info=True)
+
+def save_history_state():
+    try:
+        os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
+        with LOCK:
+            data = {"saved_at": time.time(), "chats": {}}
+            for cid, hist in HISTORY.items():
+                if not hist:
+                    continue
+                data["chats"][str(cid)] = list(hist)[-30:]
+        tmp = f"{HISTORY_PATH}.{os.getpid()}.{threading.get_ident()}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, HISTORY_PATH)
+        finally:
+            try:
+                os.path.exists(tmp) and os.remove(tmp)
+            except OSError:
+                pass
+    except Exception:
+        logger.debug("save_history_state failed", exc_info=True)
+
+def load_history_state():
+    global HISTORY
+    if not os.path.exists(HISTORY_PATH):
+        return
+    try:
+        with open(HISTORY_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+    now = time.time()
+    try:
+        saved_at = float(data.get("saved_at", 0) or 0)
+        if saved_at and now - saved_at > 30 * 86400:
+            return
+        chats = data.get("chats") or {}
+        loaded = 0
+        for cid, hist in chats.items():
+            if not isinstance(hist, list):
+                continue
+            clean = []
+            for item in hist[-_HISTORY_HARD_CAP:]:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role") or "")
+                content = str(item.get("content") or "")
+                if role not in ("user", "assistant") or not content:
+                    continue
+                clean.append({"role": role, "content": content[:3000]})
+            if clean:
+                HISTORY[str(cid)] = clean
+                CHAT_HISTORY_BOOTSTRAPPED.add(str(cid))
+                loaded += 1
+        logger.info("history state loaded: %d чатов", loaded)
+    except Exception:
+        logger.debug("load_history_state failed", exc_info=True)
 
 def is_enabled(c):
     p = c.plugins.get(UUID)
@@ -598,6 +651,7 @@ def save_orders_worker(c):
     while not STOP.is_set():
         try:
             save_orders_state()
+            save_history_state()
         except Exception:
             pass
         if STOP.wait(120):
@@ -873,12 +927,16 @@ def _strip_fake_order_action(text):
     result = str(text)
     result = re.sub(
         r"[^\n.!?]*(?:я\s+)?(?:оформл\w*|оформить|оформил)\s+(?:ваш\s+)?заказ[^\n.!?]*[.!?]?",
-        "Оформление заказа происходит на стороне FunPay.",
-        result, flags=re.I)
+        "", result, flags=re.I)
     result = re.sub(
         r"[^\n.!?]*(?:заказ\s+(?:оформлен|принят|создан)|"
         r"подтвердите,?\s+и\s+я\s+оформлю|"
         r"готов\s+(?:оформить|создать))[^\n.!?]*[.!?]?",
+        "", result, flags=re.I)
+    result = re.sub(
+        r"[^\n.!?]*(?:измените\s+количество\s+в\s+лоте|"
+        r"оформление\s+заказа\s+происходит\s+на\s+стороне\s+FunPay|"
+        r"оформите\s+заказ\s+на\s+FunPay[^\n.!?]*)[.!?]?",
         "", result, flags=re.I)
     result = re.sub(r"\s{2,}", " ", result)
     result = re.sub(r"\s+([.,;:!?])", r"\1", result)
@@ -1249,6 +1307,58 @@ def _find_lot_for_order(order):
         if best_score >= 0.72 and (best_score - second_score >= 0.06 or second_score < 0.55):
             return best_lot
     return None
+
+def load_recent_orders(c, limit=10):
+    acc = getattr(c, "account", None)
+    if acc is None:
+        return 0
+    orders = None
+    for name in ("get_sales", "get_orders", "get_my_orders", "get_sells", "get_orders_list"):
+        m = getattr(acc, name, None)
+        if callable(m):
+            try:
+                res = m()
+                if res:
+                    orders = res
+                    logger.info("load_recent_orders: использован метод %s", name)
+                    break
+            except Exception as e:
+                logger.debug("load_recent_orders: %s упал: %s", name, e)
+                continue
+    if not orders:
+        logger.info("load_recent_orders: ни один метод не сработал")
+        return 0
+    lst = getattr(orders, "orders", None)
+    if lst is None:
+        lst = orders if isinstance(orders, (list, tuple)) else []
+    count = 0
+    for o in list(lst)[:limit]:
+        try:
+            oid_raw = getattr(o, "id", "") or ""
+            oid = str(oid_raw).strip().lstrip("#").upper()
+            if not oid:
+                continue
+            chat_id = str(getattr(o, "chat_id", "") or getattr(o, "chat", "") or "")
+            status_raw = str(getattr(o, "status", "") or "").lower()
+            st = ""
+            if any(k in status_raw for k in ("возврат", "refund", "return")):
+                st = "refunded"
+            elif any(k in status_raw for k in ("подтвержд", "confirmed", "завершен", "закрыт")):
+                st = "confirmed"
+            elif any(k in status_raw for k in ("оплачен", "paid", "ожидает")):
+                st = "paid"
+            if not st:
+                continue
+            current = _get_order_status(oid)
+            if current and current != "paid":
+                continue
+            _set_order_status(oid, chat_id, st)
+            count += 1
+        except Exception:
+            continue
+    if count:
+        logger.info("load_recent_orders: загружено %d заказов", count)
+    return count
 
 def _send_auto_thank(c, chat_id, chat_name, order_id):
     if not SETTINGS.get("auto_thank_after_payment", True):
@@ -1655,7 +1765,7 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     if out != _before:
         logger.info("stripped_fake_order_action: %r -> %r", _before[:80], out[:80])
     if not out:
-        out = "Если хотите купить — оформите заказ через FunPay, я подскажу по любому вопросу."
+        out = "Оформляйте, всё готово 👍"
     try:
         _chat_id = str(getattr(m, "chat_id", "") or "")
         if _chat_id and _RE_REFUND_WORD.search(out):
@@ -1671,7 +1781,7 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     except Exception:
         pass
     if not out:
-        out = "Хорошо, отвечу по существу. Уточните, пожалуйста, что именно нужно."
+        out = "Оформляйте, всё готово 👍"
     final = _apply_watermark(out)
     try:
         c.send_message(m.chat_id, final, m.chat_name, watermark=False)
@@ -2020,8 +2130,7 @@ def _chat_status_hint(chat_id):
     lines.append("- Если номер не назван — отвечай про САМЫЙ СВЕЖИЙ заказ.")
     lines.append("- Статус относится ТОЛЬКО к заказу с указанным номером. Не переноси на другие.")
     lines.append("- Если просят возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос.»")
-    lines.append("- НЕ оформляй заказы и не пиши «Заказ оформлен» — это делает покупатель сам.")
-    lines.append("- НЕ предлагай «подтвердите, и я оформлю» — заказ оформляется на FunPay.")
+    lines.append("- НЕ оформляй заказы. Заказ оформляет покупатель сам.")
     return "\n".join(lines) + "\n"
 
 def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text=""):
@@ -2413,6 +2522,11 @@ def init_telegram(cardinal):
             SELLER_NOTIFY_AT.clear()
             DONE.clear()
         try:
+            if os.path.exists(HISTORY_PATH):
+                os.remove(HISTORY_PATH)
+        except Exception:
+            pass
+        try:
             bot.answer_callback_query(call.id, "✅ Память диалогов сброшена")
         except Exception:
             pass
@@ -2760,6 +2874,7 @@ def post_init(c):
     if not os.path.exists(CFG_PATH):
         load_config()
     load_orders_state()
+    load_history_state()
     try:
         acc = c.account
         names = [x for x in dir(acc) if not x.startswith("_")]
@@ -2768,6 +2883,10 @@ def post_init(c):
         logger.info("FunPayAPI account methods (%d): %s", len(interesting), ", ".join(interesting[:60]))
     except Exception:
         pass
+    try:
+        load_recent_orders(c, limit=10)
+    except Exception:
+        logger.debug("load_recent_orders failed", exc_info=True)
     try:
         sync_lots(c, enrich=False)
     except Exception:
@@ -2781,6 +2900,10 @@ def post_start(c):
 def on_delete(c, call=None):
     try:
         save_orders_state()
+    except Exception:
+        pass
+    try:
+        save_history_state()
     except Exception:
         pass
     STOP.set()
