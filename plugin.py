@@ -1,7 +1,18 @@
 """KiriillBR AI — AI-автоответчик FunPay Cardinal (API-only) с автообновлениями.
 Автор: @qneiz"""
 from __future__ import annotations
-import ast, difflib, hashlib, json, logging, os, re, shutil, sys, threading, time
+import ast
+import base64
+import difflib
+import hashlib
+import json
+import logging
+import os
+import re
+import shutil
+import sys
+import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
@@ -21,12 +32,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.0.6"
+VERSION = "2.0.7"
 DESCRIPTION = ("AI-заместитель продавца FunPay на OpenAI-compatible API с автообновлениями. "
                "Помнит диалог, видит лот покупателя и игровые параметры лота, корректно определяет автовыдачу "
-               "(флаг FunPay + текст описания), соблюдает правила FunPay, отвечает на языке покупателя, "
-               "спокойно на агрессию, считает пропорционально цене лота с учётом комиссии FunPay, "
-               "не выдумывает скидки/бонусы, отправляет опрос после подтверждения заказа.")
+               "(флаг FunPay + текст описания), читает фото (для vision-моделей), соблюдает правила FunPay, "
+               "отвечает на языке покупателя, спокойно на агрессию, считает пропорционально цене лота "
+               "с учётом комиссии FunPay, не выдумывает скидки/бонусы, отправляет опрос после подтверждения заказа.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -44,6 +55,9 @@ ST_WM_TEXT, ST_NOTIFY_COOLDOWN = f"{CB}_wmtext", f"{CB}_cooldown"
 ST_UPD_INT = f"{CB}_updint"
 ST_SURVEY_TEXT = f"{CB}_surveytext"
 
+_VISION_MAX_BYTES = 4 * 1024 * 1024
+_VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
+
 DEFAULT_PROMPT = (
     "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n\n"
     "ПАМЯТЬ И СТИЛЬ:\n"
@@ -57,18 +71,19 @@ DEFAULT_PROMPT = (
     "КОНТЕКСТ ТОВАРА:\n"
     "- ТЕКУЩИЙ ТОВАР — лот покупателя. НЕ проси уточнить, отвечай сразу по нему.\n"
     "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n"
-    "- Поле «Автовыдача» в блоке ТЕКУЩИЙ ТОВАР — это данные от FunPay и/или текста лота. "
-    "Если там стоит «да» — значит автовыдача подключена, отвечай «да». Если стоит «нет» — "
-    "значит автовыдача не подключена. НИКОГДА не выдумывай автовыдачу, если её нет, и не отрицай, если она есть.\n\n"
+    "- Поле «Автовыдача» — данные от FunPay и/или текста лота. Если «да» — автовыдача есть, "
+    "отвечай «да». Если «нет» — не подключена. НИКОГДА не выдумывай и не отрицай.\n\n"
+    "ФОТО:\n"
+    "- Если покупатель прислал картинку — посмотри, что на ней, и ответь по сути. "
+    "Не выдумывай содержимое, если не можешь распознать. Опиши коротко то, что видишь, "
+    "и свяжи с вопросом покупателя. Если картинка не относится к делу — не комментируй её.\n\n"
     "ЦЕНООБРАЗОВАНИЕ И КОМИССИЯ FUNPAY:\n"
-    "- Цена, указанная в лоте — это сумма, которую получает ПРОДАВЕЦ (без комиссии). "
-    "Покупатель в интерфейсе FunPay оплачивает БОЛЬШЕ — за счёт комиссии площадки. "
-    "Итоговая сумма зависит от способа оплаты (СБП, карта и т.п.) и отображается при оформлении заказа.\n"
+    "- Цена в лоте — это сумма ПРОДАВЦУ (без комиссии). Покупатель платит БОЛЬШЕ из-за комиссии FunPay.\n"
     "- НИКОГДА не называй цену продавца как итоговую сумму для покупателя.\n"
-    "- Если покупатель спрашивает «сколько я заплачу» — отвечай: «Цена лота — X₽ за Y (это сумма продавцу). "
+    "- Если покупатель спрашивает «сколько я заплачу» — «Цена лота — X₽ за Y (это сумма продавцу). "
     "Итоговая сумма с комиссией FunPay отображается при оформлении заказа».\n"
-    "- Если покупатель просит другой объём — считай пропорционально: Итог_базовый = (Запрошенный / Единица) × Цена_за_единицу. "
-    "Добавляй оговорку: «это базовая цена без комиссии, итог с комиссией — при оформлении».\n"
+    "- Если покупатель просит другой объём — считай пропорционально: Итог = (Запрошенный / Единица) × Цена_за_единицу, "
+    "добавляй оговорку «это базовая цена без комиссии».\n"
     "- НИКОГДА не пиши «скидка не предусмотрена», «торг не предусмотрен».\n\n"
     "ПРАВИЛА:\n"
     "- Определяй смысл, а не слова. Учитывай транслит, сленг, опечатки.\n"
@@ -108,7 +123,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 """
 
 DEFAULTS = {
-    "version": 16, "enabled": True, "setup_done": False,
+    "version": 17, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -227,6 +242,12 @@ def load_config() -> None:
             if "Автовыдача" not in cur and cur.startswith("Ты — AI-заместитель продавца"):
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
             SETTINGS["version"] = 16
+            save_config()
+        if cv < 17:
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if "ФОТО" not in cur and cur.startswith("Ты — AI-заместитель продавца"):
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 17
             save_config()
     except Exception:
         pass
@@ -717,7 +738,6 @@ _FORBIDDEN_AI_PHRASES = [
 
 
 def _clean_ai_answer(text: str) -> str:
-    """Мягкая коррекция: если AI написал «скидка не предусмотрена» — заменяем на нейтральное."""
     result = str(text or "")
     for pat in _FORBIDDEN_AI_PHRASES:
         result = pat.sub("скидка на усмотрение продавца", result)
@@ -1050,7 +1070,6 @@ def _detect_autodelivery_in_text(*texts: Any) -> bool:
 
 
 def _lot_autodelivery(lot: dict[str, Any]) -> tuple[bool, str]:
-    """Возвращает (есть_ли_автовыдача, описание_источника)."""
     funpay_flag = bool(lot.get("auto_delivery_funpay") or lot.get("auto"))
     text_flag = bool(lot.get("auto_delivery_text"))
     if funpay_flag and text_flag:
@@ -1067,6 +1086,50 @@ def is_autodelivery_question(text: str) -> bool:
     if not n:
         return False
     return bool(_RE_AUTODELIVERY_QUESTION.search(n))
+
+
+# ============================== Извлечение фото ==============================
+def _extract_message_image(m: Any) -> str:
+    """Достаёт картинку из сообщения FunPay и возвращает data-URL для OpenAI vision.
+    Если картинки нет или она слишком большая — возвращает пустую строку."""
+    try:
+        url = ""
+        for attr in ("image_link", "image_url", "image"):
+            v = getattr(m, attr, None)
+            if isinstance(v, str) and v.strip():
+                url = v.strip()
+                break
+        if not url:
+            return ""
+        if not url.lower().startswith(("http://", "https://")):
+            return ""
+
+        r = requests.get(url, timeout=(6, 20), stream=True,
+                         headers={"User-Agent": UPDATE_USER_AGENT})
+        r.raise_for_status()
+        ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype and ctype not in _VISION_ALLOWED_MIME:
+            logger.warning("vision_image_skip reason=bad_content_type ctype=%s", ctype)
+            return ""
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in r.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > _VISION_MAX_BYTES:
+                logger.warning("vision_image_skip reason=too_big bytes>=%s", total)
+                return ""
+            chunks.append(chunk)
+        if not chunks:
+            return ""
+        payload = b"".join(chunks)
+        b64 = base64.b64encode(payload).decode("ascii")
+        mime = ctype or "image/jpeg"
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        logger.debug("vision_image_extract_failed", exc_info=True)
+        return ""
 
 
 # ============================== Опрос после заказа ==============================
@@ -1123,7 +1186,6 @@ def _trigger_post_order_survey(c: "Cardinal", m: Any) -> None:
 
 
 def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
-    """Ловит системные сообщения FunPay. После ORDER_CONFIRMED отправляет опрос покупателю."""
     try:
         mt = getattr(item, "type", None)
         if mt is None:
@@ -1358,6 +1420,20 @@ def _extract_extra_params(field_obj: Any) -> dict[str, Any]:
     return result
 
 
+def _empty_lot_dict(lid: str) -> dict[str, Any]:
+    return {
+        "id": str(lid), "title": "", "description": "",
+        "full_description": "", "price": None, "currency": "",
+        "amount": None,
+        "auto_delivery_funpay": False,
+        "auto_delivery_text": False,
+        "auto_delivery_source": "none",
+        "auto_delivery": False,
+        "auto": False,
+        "subcategory": "", "server": "", "extra_fields": {},
+    }
+
+
 def _lot_basic(lot) -> dict[str, Any]:
     sub = getattr(lot, "subcategory", None)
     title = _obj(lot, "description") or _obj(lot, "title")
@@ -1383,7 +1459,6 @@ def _lot_basic(lot) -> dict[str, Any]:
         "auto_delivery_text": text_auto,
         "auto_delivery_source": source,
         "auto_delivery": combined,
-        # Алиас для совместимости с шаблонами и старым кодом:
         "auto": combined,
         "subcategory": _obj(sub, "fullname") or _obj(sub, "name"),
         "server": _obj(lot, "server"),
@@ -1396,30 +1471,37 @@ def _enrich(c: "Cardinal", lid: str) -> None:
         f = c.account.get_lot_fields(int(lid) if lid.isdigit() else lid)
         with LOCK:
             if lid not in LOTS:
-                return
+                LOTS[lid] = _empty_lot_dict(lid)
             t = _obj(f, "title_ru") or _obj(f, "title_en")
             d = _obj(f, "description_ru") or _obj(f, "description_en")
             if t:
                 LOTS[lid]["title"] = t
             LOTS[lid]["full_description"] = d
 
-            # Автовыдача: проверяем оба возможных имени атрибута.
             new_funpay_flag = None
-            for attr in ("auto_delivery", "auto"):
+            found_attr = ""
+            for attr in ("auto_delivery", "auto", "autoDelivery", "auto_flag"):
                 if hasattr(f, attr):
-                    new_funpay_flag = bool(getattr(f, attr))
+                    val = getattr(f, attr)
+                    new_funpay_flag = bool(val)
+                    found_attr = attr
                     break
             if new_funpay_flag is not None:
                 LOTS[lid]["auto_delivery_funpay"] = new_funpay_flag
+                logger.info("enrich lot=%s auto_delivery_funpay=%s (attr=%s)",
+                            lid, new_funpay_flag, found_attr)
+            else:
+                logger.warning("enrich lot=%s не нашёл auto-атрибут. Доступные: %s",
+                               lid, [a for a in dir(f) if "auto" in a.lower()])
 
             LOTS[lid]["auto_delivery_text"] = _detect_autodelivery_in_text(
                 LOTS[lid].get("title"), d, LOTS[lid].get("description")
             )
-            combined = bool(LOTS[lid]["auto_delivery_funpay"]) or bool(LOTS[lid]["auto_delivery_text"])
-            LOTS[lid]["auto_delivery"] = combined
-            LOTS[lid]["auto"] = combined
             funpay_flag = bool(LOTS[lid]["auto_delivery_funpay"])
             text_flag = bool(LOTS[lid]["auto_delivery_text"])
+            combined = funpay_flag or text_flag
+            LOTS[lid]["auto_delivery"] = combined
+            LOTS[lid]["auto"] = combined
             LOTS[lid]["auto_delivery_source"] = (
                 "funpay+text" if funpay_flag and text_flag else
                 "funpay" if funpay_flag else
@@ -1456,13 +1538,13 @@ def sync_lots(c: "Cardinal", enrich: bool = True) -> int:
     with LOCK:
         for lid, old in LOTS.items():
             if lid in cache:
-                if old.get("full_description"):
+                # Переносим только те поля, которых нет в свежих данных.
+                # Auto-флаги НЕ переносим — они должны обновляться при каждой
+                # синхронизации, иначе застрянет старое значение.
+                if old.get("full_description") and not cache[lid].get("full_description"):
                     cache[lid]["full_description"] = old["full_description"]
-                if old.get("extra_fields"):
+                if old.get("extra_fields") and not cache[lid].get("extra_fields"):
                     cache[lid]["extra_fields"] = old["extra_fields"]
-                for k in ("auto_delivery_funpay", "auto_delivery_text", "auto_delivery", "auto", "auto_delivery_source"):
-                    if k in old:
-                        cache[lid][k] = old[k]
         LOTS.clear()
         LOTS.update(cache)
     if enrich:
@@ -1605,13 +1687,9 @@ def _get_lot(c: "Cardinal", m: Any, text: str) -> dict[str, Any] | None:
                 lot = ranked2[0][0]
                 _remember_chat_lot(m.chat_id, lot)
                 return lot
-            synthetic = {
-                "id": lid or "viewing", "title": vtext[:200], "description": vtext[:200],
-                "full_description": "", "price": None, "currency": "", "amount": None,
-                "auto_delivery_funpay": False, "auto_delivery_text": False,
-                "auto_delivery": False, "auto_delivery_source": "none", "auto": False,
-                "subcategory": "", "server": "", "extra_fields": {},
-            }
+            synthetic = _empty_lot_dict(lid or "viewing")
+            synthetic["title"] = vtext[:200]
+            synthetic["description"] = vtext[:200]
             _remember_chat_lot(m.chat_id, synthetic)
             return synthetic
     return None
@@ -1694,22 +1772,20 @@ def _sys_prompt(lot: dict[str, Any] | None, full_chat: bool,
         f"{FUNPAY_RULES_SNAPSHOT}\n\n"
         f"{promises}{extra}\n"
         "АВТОВЫДАЧА:\n"
-        "- Поле «Автовыдача» в блоке ТЕКУЩИЙ ТОВАР — это данные от FunPay и/или описания лота. "
+        "- Поле «Автовыдача» в блоке ТЕКУЩИЙ ТОВАР — данные от FunPay и/или описания лота. "
         "Если там «да» — автовыдача подключена, отвечай «да». Если «нет» — не подключена. "
         "НИКОГДА не выдумывай автовыдачу, если её нет, и не отрицай, если она есть.\n\n"
+        "ФОТО:\n"
+        "- Если покупатель прислал картинку — посмотри, что на ней, и ответь по сути. "
+        "Не выдумывай содержимое, если не можешь распознать. Опиши коротко то, что видишь, "
+        "и свяжи с вопросом покупателя. Если картинка не относится к делу — не комментируй её.\n\n"
         "ЦЕНООБРАЗОВАНИЕ И КОМИССИЯ FUNPAY:\n"
-        "- Цена в лоте — это сумма ПРОДАВЦУ (без комиссии). Покупатель платит БОЛЬШЕ из-за комиссии FunPay "
-        "(зависит от способа оплаты: СБП, карта и т.п.). Точная сумма для покупателя видна на странице оформления заказа.\n"
-        "- НИКОГДА не называй цену продавца как итоговую сумму для покупателя. Не пиши «за 100 MMR вы заплатите 75₽».\n"
-        "- Если покупатель спрашивает «сколько я заплачу», «итоговая цена», «сколько спишется» — "
-        "скажи: «Цена лота — X₽ за Y (это сумма продавцу). Итоговая сумма с комиссией FunPay отображается "
-        "при оформлении заказа при выборе способа оплаты».\n"
-        "- Если покупатель просит другой объём — считай пропорционально: Итог_базовый = (Запрошенный / Единица) × Цена_за_единицу. "
-        "И ОБЯЗАТЕЛЬНО добавляй оговорку: «это базовая цена по лоту без комиссии; итог с комиссией — при оформлении».\n"
-        "- Пример: 75₽ за 100 MMR → 300 MMR = 3 × 75 = 225₽ (без комиссии). В ответе: «По лоту: 3 × 75₽ = 225₽ за 300 MMR "
-        "(без комиссии FunPay). Итоговая сумма с комиссией — на странице оформления заказа».\n"
-        "- Если покупатель предлагает свою цену — сначала назови базовую стоимость по лоту (с оговоркой о комиссии), "
-        "затем скажи что скидка/торг на усмотрение продавца, ты передал запрос продавцу.\n"
+        "- Цена в лоте — сумма ПРОДАВЦУ (без комиссии). Покупатель платит БОЛЬШЕ из-за комиссии FunPay.\n"
+        "- НИКОГДА не называй цену продавца как итоговую для покупателя. Не пиши «за 100 MMR вы заплатите 75₽».\n"
+        "- Если покупатель спрашивает «сколько я заплачу» — «Цена лота — X₽ за Y (сумма продавцу). "
+        "Итоговая с комиссией FunPay — при оформлении заказа».\n"
+        "- Если покупатель просит другой объём — считай пропорционально: (Запрошенный / Единица) × Цена, "
+        "добавляй оговорку «это базовая цена без комиссии».\n"
         "- НИКОГДА не пиши «скидка не предусмотрена», «торг не предусмотрен», «скидок нет».\n\n"
         "Дополнительно:\n"
         "- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар, НЕ данные продавца.\n"
@@ -1734,10 +1810,21 @@ def ask_ai(m: Any, buyer_text: str, lot: dict[str, Any] | None) -> str:
     full_chat = len(history) > 2
     lang_hint = language_hint(buyer_text)
     tone_hint_text = tone_hint(buyer_text)
-    msgs: list[dict[str, str]] = [{"role": "system",
+    msgs: list[dict[str, Any]] = [{"role": "system",
                                    "content": _sys_prompt(lot, full_chat, lang_hint, tone_hint_text)}]
     msgs += history
-    msgs.append({"role": "user", "content": buyer_text})
+
+    image_data_url = _extract_message_image(m)
+    if image_data_url:
+        user_content: Any = [
+            {"type": "text", "text": buyer_text or "Посмотри, пожалуйста, на фото."},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ]
+        logger.info("chat=%s vision_request image_attached=True", getattr(m, "chat_id", "?"))
+    else:
+        user_content = buyer_text
+    msgs.append({"role": "user", "content": user_content})
+
     r = requests.post(
         base + "/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -1764,7 +1851,6 @@ def handle_message(c: "Cardinal", m: Any, text: str) -> None:
         return
     lot = _get_lot(c, m, text)
 
-    # Детерминированный ответ на вопрос про автовыдачу — по данным лота.
     if is_autodelivery_question(text):
         if lot:
             has, source = _lot_autodelivery(lot)
@@ -1778,8 +1864,13 @@ def handle_message(c: "Cardinal", m: Any, text: str) -> None:
             _say(c, m, "Уточните, пожалуйста, какой лот вас интересует — проверю автовыдачу по нему.")
         return
 
+    # Если к сообщению приложено фото, но текста нет — вставляем нейтральный промпт.
+    effective_text = text
+    if not (text or "").strip() and _extract_message_image(m):
+        effective_text = "Посмотри, пожалуйста, на фото и ответь."
+
     try:
-        answer = ask_ai(m, text, lot)
+        answer = ask_ai(m, effective_text, lot)
     except Exception as e:
         logger.warning("AI fail: %s: %s", type(e).__name__, e)
         _say(c, m, str(SETTINGS["unknown_reply"]),
@@ -1849,11 +1940,15 @@ def _drain(chat: str) -> None:
 
 def _enqueue(c: "Cardinal", m: Any, text: str) -> None:
     chat = str(getattr(m, "chat_id", "") or "")
-    if not chat or not text.strip() or STOP.is_set():
+    if not chat or STOP.is_set():
+        return
+    # Разрешаем пустой text, если есть фото.
+    has_image = bool(_extract_message_image(m)) if False else False  # не дёргаем сеть до обработки
+    if not str(text or "").strip() and not getattr(m, "image_link", None):
         return
     start = False
     with LOCK:
-        QUEUES.setdefault(chat, deque()).append((c, m, text.strip()))
+        QUEUES.setdefault(chat, deque()).append((c, m, str(text or "").strip()))
         if chat not in ACTIVE:
             ACTIVE.add(chat)
             start = True
@@ -1905,7 +2000,8 @@ def on_message(c: "Cardinal", e: "NewMessageEvent") -> None:
     if not _mark(getattr(m, "id", f"{m.chat_id}:{time.time_ns()}")):
         return
     text = (getattr(m, "text", None) or "").strip()
-    if text:
+    has_image = bool(getattr(m, "image_link", None))
+    if text or has_image:
         _enqueue(c, m, text)
 
 
@@ -1942,7 +2038,8 @@ def on_last_chat(c: "Cardinal", e: Any) -> None:
                 except Exception:
                     logger.debug("BuyerViewing fallback failed", exc_info=True)
             text = (getattr(m, "text", None) or "").strip()
-            if text and _mark(getattr(m, "id", f"legacy:{ch.id}")):
+            has_image = bool(getattr(m, "image_link", None))
+            if (text or has_image) and _mark(getattr(m, "id", f"legacy:{ch.id}")):
                 _enqueue(c, m, text)
         except Exception:
             logger.exception("legacy handler")
@@ -1979,6 +2076,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             f"📊 Опрос после заказа: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>\n"
             f"🎮 Игровые параметры: <b>подтягиваются</b>\n"
             f"⚡ Автовыдача: <b>определяется по FunPay + тексту лота</b>\n"
+            f"🖼 Фото: <b>отправляются в AI (нужна vision-модель)</b>\n"
             f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
             f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
             f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'не задан'}</b>\n"
@@ -2352,48 +2450,4 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.msg_handler(make_setter("api_key"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
     tg.msg_handler(make_setter("api_model"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
     tg.msg_handler(make_setter("system_prompt"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_PROMPT))
-    tg.msg_handler(make_setter("seller_info"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
-    tg.msg_handler(make_setter("ai_timeout",
-                               validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
-                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TIMEOUT))
-    tg.msg_handler(make_setter("history_char_budget",
-                               validate=lambda v: v.isdigit() and 2000 <= int(v) <= 40000, transform=int),
-                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BUDGET))
-
-    tg.msg_handler(make_setter("seller_notify_cooldown",
-                               validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
-                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
-    tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
-
-    tg.msg_handler(cmd_ai, commands=["ai"])
-    cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
-
-
-def post_init(c: "Cardinal") -> None:
-    if not os.path.exists(CFG_PATH):
-        load_config()
-    try:
-        sync_lots(c, enrich=False)
-    except Exception:
-        logger.debug("post_init", exc_info=True)
-
-
-def post_start(c: "Cardinal") -> None:
-    threading.Thread(target=lot_worker, args=(c,), daemon=True, name="KBAI-lots").start()
-    threading.Thread(target=update_worker, args=(c,), daemon=True, name="KBAI-updates").start()
-
-
-def on_delete(c: "Cardinal", call: CallbackQuery) -> None:
-    STOP.set()
-    try:
-        POOL.shutdown(wait=False, cancel_futures=True)
-    except Exception:
-        pass
-
-
-BIND_TO_PRE_INIT = [init_telegram]
-BIND_TO_POST_INIT = [post_init]
-BIND_TO_POST_START = [post_start]
-BIND_TO_NEW_MESSAGE = [on_message]
-BIND_TO_LAST_CHAT_MESSAGE_CHANGED = [on_last_chat]
-BIND_TO_DELETE = on_delete
+    tg.msg_handler
