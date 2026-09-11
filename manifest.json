@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "2.9.0",
+  "version": "3.1.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "5672517804cef49cb4e70720299a5040c99ada9152eb6d7a3f33d9265ec3f3d5",
-  "notes": "Жёсткий paid-guard: если свежий заказ в чате paid, ответ AI про возврат переписывается. Не путает заказы между собой.",
+  "sha256": "2a5ed7b832750878ffe30eb50f1576e470cb8e9fb64ee224ba4601be0ccf9e3e",
+  "notes": "Синхронизация заказов с FunPay каждые 30 сек. Сложные вопросы — к продавцу. Paid в приоритете при путанице.",
   "mandatory": false
 }
