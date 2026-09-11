@@ -3,7 +3,7 @@
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
   "version": "2.0.5",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "a55b3124dab62cfb391d1b7e0397de1b889f47a703128236e0e023c243a46b20",
+  "sha256": "02d4e171f8d4bc6d8a58024453a1b3204fdb22e6b625f9b5c1f7a7374dce578b",
   "notes": "Комиссия FunPay учтена: AI больше не называет цену продавца как цену покупателя. Пропорциональный расчёт цен. Запрет на «скидка не предусмотрена». Уведомление продавцу при торге.",
   "mandatory": false
 }
