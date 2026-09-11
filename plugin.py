@@ -1,5 +1,4 @@
-"""KiriillBR AI — AI-автоответчик FunPay Cardinal (API-only) с автообновлениями.
-Автор: @qneiz"""
+"""KiriillBR AI — AI-заместитель продавца FunPay Cardinal (API-only) с автообновлениями."""
 from __future__ import annotations
 import ast, base64, difflib, hashlib, json, logging, os, re, shutil, sys, threading, time
 from collections import deque
@@ -21,10 +20,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.4.0"
-DESCRIPTION = ("AI-заместитель продавца FunPay. Отвечает только по товару/заказу, "
-               "отказывает на код/взлом/задачи/ключи. Ловит ORDER_PURCHASED, уведомляет продавца, "
-               "опционально автовыдача payment_msg, опрос после подтверждения заказа.")
+VERSION = "2.5.0"
+DESCRIPTION = ("AI-заместитель продавца FunPay: отвечает по товару/заказу, "
+               "благодарит за оплату, просит отзыв после подтверждения, "
+               "отказывает только на оффтоп (код/взлом/задачи).")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -43,6 +42,7 @@ ST_UPD_INT = f"{CB}_updint"
 ST_TEST_PHOTO = f"{CB}_testphoto"
 ST_SURVEY_TEXT = f"{CB}_surveytext"
 ST_AF_DELAY = f"{CB}_afdelay"
+ST_THANK_TEXT = f"{CB}_thanktext"
 
 _VISION_MAX_BYTES = 4 * 1024 * 1024
 _VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
@@ -55,40 +55,47 @@ _VISION_PROMPT = (
 
 DEFAULT_PROMPT = (
     "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n"
-    "Ты помогаешь ТОЛЬКО по вопросам, связанным с покупкой/заказом/товаром в этом чате FunPay.\n\n"
-    "ЧТО ТЫ НЕ ДЕЛАЕШЬ (ЖЁСТКИЕ ЗАПРЕТЫ):\n"
-    "- Не пишешь код, скрипты, функции, SQL, HTML/CSS/JS, Python, C++, Java, Bash и т.п.\n"
-    "- Не решаешь задачи по программированию, математике, физике, химии, экономике.\n"
+    "Ты помогаешь покупателю по всем вопросам, связанным с покупкой/заказом/товаром в этом чате.\n\n"
+    "ЧТО ТЫ ДЕЛАЕШЬ (ОТВЕЧАЙ, ЭТО НЕ ОФФТОП):\n"
+    "- Оплата заказа, «я оплатил», «видно оплату?», чеки, скриншоты оплаты.\n"
+    "- Статус заказа, сроки выдачи, доставка, автовыдача.\n"
+    "- Вопросы о товаре, лоте, цене, наличии, количестве, характеристиках.\n"
+    "- Скидка, торг, бонус, акция — передай запрос продавцу, отвечай вежливо.\n"
+    "- Отзывы, подтверждение заказа, вопросы после покупки.\n"
+    "- «Поможете?», «как купить?», «как оформить?».\n"
+    "Это всё ТВОИ темы. Отвечай по существу, без отказа.\n\n"
+    "ЧТО ТЫ НЕ ДЕЛАЕШЬ (только это — оффтоп):\n"
+    "- Не пишешь код, скрипты, функции, SQL, HTML/CSS/JS, Python, C++, Java, Bash.\n"
+    "- Не решаешь задачи по учёбе, математике, физике, химии.\n"
     "- Не пишешь сочинения, рефераты, доклады, эссе, курсовые, дипломы.\n"
-    "- Не помогаешь со взломом, брутфорсом, эксплойтами, читами, дюпом, обходом защит, DDoS.\n"
+    "- Не помогаешь со взломом, брутфорсом, эксплойтами, читами, дюпом, DDoS.\n"
     "- Не делаешь ботов для игр, автофарм, автокликеры, накрутку.\n"
-    "- Не рассказываешь как получить/сгенерировать ключи, токены, пароли, лицензии, промокоды.\n"
-    "- Не даёшь никаких кодов, сидов, хешей, base64, номеров карт, реквизитов.\n"
-    "- Не отвечаешь на общие вопросы (погода, новости, политика, здоровье, отношения, знакомства).\n"
-    "- Не переводишь тексты, не делаешь рерайт, не пишешь стихи/песни/сценарии.\n"
+    "- Не выдаёшь/не генерируешь ключи, токены, пароли, лицензии, промокоды.\n"
+    "- Не отвечаешь на погоду, новости, политику, здоровье, отношения, знакомства.\n"
+    "- Не переводишь тексты, не пишешь стихи/песни/анекдоты.\n"
     "- Не даёшь юридических, медицинских, финансовых консультаций.\n"
-    "- Не играешь в игры, не развлекаешь, не поддерживаешь пустой трёп.\n\n"
-    "НА ЛЮБОЙ ТАКОЙ ЗАПРОС ОТВЕЧАЙ ОДНОЙ ФРАЗОЙ:\n"
+    "- Не играешь в игры и не поддерживаешь пустой трёп не по теме.\n\n"
+    "ТОЛЬКО на оффтоп отвечай одной фразой:\n"
     "«Извините, я помощник продавца FunPay и могу отвечать только по вопросам, "
     "связанным с покупкой и товаром в этом чате.»\n"
-    "После этой фразы можешь добавить: «Если у вас есть вопрос по лоту — я с радостью помогу.»\n"
-    "Не объясняй причину отказа, не извиняйся многократно, не пытайся помочь частично.\n\n"
+    "НИКОГДА не используй эту фразу, если вопрос про оплату, заказ, товар, "
+    "сроки, доставку, цену, наличие, скидку или отзыв.\n\n"
     "ПАМЯТЬ И СТИЛЬ:\n"
     "- Ты видишь всю историю чата. Не здоровайся повторно, понимай короткие продолжения.\n"
-    "- Отвечай ТОЛЬКО на последнее сообщение покупателя. Не пересказывай историю.\n"
+    "- Отвечай ТОЛЬКО на последнее сообщение покупателя.\n"
     "- Подстраивайся под стиль: неформально — неформально, формально — сдержанно.\n\n"
     "РОЛИ В ИСТОРИИ:\n"
     "- assistant — твои прошлые ответы И сообщения продавца.\n"
     "- user — только покупатель. Не повторяй один ответ дважды подряд.\n"
-    "- ЗАПРЕЩЕНЫ вступления: «Продавец уже ответил», «Я уже отвечал», «Смотрите выше», "
-    "«Об этом уже писали», «Ранее я говорил». Если покупатель повторяет вопрос — ответь снова по сути.\n"
-    "- Начинай ответ СРАЗУ с сути. Без вступлений и извинений.\n\n"
+    "- ЗАПРЕЩЕНЫ вступления: «Продавец уже ответил», «Я уже отвечал», «Смотрите выше». "
+    "Если покупатель повторяет вопрос — ответь снова по сути.\n"
+    "- Начинай ответ СРАЗУ с сути.\n\n"
     "КОНТЕКСТ ТОВАРА:\n"
     "- ТЕКУЩИЙ ТОВАР — лот покупателя. Не проси уточнить, отвечай сразу по нему.\n"
     "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n\n"
     "ФОТО:\n"
     "- Если покупатель прислал фото — посмотри, что на нём, ответь по сути.\n"
-    "- Если есть текст (чек, скриншот заказа) — читай внимательно.\n\n"
+    "- Скриншот оплаты/чека — это подтверждение оплаты, отвечай «Да, вижу оплату, спасибо!».\n\n"
     "ПРАВИЛА:\n"
     "- Определяй смысл, а не слова. Учитывай транслит, сленг, опечатки.\n"
     "- «Аккаунт Standoff/Steam/Telegram» — обычный товар, не данные продавца.\n"
@@ -125,7 +132,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 """
 
 DEFAULTS = {
-    "version": 24, "enabled": True, "setup_done": False,
+    "version": 25, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -148,6 +155,8 @@ DEFAULTS = {
         "Оцените, пожалуйста, от 1 до 10 и коротко объясните — что понравилось, "
         "что можно улучшить. Мне это правда важно 🙏"
     ),
+    "auto_thank_after_payment": True,
+    "auto_thank_text": "Спасибо за оплату! 🙌 Сейчас подготовлю и выдам ваш товар.",
     "auto_fulfill_paid_orders": False,
     "auto_fulfill_delay_sec": 3,
     "auto_fulfill_notify_seller": True,
@@ -173,6 +182,7 @@ CHAT_LOT: dict[str, str] = {}
 CHAT_LOT_AT: dict[str, float] = {}
 SELLER_NOTIFY_AT: dict[str, float] = {}
 SURVEY_SENT: dict[str, float] = {}
+THANKED_ORDERS: dict[str, float] = {}
 AUTO_FULFILLED_ORDERS: dict[str, float] = {}
 UPDATE_STATE: dict[str, Any] = {
     "checked_at": 0.0, "status": "not_checked", "error": "",
@@ -231,6 +241,14 @@ def load_config() -> None:
             SETTINGS.setdefault("auto_fulfill_delay_sec", 3)
             SETTINGS.setdefault("auto_fulfill_notify_seller", True)
             SETTINGS["version"] = 24
+            save_config()
+        if cv < 25:
+            SETTINGS.setdefault("auto_thank_after_payment", True)
+            SETTINGS.setdefault("auto_thank_text", DEFAULTS["auto_thank_text"])
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if cur.startswith("Ты — AI-заместитель продавца") and "ЧТО ТЫ ДЕЛАЕШЬ (ОТВЕЧАЙ" not in cur:
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 25
             save_config()
     except Exception:
         pass
@@ -706,6 +724,22 @@ _RE_PROD_NUM = re.compile(
     r"(?:подписчик\w*|просмотр\w*|лайк\w*|зв[её]зд\w*|голос\w*|штук\w*|единиц\w*|"
     r"количеств\w*|пакет\w*|цен\w*|стоим\w*|руб\w*|₽|usd|eur|доллар\w*|евро)", re.I)
 
+# Купля-продажа — ТОЧНО НЕ оффтоп.
+_RE_PURCHASE_TOPIC = re.compile(
+    r"(?:"
+    r"\bоплат\w*|\bзаплат\w*|\bоплатил\w*|\bоплач\w*|"
+    r"\bзаказ\w*|\bзаказал\w*|\bоформ\w*|\bкуп\w*|\bпокуп\w*|"
+    r"\bчек\w*|\bквитанц\w*|\bплатёж\w*|\bплатеж\w*|"
+    r"\bвыда\w*|\bдостав\w*|\bавтовыда\w*|\bпришл\w*|\bполуч\w*|"
+    r"\bподтверд\w*|\bотзыв\w*|"
+    r"\bцен\w*|\bналичи\w*|\bсрок\w*|\bлот\w*|\bтовар\w*|"
+    r"\bскидк\w*|\bдешевл\w*|\bторг\w*|"
+    r"\bвидн\w*\s+оплат|\bпришл\w*\s+оплат|"
+    r"\bпо\s+заказ|\bпо\s+покупк|\bпо\s+лот|\bпо\s+товар"
+    r")",
+    re.I,
+)
+
 _RE_OFFTOPIC_CODE = re.compile(
     r"(?:"
     r"напиш\w*\s+(?:мне\s+)?(?:код|скрипт|программ\w*|функци\w*|бот\w*|парсер\w*|сортиров\w*)|"
@@ -785,8 +819,12 @@ _OFFTOPIC_REPLY = (
 
 
 def is_offtopic(text: str) -> bool:
+    """Оффтоп — только код/взлом/задачи/ключи/трёп. Всё про покупку — НЕ оффтоп."""
     s = str(text or "").strip()
     if not s:
+        return False
+    # Если сообщение про покупку/заказ/товар — не оффтоп, даже если внутри есть код
+    if _RE_PURCHASE_TOPIC.search(s):
         return False
     if _RE_OFFTOPIC_CODE.search(s):
         return True
@@ -1137,7 +1175,6 @@ def notify_seller_text(c: "Cardinal", *, header: str, body: str) -> bool:
 
 
 def _detect_message_type_name(item: Any) -> str:
-    """Универсально определяет имя типа сообщения FunPayAPI."""
     if item is None:
         return ""
     mt = getattr(item, "type", None)
@@ -1187,13 +1224,51 @@ def _find_lot_for_order(order: Any) -> dict[str, Any] | None:
     return None
 
 
+def _send_auto_thank(c: "Cardinal", chat_id: Any, chat_name: str, order_id: str) -> None:
+    """Отправляет покупателю благодарность за оплату. Однократно на заказ."""
+    if not SETTINGS.get("auto_thank_after_payment", True):
+        return
+    text = str(SETTINGS.get("auto_thank_text") or "").strip()
+    if not text:
+        return
+    key = str(chat_id or "")
+    if not key:
+        return
+    now = time.time()
+    with LOCK:
+        last = float(THANKED_ORDERS.get(key, 0.0) or 0.0)
+        if last and now - last < 7200:
+            logger.debug("auto_thank_skip: уже благодарили chat=%s", key)
+            return
+        THANKED_ORDERS[key] = now
+        for k, ts in list(THANKED_ORDERS.items()):
+            if now - ts > 7 * 86400:
+                THANKED_ORDERS.pop(k, None)
+
+    # Прогоняем через privacy-guard
+    v = outbound_violation(text)
+    if v and v != "empty":
+        logger.warning("auto_thank blocked by privacy guard: %s", v)
+        text = "Спасибо за оплату! 🙌 Сейчас подготовлю и выдам ваш товар."
+
+    def _job() -> None:
+        try:
+            time.sleep(1.5)
+            c.send_message(chat_id, text, chat_name or "покупатель", watermark=False)
+            add_history(chat_id, "assistant", text)
+            logger.info("auto_thank=sent order=%s chat=%s", order_id, chat_id)
+        except Exception:
+            logger.warning("auto_thank send failed order=%s", order_id, exc_info=True)
+
+    POOL.submit(_job)
+
+
 def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
     if not SETTINGS.get("auto_fulfill_paid_orders", False):
         return
     chat_id = str(getattr(order, "chat_id", "") or "")
     if not chat_id:
-        logger.warning("auto_fulfill_skip: нет chat_id в заказе order=%s",
-                       _order_short_id(order))
+        logger.warning("auto_fulfill_skip: нет chat_id order=%s", _order_short_id(order))
         return
     order_id = _order_short_id(order)
     buyer_name = _order_buyer_name(order)
@@ -1294,7 +1369,7 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
 
 
 def _handle_paid_order_message(c: "Cardinal", item: Any) -> None:
-    """Обработка системного ORDER_PURCHASED — покупатель оплатил заказ."""
+    """Обработка системного ORDER_PURCHASED."""
     logger.info("ORDER_PURCHASED received chat=%s", getattr(item, "chat_id", "?"))
     chat_id = str(getattr(item, "chat_id", "") or "")
     if not chat_id:
@@ -1325,17 +1400,18 @@ def _handle_paid_order_message(c: "Cardinal", item: Any) -> None:
         desc = re.sub(r"^(?:Покупатель|The buyer)[^.]*\.\s*", "", desc, flags=re.I)
         order.description = desc[:400]
 
-    logger.info("ORDER_PURCHASED chat=%s order=%s desc=%r",
-                chat_id, _order_short_id(order), str(getattr(order, "description", ""))[:80])
+    logger.info("ORDER_PURCHASED chat=%s order=%s",
+                chat_id, _order_short_id(order))
 
-    # Всегда уведомляем продавца о новом заказе (даже если auto_fulfill выключен)
-    buyer_name = _order_buyer_name(order)
     order_id = _order_short_id(order)
+    buyer_name = _order_buyer_name(order)
     lot = _find_lot_for_order(order)
     title = ""
     if lot:
         lid = str(lot.get("id") or "")
         title = str(lot.get("title") or lot.get("description") or f"лот #{lid}")[:120]
+
+    # 1. Уведомление продавцу
     if SETTINGS.get("auto_fulfill_notify_seller", True) or SETTINGS.get("seller_notify", True):
         body = (
             f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
@@ -1349,12 +1425,14 @@ def _handle_paid_order_message(c: "Cardinal", item: Any) -> None:
             body += "\n💬 Автовыдача выключена — выдайте вручную."
         notify_seller_text(c, header="🛒 <b>Оплачен заказ</b>", body=body)
 
-    # Автовыдача, если включена
+    # 2. Благодарность покупателю
+    _send_auto_thank(c, chat_id, str(getattr(item, "chat_name", "") or ""), order_id)
+
+    # 3. Автовыдача payment_msg (если включено)
     _fulfill_paid_order(c, order)
 
 
 def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
-    """Ловит системные сообщения FunPay: оплата и подтверждение заказа."""
     try:
         type_name = _detect_message_type_name(item)
         if not type_name:
@@ -1368,7 +1446,7 @@ def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
 
 
 def on_new_paid_order(c: "Cardinal", e: Any) -> None:
-    """Хук Cardinal BIND_TO_NEW_ORDER — основной канал детекта оплаты."""
+    """Хук Cardinal BIND_TO_NEW_ORDER."""
     try:
         order = None
         if hasattr(e, "order"):
@@ -1381,11 +1459,13 @@ def on_new_paid_order(c: "Cardinal", e: Any) -> None:
         if order is None and hasattr(e, "id") and hasattr(e, "buyer_username"):
             order = e
         if order is None:
-            logger.debug("on_new_paid_order: не удалось извлечь заказ из события %r", type(e))
+            logger.debug("on_new_paid_order: не удалось извлечь заказ из %r", type(e))
             return
         logger.info("NEW_ORDER hook order=%s", _order_short_id(order))
-        buyer_name = _order_buyer_name(order)
         order_id = _order_short_id(order)
+        buyer_name = _order_buyer_name(order)
+        chat_id = str(getattr(order, "chat_id", "") or "")
+
         if SETTINGS.get("auto_fulfill_notify_seller", True) or SETTINGS.get("seller_notify", True):
             body = (
                 f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
@@ -1396,6 +1476,10 @@ def on_new_paid_order(c: "Cardinal", e: Any) -> None:
             else:
                 body += "\n💬 Автовыдача выключена — выдайте вручную."
             notify_seller_text(c, header="🛒 <b>Оплачен заказ</b>", body=body)
+
+        if chat_id:
+            _send_auto_thank(c, chat_id, buyer_name, order_id)
+
         _fulfill_paid_order(c, order)
     except Exception:
         logger.debug("on_new_paid_order failed", exc_info=True)
@@ -2011,11 +2095,12 @@ def _sys_prompt(lot: dict[str, Any] | None, full_chat: bool,
         f"ТЕКУЩИЙ ТОВАР:\n{_lot_prompt(lot)}\n\n"
         f"{FUNPAY_RULES_SNAPSHOT}\n\n"
         f"{promises}{extra}\n"
-        "НАПОМИНАНИЕ:\n"
-        "- Ты отвечаешь ТОЛЬКО на вопросы покупателя по товару/заказу/лоту.\n"
-        "- Код, взлом, читы, задачи, ключи, токены, рефераты — ОТКАЗЫВАЙ коротко.\n"
-        "- Формула отказа: «Извините, я помощник продавца FunPay и могу отвечать только по вопросам, "
-        "связанным с покупкой и товаром в этом чате.»\n"
+        "ВАЖНО:\n"
+        "- Оплата, заказ, товар, лот, цена, наличие, сроки, доставка, отзыв — это ТВОИ темы. "
+        "НИКОГДА не отказывай по ним формулой оффтопа.\n"
+        "- Если покупатель пишет «я оплатил», «видно оплату?» — отвечай «Да, вижу оплату, спасибо!» "
+        "и, если известно, скажи про следующий шаг (выдача/автовыдача).\n"
+        "- Оффтоп-формулу используй только для кода/взлома/задач/ключей/трёпа.\n"
         "Дополнительно:\n"
         "- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар, НЕ данные продавца.\n"
         "- Название платформы внутри товара — НЕ контакт.\n"
@@ -2184,8 +2269,6 @@ def on_message(c: "Cardinal", e: "NewMessageEvent") -> None:
         return
     m = e.message
 
-    # ВАЖНО: сначала ловим системные транзакции (ORDER_PURCHASED и т.п.),
-    # иначе фильтр по author_id ниже их отсечёт.
     _observe_transaction_message(c, m)
 
     if getattr(c, "old_mode_enabled", False):
@@ -2233,7 +2316,6 @@ def on_last_chat(c: "Cardinal", e: Any) -> None:
             if not msgs:
                 return
             m = msgs[-1]
-            # В старом режиме системные сообщения тоже прогоняем через observer
             _observe_transaction_message(c, m)
             if getattr(m, "author_id", 0) in (0, getattr(c.account, "id", None)):
                 return
@@ -2275,14 +2357,13 @@ def init_telegram(cardinal: "Cardinal") -> None:
             head += f"     <i>{utils.escape(wm)}</i>\n"
         head += f"🔔 Уведомления: <b>{utils.bool_to_text(SETTINGS.get('seller_notify', True))}</b>\n"
         head += f"🛒 Оплата: <b>ORDER_PURCHASED ловится</b>\n"
+        head += f"🙏 Спасибо за оплату: <b>{utils.bool_to_text(SETTINGS.get('auto_thank_after_payment', True))}</b>\n"
         head += f"⚡ Автовыдача: <b>{utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}</b>"
         head += f" · задержка <b>{SETTINGS.get('auto_fulfill_delay_sec', 3)}с</b>\n"
         head += f"📊 Опрос после заказа: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>\n"
         head += f"📜 История из FunPay: <b>{utils.bool_to_text(SETTINGS.get('bootstrap_history', True))}</b>\n"
-        head += f"📋 Правила FunPay: <b>встроены</b>\n"
         head += f"🚫 Оффтоп-фильтр: <b>включён</b>\n"
-        head += f"🌍 Язык: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b> · "
-        head += f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
+        head += f"🌍 Язык: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b>\n"
         head += f"🖼 Vision: <b>включён</b>\n"
         head += f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
         head += f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
@@ -2306,6 +2387,11 @@ def init_telegram(cardinal: "Cardinal") -> None:
         kb.row(B("📏 Бюджет истории", callback_data=f"{CB}:budget"), B("📋 Логи чатов", callback_data=f"{CB}:chats"))
         kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
                B("📜 Bootstrap ист.", callback_data=f"{CB}:bootstrap"))
+        kb.row(
+            B(f"🙏 Спасибо {utils.bool_to_text(SETTINGS.get('auto_thank_after_payment', True))}",
+              callback_data=f"{CB}:thank"),
+            B("✏️ Текст благодарности", callback_data=f"{CB}:thanktext"),
+        )
         kb.row(
             B(f"🛒 Автовыдача {utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}",
               callback_data=f"{CB}:autofulfill"),
@@ -2339,59 +2425,56 @@ def init_telegram(cardinal: "Cardinal") -> None:
             logger.debug("show failed", exc_info=True)
 
     def toggle(call: CallbackQuery) -> None:
-        SETTINGS["enabled"] = not SETTINGS["enabled"]
-        save_config()
-        show(call)
+        SETTINGS["enabled"] = not SETTINGS["enabled"]; save_config(); show(call)
 
     def toggle_wm(call: CallbackQuery) -> None:
-        SETTINGS["watermark"] = not bool(SETTINGS.get("watermark", True))
-        save_config()
-        show(call)
+        SETTINGS["watermark"] = not bool(SETTINGS.get("watermark", True)); save_config(); show(call)
 
     def toggle_notify(call: CallbackQuery) -> None:
-        SETTINGS["seller_notify"] = not bool(SETTINGS.get("seller_notify", True))
-        save_config()
-        show(call)
+        SETTINGS["seller_notify"] = not bool(SETTINGS.get("seller_notify", True)); save_config(); show(call)
 
     def toggle_bootstrap(call: CallbackQuery) -> None:
-        SETTINGS["bootstrap_history"] = not bool(SETTINGS.get("bootstrap_history", True))
-        save_config()
-        show(call)
+        SETTINGS["bootstrap_history"] = not bool(SETTINGS.get("bootstrap_history", True)); save_config(); show(call)
 
     def toggle_lang(call: CallbackQuery) -> None:
-        SETTINGS["match_language"] = not bool(SETTINGS.get("match_language", True))
-        save_config()
-        show(call)
+        SETTINGS["match_language"] = not bool(SETTINGS.get("match_language", True)); save_config(); show(call)
 
     def toggle_tone(call: CallbackQuery) -> None:
-        SETTINGS["neutral_on_anger"] = not bool(SETTINGS.get("neutral_on_anger", True))
-        save_config()
-        show(call)
+        SETTINGS["neutral_on_anger"] = not bool(SETTINGS.get("neutral_on_anger", True)); save_config(); show(call)
 
     def toggle_nopromise(call: CallbackQuery) -> None:
-        SETTINGS["no_unconfirmed_promises"] = not bool(SETTINGS.get("no_unconfirmed_promises", True))
-        save_config()
-        show(call)
+        SETTINGS["no_unconfirmed_promises"] = not bool(SETTINGS.get("no_unconfirmed_promises", True)); save_config(); show(call)
 
     def toggle_confnotify(call: CallbackQuery) -> None:
-        SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True))
-        save_config()
-        show(call)
+        SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show(call)
+
+    def toggle_thank(call: CallbackQuery) -> None:
+        SETTINGS["auto_thank_after_payment"] = not bool(SETTINGS.get("auto_thank_after_payment", True))
+        save_config(); show(call)
 
     def toggle_autofulfill(call: CallbackQuery) -> None:
         SETTINGS["auto_fulfill_paid_orders"] = not bool(SETTINGS.get("auto_fulfill_paid_orders", False))
-        save_config()
-        show(call)
+        save_config(); show(call)
 
     def toggle_autofulfill_notify(call: CallbackQuery) -> None:
         SETTINGS["auto_fulfill_notify_seller"] = not bool(SETTINGS.get("auto_fulfill_notify_seller", True))
-        save_config()
-        show(call)
+        save_config(); show(call)
 
     def toggle_survey(call: CallbackQuery) -> None:
         SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True))
+        save_config(); show(call)
+
+    def ask_thank_text(call: CallbackQuery) -> None:
+        msg = bot.send_message(call.message.chat.id, "Пришлите текст благодарности после оплаты:",
+                               reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_THANK_TEXT)
+        bot.answer_callback_query(call.id)
+
+    def set_thank_text(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        SETTINGS["auto_thank_text"] = (m.text or "").strip()
         save_config()
-        show(call)
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
 
     def ask_af_delay(call: CallbackQuery) -> None:
         msg = bot.send_message(call.message.chat.id,
@@ -2407,8 +2490,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             if not 0 <= v <= 60:
                 raise ValueError
         except Exception:
-            bot.reply_to(m, "❌ Введите число 0–60.")
-            return
+            bot.reply_to(m, "❌ Введите число 0–60."); return
         SETTINGS["auto_fulfill_delay_sec"] = v
         save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
@@ -2487,8 +2569,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             tg.clear_state(m.chat.id, m.from_user.id, True)
             v = (m.text or "").strip()
             if validate and not validate(v):
-                bot.reply_to(m, "❌ Некорректное значение.")
-                return
+                bot.reply_to(m, "❌ Некорректное значение."); return
             SETTINGS[field] = transform(v) if transform else v
             save_config()
             bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
@@ -2503,8 +2584,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
                 key = os.environ.get(key[4:].strip(), "")
             model = str(SETTINGS.get("api_model") or "")
             if not base or not key or not model:
-                bot.send_message(call.message.chat.id, "❌ Заполните URL, ключ и модель.")
-                return
+                bot.send_message(call.message.chat.id, "❌ Заполните URL, ключ и модель."); return
             r = requests.post(base + "/chat/completions",
                               headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                               json={"model": model,
@@ -2698,27 +2778,17 @@ def init_telegram(cardinal: "Cardinal") -> None:
         try:
             if action == "checks":
                 SETTINGS["update_checks_enabled"] = not bool(SETTINGS.get("update_checks_enabled", True))
-                save_config()
-                bot.answer_callback_query(call.id, "✅")
-                open_updates(call)
-                return
+                save_config(); bot.answer_callback_query(call.id, "✅"); open_updates(call); return
             if action == "auto":
                 SETTINGS["auto_update"] = not bool(SETTINGS.get("auto_update", False))
                 if not SETTINGS["auto_update"]:
                     SETTINGS["auto_restart_after_update"] = False
-                save_config()
-                bot.answer_callback_query(call.id, "✅")
-                open_updates(call)
-                return
+                save_config(); bot.answer_callback_query(call.id, "✅"); open_updates(call); return
             if action == "autorestart":
                 if not SETTINGS.get("auto_update", False):
-                    bot.answer_callback_query(call.id, "Сначала включите автоустановку.", show_alert=True)
-                    return
+                    bot.answer_callback_query(call.id, "Сначала включите автоустановку.", show_alert=True); return
                 SETTINGS["auto_restart_after_update"] = not bool(SETTINGS.get("auto_restart_after_update", False))
-                save_config()
-                bot.answer_callback_query(call.id, "✅")
-                open_updates(call)
-                return
+                save_config(); bot.answer_callback_query(call.id, "✅"); open_updates(call); return
             if action == "check":
                 manifest, err = check_updates_cycle(cardinal, notify=False, force=True)
                 if manifest is None:
@@ -2727,33 +2797,28 @@ def init_telegram(cardinal: "Cardinal") -> None:
                     bot.answer_callback_query(call.id, f"Доступна v{manifest.get('version')}!", show_alert=True)
                 else:
                     bot.answer_callback_query(call.id, f"v{VERSION} — актуальная.", show_alert=True)
-                open_updates(call)
-                return
+                open_updates(call); return
             if action == "install":
                 with LOCK:
                     manifest = UPDATE_STATE.get("manifest")
                 ok, msg = install_update(cardinal, manifest if isinstance(manifest, dict) else None)
                 bot.answer_callback_query(call.id, msg[:180], show_alert=True)
-                open_updates(call)
-                return
+                open_updates(call); return
             if action == "restart":
                 pending = str(SETTINGS.get("pending_restart_version") or "")
                 if not pending:
-                    bot.answer_callback_query(call.id, "Нет обновления к применению.", show_alert=True)
-                    return
+                    bot.answer_callback_query(call.id, "Нет обновления к применению.", show_alert=True); return
                 bot.answer_callback_query(call.id, "Перезапускаю…", show_alert=True)
                 try:
                     bot.send_message(call.message.chat.id, f"♻️ Перезапускаю Cardinal для v{utils.escape(pending)}.")
                 except Exception:
                     pass
-                _restart_cardinal(1.5)
-                return
+                _restart_cardinal(1.5); return
             if action == "interval":
                 msg = bot.send_message(call.message.chat.id, "Интервал проверки 10–1440 минут:",
                                        reply_markup=CLEAR_STATE_BTN())
                 tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_UPD_INT)
-                bot.answer_callback_query(call.id)
-                return
+                bot.answer_callback_query(call.id); return
         except Exception:
             logger.debug("update_cb failed", exc_info=True)
         open_updates(call)
@@ -2768,8 +2833,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             if not 10 <= v <= 1440:
                 raise ValueError
         except Exception:
-            bot.reply_to(m, "❌ Введите число 10–1440.")
-            return
+            bot.reply_to(m, "❌ Введите число 10–1440."); return
         SETTINGS["update_check_interval_minutes"] = v
         save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ К обновлениям", callback_data=f"{CB}:update")))
@@ -2791,9 +2855,11 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.cbq_handler(toggle_tone, lambda c: c.data == f"{CB}:tone")
     tg.cbq_handler(toggle_nopromise, lambda c: c.data == f"{CB}:nopromise")
     tg.cbq_handler(toggle_confnotify, lambda c: c.data == f"{CB}:confnotify")
+    tg.cbq_handler(toggle_thank, lambda c: c.data == f"{CB}:thank")
     tg.cbq_handler(toggle_autofulfill, lambda c: c.data == f"{CB}:autofulfill")
     tg.cbq_handler(toggle_autofulfill_notify, lambda c: c.data == f"{CB}:autofulfillnotify")
     tg.cbq_handler(toggle_survey, lambda c: c.data == f"{CB}:survey")
+    tg.cbq_handler(ask_thank_text, lambda c: c.data == f"{CB}:thanktext")
     tg.cbq_handler(ask_af_delay, lambda c: c.data == f"{CB}:autofulfilldelay")
     tg.cbq_handler(ask_survey_text, lambda c: c.data == f"{CB}:surveytext")
     tg.cbq_handler(notify_test, lambda c: c.data == f"{CB}:notify_test")
@@ -2836,6 +2902,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
                                validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
                    func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
     tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
+    tg.msg_handler(set_thank_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_THANK_TEXT))
     tg.msg_handler(set_af_delay, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_AF_DELAY))
     tg.msg_handler(set_survey_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SURVEY_TEXT))
     tg.msg_handler(handle_test_photo, content_types=["photo"],
