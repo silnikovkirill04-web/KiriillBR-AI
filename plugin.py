@@ -1,7 +1,7 @@
 """KiriillBR AI — AI-автоответчик FunPay Cardinal (API-only) с автообновлениями.
 Автор: @qneiz"""
 from __future__ import annotations
-import ast, difflib, hashlib, json, logging, os, re, shutil, sys, threading, time
+import ast, base64, difflib, hashlib, json, logging, os, re, shutil, sys, threading, time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
@@ -21,10 +21,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 DESCRIPTION = ("AI-заместитель продавца FunPay на OpenAI-compatible API с автообновлениями. "
                "Помнит диалог, видит лот покупателя и игровые параметры лота, соблюдает правила FunPay, "
-               "отвечает на языке покупателя, спокойно на агрессию, не выдумывает скидки/бонусы.")
+               "отвечает на языке покупателя, спокойно на агрессию, не выдумывает скидки/бонусы, "
+               "распознаёт фото через vision-модели.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -40,6 +41,18 @@ ST_MODEL, ST_PROMPT, ST_SELLER = f"{CB}_model", f"{CB}_prompt", f"{CB}_seller"
 ST_URL, ST_KEY, ST_TIMEOUT, ST_BUDGET = f"{CB}_url", f"{CB}_key", f"{CB}_timeout", f"{CB}_budget"
 ST_WM_TEXT, ST_NOTIFY_COOLDOWN = f"{CB}_wmtext", f"{CB}_cooldown"
 ST_UPD_INT = f"{CB}_updint"
+ST_TEST_PHOTO = f"{CB}_testphoto"
+
+_VISION_MAX_BYTES = 4 * 1024 * 1024
+_VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
+_VISION_PROMPT = (
+    "Ты — AI-заместитель продавца FunPay. Покупатель прислал фото.\n"
+    "Опиши, что на нём, кратко (2–5 предложений), по-русски.\n"
+    "Если на фото есть текст (чек, скриншот, номер заказа, сумма, кнопки, диалог) — "
+    "перечисли ключевое дословно.\n"
+    "Не выдумывай того, чего не видно.\n"
+    "Если это скриншот проблемы — назови её суть и предложи действие."
+)
 
 DEFAULT_PROMPT = (
     "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n\n"
@@ -58,6 +71,10 @@ DEFAULT_PROMPT = (
     "КОНТЕКСТ ТОВАРА:\n"
     "- ТЕКУЩИЙ ТОВАР — лот покупателя. НЕ проси уточнить, отвечай сразу по нему.\n"
     "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n\n"
+    "ФОТО:\n"
+    "- Если покупатель прислал фото — посмотри, что на нём, и ответь по сути.\n"
+    "- Если есть текст (чек, скриншот, номер заказа) — читай его внимательно.\n"
+    "- Не выдумывай содержимое, если не можешь распознать.\n\n"
     "ПРАВИЛА:\n"
     "- Определяй смысл, а не слова. Учитывай транслит, сленг, опечатки.\n"
     "- «Аккаунт Standoff/Steam/Telegram» — обычный товар, не данные продавца.\n"
@@ -96,7 +113,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 """
 
 DEFAULTS = {
-    "version": 21, "enabled": True, "setup_done": False,
+    "version": 22, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -184,6 +201,12 @@ def load_config() -> None:
             if cur.startswith("Ты — AI-заместитель продавца") and "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНЫ" not in cur:
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
             SETTINGS["version"] = 21
+            save_config()
+        if cv < 22:
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if cur.startswith("Ты — AI-заместитель продавца") and "Если покупатель прислал фото" not in cur:
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 22
             save_config()
     except Exception:
         pass
@@ -991,6 +1014,46 @@ def notify_seller(c: "Cardinal", m: Any, buyer_text: str, ai_answer: str = "",
     return True
 
 
+def _extract_message_image(m: Any) -> str:
+    """Скачивает картинку из сообщения FunPay и возвращает data:image/...;base64,..."""
+    try:
+        url = ""
+        for attr in ("image_link", "image_url", "image", "photo"):
+            v = getattr(m, attr, None)
+            if isinstance(v, str) and v.strip():
+                url = v.strip()
+                break
+        if not url or not url.lower().startswith(("http://", "https://")):
+            return ""
+        r = requests.get(url, timeout=(6, 20), stream=True,
+                         headers={"User-Agent": UPDATE_USER_AGENT})
+        r.raise_for_status()
+        ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype and ctype not in _VISION_ALLOWED_MIME:
+            logger.warning("vision_image_skip reason=bad_content_type ctype=%s", ctype)
+            return ""
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in r.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > _VISION_MAX_BYTES:
+                logger.warning("vision_image_skip reason=too_big bytes>=%s", total)
+                return ""
+            chunks.append(chunk)
+        if not chunks:
+            return ""
+        payload = b"".join(chunks)
+        b64 = base64.b64encode(payload).decode("ascii")
+        mime = ctype or "image/jpeg"
+        logger.info("vision_image_ok bytes=%d mime=%s", len(payload), mime)
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        logger.debug("vision_image_extract_failed", exc_info=True)
+        return ""
+
+
 def _message_role(c: "Cardinal", item: Any) -> str | None:
     mt = getattr(item, "type", None)
     if mt is not None and mt is not MessageTypes.NON_SYSTEM:
@@ -1531,10 +1594,22 @@ def ask_ai(m: Any, buyer_text: str, lot: dict[str, Any] | None) -> str:
     full_chat = len(history) > 2
     lang_hint = language_hint(buyer_text)
     tone_hint_text = tone_hint(buyer_text)
-    msgs: list[dict[str, str]] = [{"role": "system",
+    msgs: list[dict[str, Any]] = [{"role": "system",
                                    "content": _sys_prompt(lot, full_chat, lang_hint, tone_hint_text)}]
     msgs += history
-    msgs.append({"role": "user", "content": buyer_text})
+    image_data_url = _extract_message_image(m)
+    effective = buyer_text
+    if image_data_url and not (buyer_text or "").strip():
+        effective = "Посмотри, пожалуйста, на фото и ответь."
+    if image_data_url:
+        user_content: Any = [
+            {"type": "text", "text": effective},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ]
+        logger.info("chat=%s vision_request image_attached=True", getattr(m, "chat_id", "?"))
+    else:
+        user_content = effective
+    msgs.append({"role": "user", "content": user_content})
     r = requests.post(
         base + "/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -1619,11 +1694,13 @@ def _drain(chat: str) -> None:
 
 def _enqueue(c: "Cardinal", m: Any, text: str) -> None:
     chat = str(getattr(m, "chat_id", "") or "")
-    if not chat or not text.strip() or STOP.is_set():
+    if not chat or STOP.is_set():
+        return
+    if not str(text or "").strip() and not getattr(m, "image_link", None):
         return
     start = False
     with LOCK:
-        QUEUES.setdefault(chat, deque()).append((c, m, text.strip()))
+        QUEUES.setdefault(chat, deque()).append((c, m, str(text or "").strip()))
         if chat not in ACTIVE:
             ACTIVE.add(chat)
             start = True
@@ -1671,7 +1748,8 @@ def on_message(c: "Cardinal", e: "NewMessageEvent") -> None:
     if not _mark(getattr(m, "id", f"{m.chat_id}:{time.time_ns()}")):
         return
     text = (getattr(m, "text", None) or "").strip()
-    if text:
+    has_image = bool(getattr(m, "image_link", None))
+    if text or has_image:
         _enqueue(c, m, text)
 
 
@@ -1708,7 +1786,8 @@ def on_last_chat(c: "Cardinal", e: Any) -> None:
                 except Exception:
                     logger.debug("BuyerViewing fallback failed", exc_info=True)
             text = (getattr(m, "text", None) or "").strip()
-            if text and _mark(getattr(m, "id", f"legacy:{ch.id}")):
+            has_image = bool(getattr(m, "image_link", None))
+            if (text or has_image) and _mark(getattr(m, "id", f"legacy:{ch.id}")):
                 _enqueue(c, m, text)
         except Exception:
             logger.exception("legacy handler")
@@ -1739,6 +1818,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
         head += f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
         head += f"🚫 Обещания: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b> · "
         head += f"🔔 Неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
+        head += f"🖼 Vision: <b>включён</b>\n"
         head += f"🎮 Игровые параметры: <b>подтягиваются</b>\n"
         head += f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
         head += f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
@@ -1764,6 +1844,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
         kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
                B("📜 Bootstrap ист.", callback_data=f"{CB}:bootstrap"))
         kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"), B("🧪 Тест API", callback_data=f"{CB}:test"))
+        kb.add(B("🖼 Тест фото (отправить фото в AI)", callback_data=f"{CB}:testphoto"))
         kb.row(B(f"🌍 Язык {utils.bool_to_text(SETTINGS.get('match_language', True))}", callback_data=f"{CB}:lang"),
                B(f"🧊 Тон {utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}", callback_data=f"{CB}:tone"))
         kb.row(B(f"🚫 Без обещаний {utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}",
@@ -1911,6 +1992,89 @@ def init_telegram(cardinal: "Cardinal") -> None:
         except Exception as e:
             bot.send_message(call.message.chat.id,
                              f"❌ Ошибка:\n<code>{utils.escape(f'{type(e).__name__}: {e}'[:500])}</code>")
+
+    def ask_test_photo(call: CallbackQuery) -> None:
+        msg = bot.send_message(
+            call.message.chat.id,
+            "📷 Отправьте фото — я передам его в AI (vision) и покажу ответ.\n\n"
+            "Нужна vision-модель, например:\n"
+            "<code>openai/gpt-4o-mini</code>\n"
+            "<code>anthropic/claude-3.5-sonnet</code>\n"
+            "<code>google/gemini-flash-1.5</code>",
+            reply_markup=CLEAR_STATE_BTN(),
+        )
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_TEST_PHOTO)
+        bot.answer_callback_query(call.id)
+
+    def handle_test_photo(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        if not getattr(m, "photo", None):
+            bot.reply_to(m, "❌ Это не фото. Отправьте изображение.")
+            return
+        file_id = m.photo[-1].file_id
+        try:
+            file_info = bot.get_file(file_id)
+            file_bytes = bot.download_file(file_info.file_path)
+        except Exception as e:
+            logger.warning("test photo download failed: %s", e)
+            bot.reply_to(m, f"❌ Не удалось скачать фото: {utils.escape(str(e)[:200])}")
+            return
+        if not file_bytes:
+            bot.reply_to(m, "❌ Пустой файл.")
+            return
+        if len(file_bytes) > _VISION_MAX_BYTES:
+            bot.reply_to(m, f"❌ Фото больше {_VISION_MAX_BYTES // (1024 * 1024)} МБ.")
+            return
+        base = str(SETTINGS.get("api_url") or "").rstrip("/")
+        key = str(SETTINGS.get("api_key") or "").strip()
+        if key.lower().startswith("env:"):
+            key = os.environ.get(key[4:].strip(), "")
+        model = str(SETTINGS.get("api_model") or "").strip()
+        if not base or not key or not model:
+            bot.reply_to(m, "❌ Сначала заполните API URL, ключ и модель в настройках.")
+            return
+        b64 = base64.b64encode(file_bytes).decode("ascii")
+        data_url = f"data:image/jpeg;base64,{b64}"
+        try:
+            bot.send_chat_action(m.chat.id, "typing")
+        except Exception:
+            pass
+        try:
+            r = requests.post(
+                base + "/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "user", "content": [
+                            {"type": "text", "text": _VISION_PROMPT},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ]},
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 800,
+                },
+                timeout=(10, max(30, int(SETTINGS.get("ai_timeout", 120) or 120))),
+            )
+            r.raise_for_status()
+            data = r.json()
+            ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            if not ans:
+                ans = "(модель вернула пустой ответ)"
+            if len(ans) > 3500:
+                ans = ans[:3500] + "…"
+            bot.reply_to(m, f"🖼 <b>Ответ AI по фото:</b>\n\n{utils.escape(ans)}",
+                         reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+        except requests.HTTPError as e:
+            code = e.response.status_code if e.response is not None else "?"
+            body = ""
+            try:
+                body = e.response.text[:300] if e.response is not None else ""
+            except Exception:
+                pass
+            bot.reply_to(m, f"❌ API {code}:\n<code>{utils.escape(body)}</code>")
+        except Exception as e:
+            bot.reply_to(m, f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}")
 
     def notify_test(call: CallbackQuery) -> None:
         bot.answer_callback_query(call.id, "Отправляю…")
@@ -2105,6 +2269,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.cbq_handler(clear_history, lambda c: c.data == f"{CB}:clear_history")
     tg.cbq_handler(list_chats, lambda c: c.data == f"{CB}:chats")
     tg.cbq_handler(show_rules, lambda c: c.data == f"{CB}:rules")
+    tg.cbq_handler(ask_test_photo, lambda c: c.data == f"{CB}:testphoto")
     tg.cbq_handler(open_updates, lambda c: c.data in (f"{CB}:update", f"{CB}:updcfg"))
     tg.cbq_handler(update_cb, lambda c: c.data.startswith(f"{CB}:upd:"))
     tg.cbq_handler(ask(ST_URL, "Введите base URL API (например <code>https://openrouter.ai/api/v1</code>):"),
@@ -2140,6 +2305,8 @@ def init_telegram(cardinal: "Cardinal") -> None:
                                validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
                    func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
     tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
+    tg.msg_handler(handle_test_photo, content_types=["photo"],
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TEST_PHOTO))
 
     tg.msg_handler(cmd_ai, commands=["ai"])
     cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
