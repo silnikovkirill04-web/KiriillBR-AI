@@ -21,11 +21,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.0.5"
+VERSION = "2.0.6"
 DESCRIPTION = ("AI-заместитель продавца FunPay на OpenAI-compatible API с автообновлениями. "
-               "Помнит диалог, видит лот покупателя и игровые параметры лота, соблюдает правила FunPay, "
-               "отвечает на языке покупателя, спокойно на агрессию, считает пропорционально цене лота "
-               "с учётом комиссии FunPay, не выдумывает скидки/бонусы, отправляет опрос после подтверждения заказа.")
+               "Помнит диалог, видит лот покупателя и игровые параметры лота, корректно определяет автовыдачу "
+               "(флаг FunPay + текст описания), соблюдает правила FunPay, отвечает на языке покупателя, "
+               "спокойно на агрессию, считает пропорционально цене лота с учётом комиссии FunPay, "
+               "не выдумывает скидки/бонусы, отправляет опрос после подтверждения заказа.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -55,33 +56,24 @@ DEFAULT_PROMPT = (
     "- user — только покупатель. Отвечай нормально, без ссылок на «уже отвечал».\n\n"
     "КОНТЕКСТ ТОВАРА:\n"
     "- ТЕКУЩИЙ ТОВАР — лот покупателя. НЕ проси уточнить, отвечай сразу по нему.\n"
-    "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n\n"
+    "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n"
+    "- Поле «Автовыдача» в блоке ТЕКУЩИЙ ТОВАР — это данные от FunPay и/или текста лота. "
+    "Если там стоит «да» — значит автовыдача подключена, отвечай «да». Если стоит «нет» — "
+    "значит автовыдача не подключена. НИКОГДА не выдумывай автовыдачу, если её нет, и не отрицай, если она есть.\n\n"
     "ЦЕНООБРАЗОВАНИЕ И КОМИССИЯ FUNPAY:\n"
     "- Цена, указанная в лоте — это сумма, которую получает ПРОДАВЕЦ (без комиссии). "
     "Покупатель в интерфейсе FunPay оплачивает БОЛЬШЕ — за счёт комиссии площадки. "
-    "Итоговая сумма для покупателя зависит от способа оплаты (СБП, карта и т.п.) и отображается "
-    "на странице оформления заказа.\n"
-    "- НИКОГДА не называй цену продавца как итоговую сумму для покупателя. "
-    "Никогда не пиши «за 100 MMR вы заплатите 75₽» — это неверно, 75₽ получит продавец.\n"
-    "- Если покупатель спрашивает «сколько я заплачу?», «какая итоговая цена?», "
-    "«сколько спишется?» — отвечай: «Цена лота — X₽ за Y (это сумма продавцу, без комиссии). "
-    "Итоговая сумма с комиссией FunPay отображается на странице оформления заказа при выборе способа оплаты».\n"
-    "- Если покупатель просит объём больше базового (например «300 MMR», «5000 голосов»), "
-    "посчитай базовую стоимость пропорционально: Итог_базовый = (Запрошенный_объём / Единица_лота) × Цена_за_единицу. "
-    "ОБЯЗАТЕЛЬНО добавь: «это базовая цена по лоту без комиссии, итог с комиссией FunPay — при оформлении заказа».\n"
-    "- Пример: лот «75₽ за 100 MMR», покупатель просит 300 MMR → 300 / 100 = 3 → 3 × 75 = 225₽ — "
-    "это сумма продавцу. В ответе пиши так: «По лоту: 3 × 75₽ = 225₽ за 300 MMR (без комиссии FunPay). "
-    "Итоговая сумма с комиссией — на странице оформления заказа».\n"
-    "- Если покупатель предлагает СВОЮ цену (например «сможешь за 200₽ 300 MMR?») — сначала назови базовую "
-    "стоимость по лоту (с оговоркой про комиссию), затем скажи, что скидка/торг на усмотрение продавца "
-    "и ты передал запрос продавцу.\n"
-    "- НИКОГДА не пиши «скидка не предусмотрена», «торг не предусмотрен», «скидок нет» — этих данных в лоте нет. "
-    "Цена в лоте — базовая; про скидки говорит только продавец.\n\n"
+    "Итоговая сумма зависит от способа оплаты (СБП, карта и т.п.) и отображается при оформлении заказа.\n"
+    "- НИКОГДА не называй цену продавца как итоговую сумму для покупателя.\n"
+    "- Если покупатель спрашивает «сколько я заплачу» — отвечай: «Цена лота — X₽ за Y (это сумма продавцу). "
+    "Итоговая сумма с комиссией FunPay отображается при оформлении заказа».\n"
+    "- Если покупатель просит другой объём — считай пропорционально: Итог_базовый = (Запрошенный / Единица) × Цена_за_единицу. "
+    "Добавляй оговорку: «это базовая цена без комиссии, итог с комиссией — при оформлении».\n"
+    "- НИКОГДА не пиши «скидка не предусмотрена», «торг не предусмотрен».\n\n"
     "ПРАВИЛА:\n"
     "- Определяй смысл, а не слова. Учитывай транслит, сленг, опечатки.\n"
     "- «Аккаунт Standoff/Steam/Telegram» — обычный товар, не данные продавца.\n"
-    "- Скидка/торг — на усмотрение продавца, ты передал запрос. Никогда не пиши «скидка не предусмотрена», "
-    "«торг не предусмотрен».\n"
+    "- Скидка/торг — на усмотрение продавца, ты передал запрос. Никогда не пиши «скидка не предусмотрена».\n"
     "- «Поможете?» — согласись и упомяни, что передал продавцу.\n"
     "- НИКОГДА не отвечай «не понял вопрос», «нет данных», если можно дать полезный ответ.\n"
     "- Не раскрывай баланс, пароли, токены, cookies, личные контакты, платёжные реквизиты.\n"
@@ -116,7 +108,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 """
 
 DEFAULTS = {
-    "version": 15, "enabled": True, "setup_done": False,
+    "version": 16, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -229,6 +221,12 @@ def load_config() -> None:
             if "КОМИССИЯ FUNPAY" not in cur and cur.startswith("Ты — AI-заместитель продавца"):
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
             SETTINGS["version"] = 15
+            save_config()
+        if cv < 16:
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if "Автовыдача" not in cur and cur.startswith("Ты — AI-заместитель продавца"):
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 16
             save_config()
     except Exception:
         pass
@@ -1018,6 +1016,59 @@ def notify_seller(c: "Cardinal", m: Any, buyer_text: str, ai_answer: str = "",
     return True
 
 
+# ============================== Автовыдача: детекторы ==============================
+_AUTO_DELIVERY_TEXT_RE = re.compile(
+    r"(?iu)(?:авто|auto)\s*[-–—_/\\|.:]*\s*выдач\w*|"
+    r"автовыдач\w*|"
+    r"автоматическ\w*\s*[-–—_/\\|.:]*\s*выдач\w*|"
+    r"выда\w*\s+(?:происход\w*\s+)?автоматическ\w*|"
+    r"моментальн\w*\s+выдач\w*|"
+    r"(?:товар|ключ|код|данн\w*)\s+(?:прид[её]т|пришл[её]т|выда[её]тся)\s+(?:автоматическ\w*|сразу|мгновенно)"
+)
+_AUTO_DELIVERY_NEG_RE = re.compile(
+    r"(?iu)(?:без\s+автовыдач|нет\s+автовыдач|не\s+автовыдач|"
+    r"автовыдач\w*\s+нет|автовыдач\w*\s+отсутств|"
+    r"без\s+авто\s*[-–—_/\\|.:]*\s*выдач\w*|"
+    r"выдача\s+(?:в\s+)?ручн\w*|вручную)"
+)
+
+_RE_AUTODELIVERY_QUESTION = re.compile(
+    r"(?iu)(?:авто\s*[-–—]*\s*выдач\w*|автовыдач\w*|автоматическ\w*\s+выдач\w*|"
+    r"выдач\w*\s+автоматическ\w*|авто\s+достав\w*|"
+    r"сразу\s+(?:прид[её]т|выдад\w*|получу)|"
+    r"моментальн\w*\s+выдач\w*)"
+)
+
+
+def _detect_autodelivery_in_text(*texts: Any) -> bool:
+    blob = "\n".join(str(t or "") for t in texts if t)
+    if not blob:
+        return False
+    if _AUTO_DELIVERY_NEG_RE.search(blob):
+        return False
+    return bool(_AUTO_DELIVERY_TEXT_RE.search(blob))
+
+
+def _lot_autodelivery(lot: dict[str, Any]) -> tuple[bool, str]:
+    """Возвращает (есть_ли_автовыдача, описание_источника)."""
+    funpay_flag = bool(lot.get("auto_delivery_funpay") or lot.get("auto"))
+    text_flag = bool(lot.get("auto_delivery_text"))
+    if funpay_flag and text_flag:
+        return True, "подтверждена настройкой FunPay и указана в описании лота"
+    if funpay_flag:
+        return True, "включена на стороне FunPay"
+    if text_flag:
+        return True, "указана в описании лота"
+    return False, ""
+
+
+def is_autodelivery_question(text: str) -> bool:
+    n = norm(text)
+    if not n:
+        return False
+    return bool(_RE_AUTODELIVERY_QUESTION.search(n))
+
+
 # ============================== Опрос после заказа ==============================
 def send_post_order_survey(c: "Cardinal", chat_id: Any, chat_name: str) -> bool:
     if not SETTINGS.get("post_order_survey", True):
@@ -1309,15 +1360,31 @@ def _extract_extra_params(field_obj: Any) -> dict[str, Any]:
 
 def _lot_basic(lot) -> dict[str, Any]:
     sub = getattr(lot, "subcategory", None)
+    title = _obj(lot, "description") or _obj(lot, "title")
+    desc = _obj(lot, "description")
+    funpay_auto = bool(getattr(lot, "auto", False))
+    text_auto = _detect_autodelivery_in_text(title, desc)
+    combined = funpay_auto or text_auto
+    source = (
+        "funpay+text" if funpay_auto and text_auto else
+        "funpay" if funpay_auto else
+        "text" if text_auto else
+        "none"
+    )
     return {
         "id": str(getattr(lot, "id", "")),
-        "title": _obj(lot, "description") or _obj(lot, "title"),
-        "description": _obj(lot, "description"),
+        "title": title,
+        "description": desc,
         "full_description": "",
         "price": getattr(lot, "price", None),
         "currency": str(getattr(lot, "currency", "") or ""),
         "amount": getattr(lot, "amount", None),
-        "auto": bool(getattr(lot, "auto", False)),
+        "auto_delivery_funpay": funpay_auto,
+        "auto_delivery_text": text_auto,
+        "auto_delivery_source": source,
+        "auto_delivery": combined,
+        # Алиас для совместимости с шаблонами и старым кодом:
+        "auto": combined,
         "subcategory": _obj(sub, "fullname") or _obj(sub, "name"),
         "server": _obj(lot, "server"),
         "extra_fields": {},
@@ -1335,12 +1402,36 @@ def _enrich(c: "Cardinal", lid: str) -> None:
             if t:
                 LOTS[lid]["title"] = t
             LOTS[lid]["full_description"] = d
-            if hasattr(f, "auto"):
-                LOTS[lid]["auto"] = bool(getattr(f, "auto"))
+
+            # Автовыдача: проверяем оба возможных имени атрибута.
+            new_funpay_flag = None
+            for attr in ("auto_delivery", "auto"):
+                if hasattr(f, attr):
+                    new_funpay_flag = bool(getattr(f, attr))
+                    break
+            if new_funpay_flag is not None:
+                LOTS[lid]["auto_delivery_funpay"] = new_funpay_flag
+
+            LOTS[lid]["auto_delivery_text"] = _detect_autodelivery_in_text(
+                LOTS[lid].get("title"), d, LOTS[lid].get("description")
+            )
+            combined = bool(LOTS[lid]["auto_delivery_funpay"]) or bool(LOTS[lid]["auto_delivery_text"])
+            LOTS[lid]["auto_delivery"] = combined
+            LOTS[lid]["auto"] = combined
+            funpay_flag = bool(LOTS[lid]["auto_delivery_funpay"])
+            text_flag = bool(LOTS[lid]["auto_delivery_text"])
+            LOTS[lid]["auto_delivery_source"] = (
+                "funpay+text" if funpay_flag and text_flag else
+                "funpay" if funpay_flag else
+                "text" if text_flag else
+                "none"
+            )
+
             if getattr(f, "price", None) is not None:
                 LOTS[lid]["price"] = f.price
             if getattr(f, "amount", None) is not None:
                 LOTS[lid]["amount"] = f.amount
+
             extra = _extract_extra_params(f)
             if extra:
                 for bad in ("payment_msg_ru", "payment_msg_en", "payment_message"):
@@ -1369,6 +1460,9 @@ def sync_lots(c: "Cardinal", enrich: bool = True) -> int:
                     cache[lid]["full_description"] = old["full_description"]
                 if old.get("extra_fields"):
                     cache[lid]["extra_fields"] = old["extra_fields"]
+                for k in ("auto_delivery_funpay", "auto_delivery_text", "auto_delivery", "auto", "auto_delivery_source"):
+                    if k in old:
+                        cache[lid][k] = old[k]
         LOTS.clear()
         LOTS.update(cache)
     if enrich:
@@ -1514,7 +1608,9 @@ def _get_lot(c: "Cardinal", m: Any, text: str) -> dict[str, Any] | None:
             synthetic = {
                 "id": lid or "viewing", "title": vtext[:200], "description": vtext[:200],
                 "full_description": "", "price": None, "currency": "", "amount": None,
-                "auto": False, "subcategory": "", "server": "", "extra_fields": {},
+                "auto_delivery_funpay": False, "auto_delivery_text": False,
+                "auto_delivery": False, "auto_delivery_source": "none", "auto": False,
+                "subcategory": "", "server": "", "extra_fields": {},
             }
             _remember_chat_lot(m.chat_id, synthetic)
             return synthetic
@@ -1525,11 +1621,19 @@ def _get_lot(c: "Cardinal", m: Any, text: str) -> dict[str, Any] | None:
 def _lot_prompt(lot: dict[str, Any] | None) -> str:
     if not lot:
         return "Товар не определён. Не выдумывай; если нужен конкретный лот — уточни."
+    auto_flag = bool(lot.get("auto_delivery") or lot.get("auto"))
+    auto_source = str(lot.get("auto_delivery_source") or "")
+    auto_source_ru = {
+        "funpay+text": "FunPay + описание лота",
+        "funpay": "включена в настройках FunPay",
+        "text": "указана в описании лота",
+        "none": "не обнаружена",
+    }.get(auto_source, "не обнаружена")
     base = (
         f"Название: {lot.get('title') or '—'}\n"
         f"Цена: {lot.get('price')} {lot.get('currency') or ''} (сумма продавцу, без комиссии FunPay)\n"
         f"Количество: {lot.get('amount') if lot.get('amount') is not None else '—'}\n"
-        f"Автовыдача: {'да' if lot.get('auto') else 'нет'}\n"
+        f"Автовыдача: {'да' if auto_flag else 'нет'} ({auto_source_ru})\n"
         f"Категория: {lot.get('subcategory') or '—'}\n"
         f"Описание: {(lot.get('full_description') or lot.get('description') or '')[:1200]}"
     )
@@ -1589,6 +1693,10 @@ def _sys_prompt(lot: dict[str, Any] | None, full_chat: bool,
         f"ТЕКУЩИЙ ТОВАР:\n{_lot_prompt(lot)}\n\n"
         f"{FUNPAY_RULES_SNAPSHOT}\n\n"
         f"{promises}{extra}\n"
+        "АВТОВЫДАЧА:\n"
+        "- Поле «Автовыдача» в блоке ТЕКУЩИЙ ТОВАР — это данные от FunPay и/или описания лота. "
+        "Если там «да» — автовыдача подключена, отвечай «да». Если «нет» — не подключена. "
+        "НИКОГДА не выдумывай автовыдачу, если её нет, и не отрицай, если она есть.\n\n"
         "ЦЕНООБРАЗОВАНИЕ И КОМИССИЯ FUNPAY:\n"
         "- Цена в лоте — это сумма ПРОДАВЦУ (без комиссии). Покупатель платит БОЛЬШЕ из-за комиссии FunPay "
         "(зависит от способа оплаты: СБП, карта и т.п.). Точная сумма для покупателя видна на странице оформления заказа.\n"
@@ -1655,6 +1763,21 @@ def handle_message(c: "Cardinal", m: Any, text: str) -> None:
     if handle_deterministic(c, m, text):
         return
     lot = _get_lot(c, m, text)
+
+    # Детерминированный ответ на вопрос про автовыдачу — по данным лота.
+    if is_autodelivery_question(text):
+        if lot:
+            has, source = _lot_autodelivery(lot)
+            if has:
+                _say(c, m, f"Да, на этом лоте автовыдача подключена — {source}. "
+                           "После оплаты товар придёт автоматически ⚡")
+            else:
+                _say(c, m, "Нет, на этом лоте автовыдача не подключена. "
+                           "После оплаты продавец выдаст товар вручную.")
+        else:
+            _say(c, m, "Уточните, пожалуйста, какой лот вас интересует — проверю автовыдачу по нему.")
+        return
+
     try:
         answer = ask_ai(m, text, lot)
     except Exception as e:
@@ -1855,6 +1978,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             f"🔔 Неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
             f"📊 Опрос после заказа: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>\n"
             f"🎮 Игровые параметры: <b>подтягиваются</b>\n"
+            f"⚡ Автовыдача: <b>определяется по FunPay + тексту лота</b>\n"
             f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
             f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
             f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'не задан'}</b>\n"
