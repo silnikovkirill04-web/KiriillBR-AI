@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "dee62300913f4726150d78965db63422b49c1d280f7b332fb991581b3ebddb80",
-  "notes": "Возвращена обработка оплат: ORDER_PURCHASED ловится, уведомление продавцу всегда, автовыдача payment_msg, опрос после заказа.",
+  "sha256": "92bc1eeb7a0d1a4487feb85a97cd87db7f3b9acfdf356b2beb4a4eb167c7fec5",
+  "notes": "AI больше не отказывает по оплате/заказу. Спасибо за оплату. Опрос после подтверждения.",
   "mandatory": false
 }
