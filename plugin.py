@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from FunPayAPI.updater.events import NewMessageEvent
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "3.2.2"
-DESCRIPTION = "AI-заместитель продавца FunPay. Статусы заказов сохраняются на диск."
+VERSION = "3.2.3"
+DESCRIPTION = "AI-заместитель продавца FunPay. Статусы заказов + защита от выдумок."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -45,13 +45,23 @@ DEFAULT_PROMPT = (
     "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n"
     "СТАТУСЫ ЗАКАЗОВ В ЭТОМ ЧАТЕ (ВАЖНО):\n"
     "- Ниже — список заказов чата с номерами и статусами. Свежие первыми.\n"
-    "- Есть строка «САМЫЙ СВЕЖИЙ ЗАКАЗ В ЧАТЕ: #XXXX (статус)» — используй её, если номер не назван.\n"
+    "- САМЫЙ СВЕЖИЙ ЗАКАЗ В ЧАТЕ: #XXXX (статус) — используй, если номер не назван.\n"
     "- paid — оплата пришла. На «оплатил?» / «видно?» отвечай «Да, заказ #XXXX оплачен, спасибо!»\n"
     "- confirmed — заказ закрыт. Отвечай «Заказ #XXXX подтверждён и закрыт.»\n"
     "- refunded — возврат. Отвечай «Заказ #XXXX возвращён, деньги вернулись покупателю.»\n"
     "- Если покупатель просит возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос.»\n"
-    "- Статус относится ТОЛЬКО к заказу с указанным номером. Не переноси на другие.\n"
-    "- НЕ путай: если у свежего paid, а у старого refunded — на вопрос про оплату отвечай про paid.\n\n"
+    "- Статус относится ТОЛЬКО к заказу с указанным номером. Не переноси на другие.\n\n"
+    "НЕ ОФОРМЛЯЙ ЗАКАЗ И НЕ ПРИДУМЫВАЙ СОБЫТИЯ (ВАЖНО):\n"
+    "- Ты НЕ оформляешь заказы. Заказ оформляет покупатель сам через FunPay.\n"
+    "- НИКОГДА не пиши «Заказ оформлен», «Я оформил заказ», «Заказ принят», если покупатель этого не сказал.\n"
+    "- НИКОГДА не пиши «Подтвердите, и я оформлю заказ», «Готов оформить», «Оформить заказ?».\n"
+    "- НИКОГДА не предлагай «перейти к оплате», «оплатить сейчас» — оплата на стороне FunPay.\n"
+    "- Если покупатель написал «на 5», «5 штук», «два комплекта» — это количество товара. "
+    "Отвечай: «Чтобы купить 5 шт., измените количество в лоте на FunPay перед оформлением. "
+    "Итоговая сумма с комиссией будет видна при оформлении заказа.»\n"
+    "- Если покупатель пишет «ой», «блин», «слушай», «подожди» — это продолжение диалога. "
+    "Отвечай по контексту, не придумывай, что он что-то заказал.\n"
+    "- Ты НЕ знаешь, оформлен ли заказ, пока FunPay не прислал событие. Не утверждай.\n\n"
     "ЧТО ТЫ ДЕЛАЕШЬ (НЕ ОФФТОП): оплата, заказ, статус, сроки, доставка, автовыдача, товар, лот, "
     "цена, наличие, количество, характеристики, скидка, торг, отзывы, подтверждение, вопросы после покупки.\n\n"
     "ЧТО ТЫ НЕ ДЕЛАЕШЬ (оффтоп): код, скрипты, SQL, Python, C++, Java; задачи по учёбе; сочинения, рефераты; "
@@ -92,7 +102,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 персданных, вредоносного ПО, аккаунтов соцсетей, телефонных номеров, аккаунтов оптом,
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
-DEFAULTS = {"version": 34, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 35, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -187,14 +197,14 @@ def load_config():
             SETTINGS["version"] = 25
             save_config()
         if cv < 33:
-            cur = str(SETTINGS.get("system_prompt") or "")
-            if cur.startswith("Ты — AI-заместитель продавца") and "СТАТУСЫ ЗАКАЗОВ" not in cur:
-                SETTINGS["system_prompt"] = DEFAULT_PROMPT
             SETTINGS.setdefault("orders_refresh_sec", 30)
             SETTINGS["version"] = 33
             save_config()
-        if cv < 34:
-            SETTINGS["version"] = 34
+        if cv < 35:
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if cur.startswith("Ты — AI-заместитель продавца") and "НЕ ОФОРМЛЯЙ ЗАКАЗ" not in cur:
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 35
             save_config()
     except Exception:
         pass
@@ -480,7 +490,6 @@ def install_update(c, manifest=None):
         with LOCK:
             UPDATE_STATE.update(status="installed_pending_restart", available=False,
                 error="", manifest=manifest)
-        logger.info("Обновление v%s установлено в %s.", rv, target)
         return True, f"Версия v{rv} установлена. Нужен перезапуск Cardinal."
     except Exception as exc:
         msg = f"{type(exc).__name__}: {exc}"
@@ -719,6 +728,14 @@ _RE_FPAY_REFUND = re.compile(r"(?:вернул|возвратил)\s+деньг�
 _RE_FPAY_CONFIRMED = re.compile(r"(?:подтвердил\s+выполнение\s+заказа|заказ\s+подтвержд[её]н|подтвержд[её]н\s+заказ)\s*#?([A-Z0-9]{6,12})", re.I)
 _RE_FPAY_PAID = re.compile(r"оплатил\s+заказ\s*#?([A-Z0-9]{6,12})", re.I)
 _RE_FPAY_HINT = re.compile(r"(?:оплач|возврат|вернул|вернёт|вернет|подтверд|refund|confirm)", re.I)
+_RE_FAKE_ORDER_ACTION = re.compile(
+    r"(?:я\s+)?(?:оформл\w*|оформить|оформил)\s+(?:ваш\s+)?заказ|"
+    r"заказ\s+(?:оформлен|принят|создан)|"
+    r"подтвердите,?\s+и\s+я\s+оформлю|"
+    r"готов\s+(?:оформить|создать)|"
+    r"перейд\w*\s+к\s+оплате|"
+    r"оплат\w+\s+(?:сейчас|прямо\s+сейчас)|"
+    r"заказ\s+подтвержд[её]н\s+на\s+оплату", re.I)
 _RE_OFFTOPIC_CODE = re.compile(r"(?:напиш\w*\s+(?:мне\s+)?(?:код|скрипт|программ\w*|функци\w*|бот\w*|"
     r"парсер\w*|сортиров\w*)|напиш\w*\s+(?:на\s+)?(?:python|питон|js|javascript|java|c\+\+|c#|"
     r"csharp|sql|bash|html|css|php|go|rust|kotlin|swift)|(?:код|скрипт|программ\w*|функци\w*|бот)\s+на\s+"
@@ -848,6 +865,23 @@ def _strip_seller_offer(text):
     result = re.sub(r"\s+([.,;:!?])", r"\1", result)
     result = re.sub(r"^[\s.,;:!?—–-]+", "", result)
     result = re.sub(r"[\s.,;:—–-]+$", "", result)
+    return result.strip()
+
+def _strip_fake_order_action(text):
+    if not text:
+        return text
+    result = str(text)
+    result = re.sub(
+        r"[^\n.!?]*(?:я\s+)?(?:оформл\w*|оформить|оформил)\s+(?:ваш\s+)?заказ[^\n.!?]*[.!?]?",
+        "Оформление заказа происходит на стороне FunPay.",
+        result, flags=re.I)
+    result = re.sub(
+        r"[^\n.!?]*(?:заказ\s+(?:оформлен|принят|создан)|"
+        r"подтвердите,?\s+и\s+я\s+оформлю|"
+        r"готов\s+(?:оформить|создать))[^\n.!?]*[.!?]?",
+        "", result, flags=re.I)
+    result = re.sub(r"\s{2,}", " ", result)
+    result = re.sub(r"\s+([.,;:!?])", r"\1", result)
     return result.strip()
 
 def _clean_ai_answer(text):
@@ -1616,6 +1650,12 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
         cleaned = _strip_seller_offer(out)
         if cleaned and cleaned != out:
             out = cleaned
+    _before = out
+    out = _strip_fake_order_action(out)
+    if out != _before:
+        logger.info("stripped_fake_order_action: %r -> %r", _before[:80], out[:80])
+    if not out:
+        out = "Если хотите купить — оформите заказ через FunPay, я подскажу по любому вопросу."
     try:
         _chat_id = str(getattr(m, "chat_id", "") or "")
         if _chat_id and _RE_REFUND_WORD.search(out):
@@ -1980,6 +2020,8 @@ def _chat_status_hint(chat_id):
     lines.append("- Если номер не назван — отвечай про САМЫЙ СВЕЖИЙ заказ.")
     lines.append("- Статус относится ТОЛЬКО к заказу с указанным номером. Не переноси на другие.")
     lines.append("- Если просят возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос.»")
+    lines.append("- НЕ оформляй заказы и не пиши «Заказ оформлен» — это делает покупатель сам.")
+    lines.append("- НЕ предлагай «подтвердите, и я оформлю» — заказ оформляется на FunPay.")
     return "\n".join(lines) + "\n"
 
 def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text=""):
