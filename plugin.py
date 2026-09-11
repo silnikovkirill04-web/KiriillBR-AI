@@ -21,10 +21,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 DESCRIPTION = ("AI-заместитель продавца FunPay на OpenAI-compatible API с автообновлениями. "
                "Помнит диалог, видит лот покупателя и игровые параметры лота, соблюдает правила FunPay, "
-               "отвечает на языке покупателя, спокойно на агрессию, не выдумывает скидки/бонусы.")
+               "отвечает на языке покупателя, спокойно на агрессию, не выдумывает скидки/бонусы, "
+               "отправляет опрос после подтверждения заказа.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -40,6 +41,7 @@ ST_MODEL, ST_PROMPT, ST_SELLER = f"{CB}_model", f"{CB}_prompt", f"{CB}_seller"
 ST_URL, ST_KEY, ST_TIMEOUT, ST_BUDGET = f"{CB}_url", f"{CB}_key", f"{CB}_timeout", f"{CB}_budget"
 ST_WM_TEXT, ST_NOTIFY_COOLDOWN = f"{CB}_wmtext", f"{CB}_cooldown"
 ST_UPD_INT = f"{CB}_updint"
+ST_SURVEY_TEXT = f"{CB}_surveytext"
 
 DEFAULT_PROMPT = (
     "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n\n"
@@ -92,7 +94,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 """
 
 DEFAULTS = {
-    "version": 12, "enabled": True, "setup_done": False,
+    "version": 13, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -109,6 +111,12 @@ DEFAULTS = {
     "match_language": True,
     "neutral_on_anger": True,
     "no_unconfirmed_promises": True,
+    "post_order_survey": True,
+    "post_order_survey_text": (
+        "Спасибо за заказ! 🙌 Подскажите, как в целом прошёл наш диалог? "
+        "Оцените, пожалуйста, от 1 до 10 и коротко объясните — что понравилось, "
+        "что можно улучшить. Мне это правда важно 🙏"
+    ),
     "update_checks_enabled": True,
     "update_manifest_url": PUBLISHER_UPDATE_MANIFEST_URL,
     "update_check_interval_minutes": 30,
@@ -130,6 +138,7 @@ VIEWING_CACHE: dict[str, tuple[float, Any]] = {}
 CHAT_LOT: dict[str, str] = {}
 CHAT_LOT_AT: dict[str, float] = {}
 SELLER_NOTIFY_AT: dict[str, float] = {}
+SURVEY_SENT: dict[str, float] = {}
 UPDATE_STATE: dict[str, Any] = {
     "checked_at": 0.0, "status": "not_checked", "error": "",
     "manifest": None, "available": False, "installing": False,
@@ -181,6 +190,11 @@ def load_config() -> None:
             if "РОЛИ В ИСТОРИИ" in cur and "Отвечай нормально, без ссылок" not in cur:
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
             SETTINGS["version"] = 12
+            save_config()
+        if cv < 13:
+            SETTINGS.setdefault("post_order_survey", True)
+            SETTINGS.setdefault("post_order_survey_text", DEFAULTS["post_order_survey_text"])
+            SETTINGS["version"] = 13
             save_config()
     except Exception:
         pass
@@ -951,6 +965,78 @@ def notify_seller(c: "Cardinal", m: Any, buyer_text: str, ai_answer: str = "",
     return True
 
 
+# ============================== Опрос после заказа ==============================
+def send_post_order_survey(c: "Cardinal", chat_id: Any, chat_name: str) -> bool:
+    if not SETTINGS.get("post_order_survey", True):
+        return False
+    survey = str(SETTINGS.get("post_order_survey_text") or "").strip()
+    if not survey:
+        return False
+    try:
+        c.send_message(chat_id, survey, chat_name, watermark=False)
+        add_history(chat_id, "assistant", survey)
+        logger.info("chat=%s post_order_survey=sent", chat_id)
+        return True
+    except Exception:
+        logger.warning("Не удалось отправить опрос chat=%s", chat_id, exc_info=True)
+        return False
+
+
+def _pending_survey_get(chat_id: Any) -> bool:
+    key = str(chat_id or "")
+    with LOCK:
+        return bool(SURVEY_SENT.get(key))
+
+
+def _pending_survey_mark(chat_id: Any) -> None:
+    key = str(chat_id or "")
+    if not key:
+        return
+    with LOCK:
+        SURVEY_SENT[key] = time.time()
+        now = time.time()
+        for k, ts in list(SURVEY_SENT.items()):
+            if now - ts > 7 * 86400:
+                SURVEY_SENT.pop(k, None)
+
+
+def _trigger_post_order_survey(c: "Cardinal", m: Any) -> None:
+    chat_id = getattr(m, "chat_id", "")
+    chat_name = str(getattr(m, "chat_name", "") or "")
+    if not chat_id:
+        return
+    if _pending_survey_get(chat_id):
+        logger.debug("chat=%s post_order_survey=already_sent", chat_id)
+        return
+
+    def _job() -> None:
+        time.sleep(3.0)
+        if _pending_survey_get(chat_id):
+            return
+        _pending_survey_mark(chat_id)
+        send_post_order_survey(c, chat_id, chat_name)
+    POOL.submit(_job)
+
+
+def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
+    """Ловит системные сообщения FunPay. После ORDER_CONFIRMED отправляет опрос покупателю."""
+    try:
+        mt = getattr(item, "type", None)
+        if mt is None:
+            return
+        type_name = getattr(mt, "name", "") or ""
+        if not type_name:
+            raw = str(mt)
+            if "." in raw:
+                raw = raw.rsplit(".", 1)[-1]
+            type_name = raw.upper()
+        type_name = type_name.upper()
+        if type_name in {"ORDER_CONFIRMED", "ORDER_CONFIRMED_BY_ADMIN"}:
+            _trigger_post_order_survey(c, item)
+    except Exception:
+        logger.debug("_observe_transaction_message failed", exc_info=True)
+
+
 # ============================== История: bootstrap из FunPay ==============================
 def _message_role(c: "Cardinal", item: Any) -> str | None:
     mt = getattr(item, "type", None)
@@ -1594,6 +1680,11 @@ def on_message(c: "Cardinal", e: "NewMessageEvent") -> None:
     if not is_enabled(c) or getattr(c, "old_mode_enabled", False):
         return
     m = e.message
+
+    # Системные сообщения — обрабатываем раньше фильтрации по автору,
+    # потому что у системных author_id часто 0 или не наш.
+    _observe_transaction_message(c, m)
+
     if getattr(m, "author_id", 0) in (0, getattr(c.account, "id", None)):
         return
     if getattr(m, "by_bot", False) or getattr(m, "by_vertex", False):
@@ -1683,6 +1774,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
             f"🚫 Обещания: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b> · "
             f"🔔 Неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
+            f"📊 Опрос после заказа: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>\n"
             f"🎮 Игровые параметры: <b>подтягиваются</b>\n"
             f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
             f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
@@ -1710,6 +1802,10 @@ def init_telegram(cardinal: "Cardinal") -> None:
                B(f"🧊 Тон {utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}", callback_data=f"{CB}:tone"))
         kb.row(B(f"🚫 Без обещаний {utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}", callback_data=f"{CB}:nopromise"),
                B(f"🔔 Неувер. {utils.bool_to_text(SETTINGS.get('confidence_notify', True))}", callback_data=f"{CB}:confnotify"))
+        kb.row(
+            B(f"📊 Опрос после заказа {utils.bool_to_text(SETTINGS.get('post_order_survey', True))}", callback_data=f"{CB}:survey"),
+            B("✏️ Текст опроса", callback_data=f"{CB}:surveytext"),
+        )
         kb.row(B(f"🔄 Обновления: {update_status_line()[:24]}", callback_data=f"{CB}:update"),
                B("⚙️ Автообновл.", callback_data=f"{CB}:updcfg"))
         kb.add(B("🗑 Сбросить всю память", callback_data=f"{CB}:clear_history"))
@@ -1746,6 +1842,15 @@ def init_telegram(cardinal: "Cardinal") -> None:
 
     def toggle_confnotify(call: CallbackQuery) -> None:
         SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show(call)
+
+    def toggle_survey(call: CallbackQuery) -> None:
+        SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True))
+        save_config()
+        try:
+            bot.answer_callback_query(call.id, "✅ Изменено")
+        except Exception:
+            pass
+        show(call)
 
     def clear_history(call: CallbackQuery) -> None:
         with LOCK:
@@ -1984,6 +2089,30 @@ def init_telegram(cardinal: "Cardinal") -> None:
         save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ К обновлениям", callback_data=f"{CB}:update")))
 
+    def set_survey_text(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        v = (m.text or "").strip()
+        if v == "-":
+            SETTINGS["post_order_survey_text"] = DEFAULTS["post_order_survey_text"]
+        elif not v:
+            bot.reply_to(m, "❌ Текст не может быть пустым.")
+            return
+        else:
+            SETTINGS["post_order_survey_text"] = v
+        save_config()
+        bot.reply_to(m, "✅ Текст опроса сохранён.",
+                     reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+    tg.msg_handler(set_survey_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SURVEY_TEXT))
+
+    def set_wm_text(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        raw = (m.text or "").strip()
+        SETTINGS["watermark_text"] = "" if raw == "-" else raw
+        save_config()
+        bot.reply_to(m, "✅ Водяной знак обновлён.",
+                     reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+    tg.msg_handler(set_wm_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_WM_TEXT))
+
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(toggle, lambda c: c.data == f"{CB}:tog")
     tg.cbq_handler(toggle_wm, lambda c: c.data == f"{CB}:wm")
@@ -1993,6 +2122,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.cbq_handler(toggle_tone, lambda c: c.data == f"{CB}:tone")
     tg.cbq_handler(toggle_nopromise, lambda c: c.data == f"{CB}:nopromise")
     tg.cbq_handler(toggle_confnotify, lambda c: c.data == f"{CB}:confnotify")
+    tg.cbq_handler(toggle_survey, lambda c: c.data == f"{CB}:survey")
     tg.cbq_handler(notify_test, lambda c: c.data == f"{CB}:notify_test")
     tg.cbq_handler(clear_history, lambda c: c.data == f"{CB}:clear_history")
     tg.cbq_handler(list_chats, lambda c: c.data == f"{CB}:chats")
@@ -2008,6 +2138,10 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.cbq_handler(ask(ST_BUDGET, "Бюджет истории в символах (2000–40000):"), lambda c: c.data == f"{CB}:budget")
     tg.cbq_handler(ask(ST_WM_TEXT, "Введите текст водяного знака. Отправьте <code>-</code> чтобы очистить:"), lambda c: c.data == f"{CB}:wmtext")
     tg.cbq_handler(ask(ST_NOTIFY_COOLDOWN, "Введите cooldown уведомлений продавцу в минутах (0–60):"), lambda c: c.data == f"{CB}:cooldown")
+    tg.cbq_handler(ask(ST_SURVEY_TEXT,
+                       "Пришлите текст опроса, который AI отправит после подтверждения заказа. "
+                       "Отправьте <code>-</code>, чтобы вернуть текст по умолчанию:"),
+                   lambda c: c.data == f"{CB}:surveytext")
     tg.cbq_handler(test_api, lambda c: c.data == f"{CB}:test")
     tg.cbq_handler(refresh_lots, lambda c: c.data == f"{CB}:lots")
 
@@ -2022,15 +2156,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.msg_handler(make_setter("history_char_budget",
                                validate=lambda v: v.isdigit() and 2000 <= int(v) <= 40000, transform=int),
                    func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BUDGET))
-
-    def set_wm_text(m: Message) -> None:
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        raw = (m.text or "").strip()
-        SETTINGS["watermark_text"] = "" if raw == "-" else raw
-        save_config()
-        bot.reply_to(m, "✅ Водяной знак обновлён.",
-                     reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-    tg.msg_handler(set_wm_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_WM_TEXT))
 
     tg.msg_handler(make_setter("seller_notify_cooldown",
                                validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
