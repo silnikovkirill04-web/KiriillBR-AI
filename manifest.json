@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "3.2.2",
+  "version": "3.2.3",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "e826a6ab95cd1bfdc995dffe826afd637d68383afaba736cb52ce03d08f4d869",
-  "notes": "Статусы заказов сохраняются на диск (storage/plugins/kiriillbr_orders.json). После рестарта память восстанавливается. Автосохранение каждые 2 минуты.",
+  "sha256": "b528ccd5387b627b16538e8d4fc92d70758c62851579b312dd3dd7e5d14c37fc",
+  "notes": "AI больше не придумывает оформление заказов. Убраны фразы «Заказ оформлен», «Я оформлю», «Подтвердите, и я оформлю». Правильные ответы про количество товара.",
   "mandatory": false
 }
