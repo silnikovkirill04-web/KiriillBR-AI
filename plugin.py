@@ -21,9 +21,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.3.0"
-DESCRIPTION = ("AI-заместитель продавца FunPay. Отвечает только на вопросы по товару/заказу. "
-               "Отказывает на код, взлом, читы, задачи, ключи/токены и прочий оффтоп.")
+VERSION = "2.4.0"
+DESCRIPTION = ("AI-заместитель продавца FunPay. Отвечает только по товару/заказу, "
+               "отказывает на код/взлом/задачи/ключи. Ловит ORDER_PURCHASED, уведомляет продавца, "
+               "опционально автовыдача payment_msg, опрос после подтверждения заказа.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -40,6 +41,8 @@ ST_URL, ST_KEY, ST_TIMEOUT, ST_BUDGET = f"{CB}_url", f"{CB}_key", f"{CB}_timeout
 ST_WM_TEXT, ST_NOTIFY_COOLDOWN = f"{CB}_wmtext", f"{CB}_cooldown"
 ST_UPD_INT = f"{CB}_updint"
 ST_TEST_PHOTO = f"{CB}_testphoto"
+ST_SURVEY_TEXT = f"{CB}_surveytext"
+ST_AF_DELAY = f"{CB}_afdelay"
 
 _VISION_MAX_BYTES = 4 * 1024 * 1024
 _VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
@@ -122,7 +125,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 """
 
 DEFAULTS = {
-    "version": 23, "enabled": True, "setup_done": False,
+    "version": 24, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -139,6 +142,15 @@ DEFAULTS = {
     "match_language": True,
     "neutral_on_anger": True,
     "no_unconfirmed_promises": True,
+    "post_order_survey": True,
+    "post_order_survey_text": (
+        "Спасибо за заказ! 🙌 Подскажите, как в целом прошёл наш диалог? "
+        "Оцените, пожалуйста, от 1 до 10 и коротко объясните — что понравилось, "
+        "что можно улучшить. Мне это правда важно 🙏"
+    ),
+    "auto_fulfill_paid_orders": False,
+    "auto_fulfill_delay_sec": 3,
+    "auto_fulfill_notify_seller": True,
     "update_checks_enabled": True,
     "update_manifest_url": PUBLISHER_UPDATE_MANIFEST_URL,
     "update_check_interval_minutes": 30,
@@ -160,6 +172,8 @@ VIEWING_CACHE: dict[str, tuple[float, Any]] = {}
 CHAT_LOT: dict[str, str] = {}
 CHAT_LOT_AT: dict[str, float] = {}
 SELLER_NOTIFY_AT: dict[str, float] = {}
+SURVEY_SENT: dict[str, float] = {}
+AUTO_FULFILLED_ORDERS: dict[str, float] = {}
 UPDATE_STATE: dict[str, Any] = {
     "checked_at": 0.0, "status": "not_checked", "error": "",
     "manifest": None, "available": False, "installing": False,
@@ -209,6 +223,14 @@ def load_config() -> None:
             if cur.startswith("Ты — AI-заместитель продавца") and "ЧТО ТЫ НЕ ДЕЛАЕШЬ" not in cur:
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
             SETTINGS["version"] = 23
+            save_config()
+        if cv < 24:
+            SETTINGS.setdefault("post_order_survey", True)
+            SETTINGS.setdefault("post_order_survey_text", DEFAULTS["post_order_survey_text"])
+            SETTINGS.setdefault("auto_fulfill_paid_orders", False)
+            SETTINGS.setdefault("auto_fulfill_delay_sec", 3)
+            SETTINGS.setdefault("auto_fulfill_notify_seller", True)
+            SETTINGS["version"] = 24
             save_config()
     except Exception:
         pass
@@ -684,7 +706,6 @@ _RE_PROD_NUM = re.compile(
     r"(?:подписчик\w*|просмотр\w*|лайк\w*|зв[её]зд\w*|голос\w*|штук\w*|единиц\w*|"
     r"количеств\w*|пакет\w*|цен\w*|стоим\w*|руб\w*|₽|usd|eur|доллар\w*|евро)", re.I)
 
-# ============ Оффтоп-детектор: код, взлом, задачи, ключи и т.п. ============
 _RE_OFFTOPIC_CODE = re.compile(
     r"(?:"
     r"напиш\w*\s+(?:мне\s+)?(?:код|скрипт|программ\w*|функци\w*|бот\w*|парсер\w*|сортиров\w*)|"
@@ -764,7 +785,6 @@ _OFFTOPIC_REPLY = (
 
 
 def is_offtopic(text: str) -> bool:
-    """True, если сообщение явно не про покупку/товар: код, взлом, задачи, ключи и т.п."""
     s = str(text or "").strip()
     if not s:
         return False
@@ -1101,6 +1121,334 @@ def notify_seller(c: "Cardinal", m: Any, buyer_text: str, ai_answer: str = "",
     return True
 
 
+def notify_seller_text(c: "Cardinal", *, header: str, body: str) -> bool:
+    if not getattr(c, "telegram", None):
+        return False
+    text = f"{header}\n\n{body}"
+
+    def _job() -> None:
+        try:
+            c.telegram.send_notification(text)
+        except Exception:
+            logger.warning("Не удалось отправить уведомление продавцу о заказе", exc_info=True)
+
+    threading.Thread(target=_job, daemon=True, name="KBAI-order-notify").start()
+    return True
+
+
+def _detect_message_type_name(item: Any) -> str:
+    """Универсально определяет имя типа сообщения FunPayAPI."""
+    if item is None:
+        return ""
+    mt = getattr(item, "type", None)
+    if mt is None:
+        return ""
+    name = getattr(mt, "name", "")
+    if name:
+        return str(name).upper()
+    raw = str(mt)
+    if "." in raw:
+        raw = raw.rsplit(".", 1)[-1]
+    return re.sub(r"[^A-Z0-9_]+", "_", raw.upper()).strip("_")
+
+
+def _order_buyer_name(order: Any) -> str:
+    for attr in ("buyer_username", "buyer_name", "username"):
+        v = getattr(order, attr, None)
+        if v:
+            return str(v)
+    return "покупатель"
+
+
+def _order_short_id(order: Any) -> str:
+    raw = str(getattr(order, "id", "") or "").strip().lstrip("#")
+    if raw:
+        return raw.upper()
+    return "CHAT:" + str(getattr(order, "chat_id", "") or "?")
+
+
+def _find_lot_for_order(order: Any) -> dict[str, Any] | None:
+    for attr in ("lot_id", "offer_id"):
+        lid = getattr(order, attr, None)
+        if lid:
+            with LOCK:
+                lot = LOTS.get(str(lid))
+            if lot:
+                return lot
+    desc = str(getattr(order, "description", "") or "").strip()
+    if not desc:
+        return None
+    ranked = find_lots(desc, 2)
+    if ranked:
+        best_lot, best_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+        if best_score >= 0.72 and (best_score - second_score >= 0.06 or second_score < 0.55):
+            return best_lot
+    return None
+
+
+def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
+    if not SETTINGS.get("auto_fulfill_paid_orders", False):
+        return
+    chat_id = str(getattr(order, "chat_id", "") or "")
+    if not chat_id:
+        logger.warning("auto_fulfill_skip: нет chat_id в заказе order=%s",
+                       _order_short_id(order))
+        return
+    order_id = _order_short_id(order)
+    buyer_name = _order_buyer_name(order)
+
+    now = time.time()
+    with LOCK:
+        try:
+            last_ts = float(AUTO_FULFILLED_ORDERS.get(f"{chat_id}:{order_id}", 0.0) or 0.0)
+        except Exception:
+            last_ts = 0.0
+        if last_ts and now - last_ts < 3600:
+            logger.debug("auto_fulfill_skip: order=%s уже обработан", order_id)
+            return
+        AUTO_FULFILLED_ORDERS[f"{chat_id}:{order_id}"] = now
+        for k, ts in list(AUTO_FULFILLED_ORDERS.items()):
+            if now - ts > 30 * 86400:
+                AUTO_FULFILLED_ORDERS.pop(k, None)
+
+    lot = _find_lot_for_order(order)
+    if lot is None:
+        logger.info("order=%s auto_fulfill=lot_unknown", order_id)
+        if SETTINGS.get("auto_fulfill_notify_seller", True):
+            notify_seller_text(
+                c,
+                header="🛒 <b>Новый оплаченный заказ</b>",
+                body=(
+                    f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
+                    f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
+                    f"❓ Лот не определён автоматически. Выдайте данные вручную."
+                ),
+            )
+        return
+
+    lid = str(lot.get("id") or "")
+    title = str(lot.get("title") or lot.get("description") or f"лот #{lid}")[:120]
+    payment_msg = str(lot.get("payment_message") or "").strip()
+
+    if payment_msg:
+        violation = outbound_violation(payment_msg)
+        if violation and violation != "empty":
+            logger.warning("order=%s auto_fulfill=blocked reason=%s", order_id, violation)
+            if SETTINGS.get("auto_fulfill_notify_seller", True):
+                notify_seller_text(
+                    c,
+                    header="🛒 <b>Оплачен заказ — нужна ручная выдача</b>",
+                    body=(
+                        f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
+                        f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
+                        f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
+                        f"⚠️ Payment_msg заблокирован privacy-guard: <b>{utils.escape(violation)}</b>. "
+                        "Выдайте данные вручную."
+                    ),
+                )
+            return
+
+        try:
+            delay = max(0, min(60, int(SETTINGS.get("auto_fulfill_delay_sec", 3) or 0)))
+
+            def _job() -> None:
+                try:
+                    time.sleep(delay)
+                    c.send_message(chat_id, payment_msg, buyer_name, watermark=False)
+                    add_history(chat_id, "assistant", payment_msg)
+                    logger.info("order=%s auto_fulfill=sent lot=%s bytes=%d",
+                                order_id, lid, len(payment_msg))
+                except Exception:
+                    logger.warning("order=%s auto_fulfill=send_failed", order_id, exc_info=True)
+
+            POOL.submit(_job)
+
+            if SETTINGS.get("auto_fulfill_notify_seller", True):
+                notify_seller_text(
+                    c,
+                    header="🛒 <b>Оплачен заказ (выдача отправлена)</b>",
+                    body=(
+                        f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
+                        f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
+                        f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
+                        f"⚡ Отправил payment_msg через {delay}с."
+                    ),
+                )
+            return
+        except Exception:
+            logger.debug("auto_fulfill job failed", exc_info=True)
+
+    logger.info("order=%s auto_fulfill=manual_needed lot=%s", order_id, lid)
+    if SETTINGS.get("auto_fulfill_notify_seller", True):
+        notify_seller_text(
+            c,
+            header="🛒 <b>Оплачен заказ — нужна ручная выдача</b>",
+            body=(
+                f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
+                f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
+                f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
+                f"💬 У лота нет payment_msg. Выдайте вручную."
+            ),
+        )
+
+
+def _handle_paid_order_message(c: "Cardinal", item: Any) -> None:
+    """Обработка системного ORDER_PURCHASED — покупатель оплатил заказ."""
+    logger.info("ORDER_PURCHASED received chat=%s", getattr(item, "chat_id", "?"))
+    chat_id = str(getattr(item, "chat_id", "") or "")
+    if not chat_id:
+        logger.debug("ORDER_PURCHASED: нет chat_id")
+        return
+
+    order = None
+    getter = getattr(c, "get_order_from_object", None)
+    if callable(getter):
+        try:
+            order = getter(item)
+        except Exception:
+            logger.debug("get_order_from_object failed", exc_info=True)
+
+    if order is None:
+        text = str(getattr(item, "text", "") or "")
+
+        class _PseudoOrder:
+            pass
+
+        order = _PseudoOrder()
+        mm = re.search(r"#([A-Z0-9]{8})", text, re.I)
+        order.id = mm.group(1).upper() if mm else ""
+        order.chat_id = chat_id
+        bm = re.search(r"(?:Покупатель|The buyer)\s+@?([^\s,.]+)", text, re.I)
+        order.buyer_username = bm.group(1) if bm else ""
+        desc = text[mm.end():].strip(" .:;,-—–\n") if mm else text
+        desc = re.sub(r"^(?:Покупатель|The buyer)[^.]*\.\s*", "", desc, flags=re.I)
+        order.description = desc[:400]
+
+    logger.info("ORDER_PURCHASED chat=%s order=%s desc=%r",
+                chat_id, _order_short_id(order), str(getattr(order, "description", ""))[:80])
+
+    # Всегда уведомляем продавца о новом заказе (даже если auto_fulfill выключен)
+    buyer_name = _order_buyer_name(order)
+    order_id = _order_short_id(order)
+    lot = _find_lot_for_order(order)
+    title = ""
+    if lot:
+        lid = str(lot.get("id") or "")
+        title = str(lot.get("title") or lot.get("description") or f"лот #{lid}")[:120]
+    if SETTINGS.get("auto_fulfill_notify_seller", True) or SETTINGS.get("seller_notify", True):
+        body = (
+            f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
+            f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>"
+        )
+        if title:
+            body += f"\n🎁 Лот: <b>{utils.escape(title)}</b>"
+        if SETTINGS.get("auto_fulfill_paid_orders", False):
+            body += "\n⚡ Режим автовыдачи: включён"
+        else:
+            body += "\n💬 Автовыдача выключена — выдайте вручную."
+        notify_seller_text(c, header="🛒 <b>Оплачен заказ</b>", body=body)
+
+    # Автовыдача, если включена
+    _fulfill_paid_order(c, order)
+
+
+def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
+    """Ловит системные сообщения FunPay: оплата и подтверждение заказа."""
+    try:
+        type_name = _detect_message_type_name(item)
+        if not type_name:
+            return
+        if type_name == "ORDER_PURCHASED":
+            _handle_paid_order_message(c, item)
+        elif type_name in {"ORDER_CONFIRMED", "ORDER_CONFIRMED_BY_ADMIN"}:
+            _trigger_post_order_survey(c, item)
+    except Exception:
+        logger.debug("_observe_transaction_message failed", exc_info=True)
+
+
+def on_new_paid_order(c: "Cardinal", e: Any) -> None:
+    """Хук Cardinal BIND_TO_NEW_ORDER — основной канал детекта оплаты."""
+    try:
+        order = None
+        if hasattr(e, "order"):
+            order = e.order
+        if order is None and hasattr(e, "get_order"):
+            try:
+                order = e.get_order()
+            except Exception:
+                pass
+        if order is None and hasattr(e, "id") and hasattr(e, "buyer_username"):
+            order = e
+        if order is None:
+            logger.debug("on_new_paid_order: не удалось извлечь заказ из события %r", type(e))
+            return
+        logger.info("NEW_ORDER hook order=%s", _order_short_id(order))
+        buyer_name = _order_buyer_name(order)
+        order_id = _order_short_id(order)
+        if SETTINGS.get("auto_fulfill_notify_seller", True) or SETTINGS.get("seller_notify", True):
+            body = (
+                f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
+                f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>"
+            )
+            if SETTINGS.get("auto_fulfill_paid_orders", False):
+                body += "\n⚡ Режим автовыдачи: включён"
+            else:
+                body += "\n💬 Автовыдача выключена — выдайте вручную."
+            notify_seller_text(c, header="🛒 <b>Оплачен заказ</b>", body=body)
+        _fulfill_paid_order(c, order)
+    except Exception:
+        logger.debug("on_new_paid_order failed", exc_info=True)
+
+
+def send_post_order_survey(c: "Cardinal", chat_id: Any, chat_name: str) -> bool:
+    if not SETTINGS.get("post_order_survey", True):
+        return False
+    survey = str(SETTINGS.get("post_order_survey_text") or "").strip()
+    if not survey:
+        return False
+    try:
+        c.send_message(chat_id, survey, chat_name, watermark=False)
+        add_history(chat_id, "assistant", survey)
+        logger.info("chat=%s post_order_survey=sent", chat_id)
+        return True
+    except Exception:
+        logger.warning("Не удалось отправить опрос chat=%s", chat_id, exc_info=True)
+        return False
+
+
+def _pending_survey_get(chat_id: Any) -> bool:
+    with LOCK:
+        return bool(SURVEY_SENT.get(str(chat_id or "")))
+
+
+def _pending_survey_mark(chat_id: Any) -> None:
+    key = str(chat_id or "")
+    if not key:
+        return
+    with LOCK:
+        SURVEY_SENT[key] = time.time()
+        now = time.time()
+        for k, ts in list(SURVEY_SENT.items()):
+            if now - ts > 7 * 86400:
+                SURVEY_SENT.pop(k, None)
+
+
+def _trigger_post_order_survey(c: "Cardinal", m: Any) -> None:
+    chat_id = getattr(m, "chat_id", "")
+    chat_name = str(getattr(m, "chat_name", "") or "")
+    if not chat_id or _pending_survey_get(chat_id):
+        return
+
+    def _job() -> None:
+        time.sleep(3.0)
+        if _pending_survey_get(chat_id):
+            return
+        _pending_survey_mark(chat_id)
+        send_post_order_survey(c, chat_id, chat_name)
+    POOL.submit(_job)
+
+
 def _extract_message_image(m: Any) -> str:
     try:
         url = ""
@@ -1391,6 +1739,7 @@ def _lot_basic(lot) -> dict[str, Any]:
         "subcategory": _obj(sub, "fullname") or _obj(sub, "name"),
         "server": _obj(lot, "server"),
         "extra_fields": {},
+        "payment_message": "",
     }
 
 
@@ -1402,9 +1751,12 @@ def _enrich(c: "Cardinal", lid: str) -> None:
                 return
             t = _obj(f, "title_ru") or _obj(f, "title_en")
             d = _obj(f, "description_ru") or _obj(f, "description_en")
+            payment = _obj(f, "payment_msg_ru") or _obj(f, "payment_msg_en")
             if t:
                 LOTS[lid]["title"] = t
             LOTS[lid]["full_description"] = d
+            if payment:
+                LOTS[lid]["payment_message"] = payment
             if hasattr(f, "auto"):
                 LOTS[lid]["auto"] = bool(getattr(f, "auto"))
             if getattr(f, "price", None) is not None:
@@ -1439,6 +1791,8 @@ def sync_lots(c: "Cardinal", enrich: bool = True) -> int:
                     cache[lid]["full_description"] = old["full_description"]
                 if old.get("extra_fields"):
                     cache[lid]["extra_fields"] = old["extra_fields"]
+                if old.get("payment_message"):
+                    cache[lid]["payment_message"] = old["payment_message"]
         LOTS.clear()
         LOTS.update(cache)
     if enrich:
@@ -1583,6 +1937,7 @@ def _get_lot(c: "Cardinal", m: Any, text: str) -> dict[str, Any] | None:
                 "id": lid or "viewing", "title": vtext[:200], "description": vtext[:200],
                 "full_description": "", "price": None, "currency": "", "amount": None,
                 "auto": False, "subcategory": "", "server": "", "extra_fields": {},
+                "payment_message": "",
             }
             _remember_chat_lot(m.chat_id, synthetic)
             return synthetic
@@ -1716,21 +2071,17 @@ def ask_ai(m: Any, buyer_text: str, lot: dict[str, Any] | None) -> str:
 
 
 def handle_message(c: "Cardinal", m: Any, text: str) -> None:
-    # 1. Сначала — оффтоп (код, взлом, задачи, ключи и т.п.)
     if is_offtopic(text):
         logger.info("offtopic_blocked chat=%s text=%r", getattr(m, "chat_id", "?"), str(text)[:120])
         _say(c, m, _OFFTOPIC_REPLY, notify=False)
         return
-    # 2. Правила FunPay (контакты, оффплатформа, запрещёнка)
     violation = classify_policy_violation(text)
     if violation:
         _say(c, m, policy_refusal(violation))
         logger.info("policy_violation=%s chat=%s", violation, getattr(m, "chat_id", "?"))
         return
-    # 3. Простые интенты
     if handle_deterministic(c, m, text):
         return
-    # 4. AI
     lot = _get_lot(c, m, text)
     try:
         answer = ask_ai(m, text, lot)
@@ -1742,7 +2093,6 @@ def handle_message(c: "Cardinal", m: Any, text: str) -> None:
              reason="API недоступен или вернул ошибку",
              buyer_text=text)
         return
-    # 5. Пост-проверка ответа AI на оффтоп (на случай если модель всё же начала отвечать)
     if is_offtopic(answer):
         logger.info("offtopic_reply_blocked chat=%s", getattr(m, "chat_id", "?"))
         _say(c, m, _OFFTOPIC_REPLY, notify=False)
@@ -1830,9 +2180,16 @@ def _mark(mid: Any) -> bool:
 
 
 def on_message(c: "Cardinal", e: "NewMessageEvent") -> None:
-    if not is_enabled(c) or getattr(c, "old_mode_enabled", False):
+    if not is_enabled(c):
         return
     m = e.message
+
+    # ВАЖНО: сначала ловим системные транзакции (ORDER_PURCHASED и т.п.),
+    # иначе фильтр по author_id ниже их отсечёт.
+    _observe_transaction_message(c, m)
+
+    if getattr(c, "old_mode_enabled", False):
+        return
     if getattr(m, "author_id", 0) in (0, getattr(c.account, "id", None)):
         return
     if getattr(m, "by_bot", False) or getattr(m, "by_vertex", False):
@@ -1876,6 +2233,8 @@ def on_last_chat(c: "Cardinal", e: Any) -> None:
             if not msgs:
                 return
             m = msgs[-1]
+            # В старом режиме системные сообщения тоже прогоняем через observer
+            _observe_transaction_message(c, m)
             if getattr(m, "author_id", 0) in (0, getattr(c.account, "id", None)):
                 return
             if not getattr(m, "buyer_viewing", None) and getattr(full, "looking_link", None):
@@ -1915,21 +2274,21 @@ def init_telegram(cardinal: "Cardinal") -> None:
         if wm:
             head += f"     <i>{utils.escape(wm)}</i>\n"
         head += f"🔔 Уведомления: <b>{utils.bool_to_text(SETTINGS.get('seller_notify', True))}</b>\n"
+        head += f"🛒 Оплата: <b>ORDER_PURCHASED ловится</b>\n"
+        head += f"⚡ Автовыдача: <b>{utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}</b>"
+        head += f" · задержка <b>{SETTINGS.get('auto_fulfill_delay_sec', 3)}с</b>\n"
+        head += f"📊 Опрос после заказа: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>\n"
         head += f"📜 История из FunPay: <b>{utils.bool_to_text(SETTINGS.get('bootstrap_history', True))}</b>\n"
         head += f"📋 Правила FunPay: <b>встроены</b>\n"
-        head += f"🚫 Оффтоп-фильтр: <b>включён</b> (код, взлом, задачи, ключи)\n"
+        head += f"🚫 Оффтоп-фильтр: <b>включён</b>\n"
         head += f"🌍 Язык: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b> · "
         head += f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
-        head += f"🚫 Обещания: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b> · "
-        head += f"🔔 Неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
         head += f"🖼 Vision: <b>включён</b>\n"
-        head += f"🎮 Игровые параметры: <b>подтягиваются</b>\n"
         head += f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
         head += f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
         head += f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'не задан'}</b>\n"
         head += f"🛍 Лотов: <b>{len(LOTS)}</b> · 👀 Смотрят: <b>{n_view}</b>\n"
         head += f"💬 Память: <b>{n_chats}</b> чатов / <b>{n_msgs}</b> сообщений\n"
-        head += f"⏱ Timeout: <b>{SETTINGS['ai_timeout']}с</b>\n"
         head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>"
         return head
 
@@ -1947,6 +2306,17 @@ def init_telegram(cardinal: "Cardinal") -> None:
         kb.row(B("📏 Бюджет истории", callback_data=f"{CB}:budget"), B("📋 Логи чатов", callback_data=f"{CB}:chats"))
         kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
                B("📜 Bootstrap ист.", callback_data=f"{CB}:bootstrap"))
+        kb.row(
+            B(f"🛒 Автовыдача {utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}",
+              callback_data=f"{CB}:autofulfill"),
+            B(f"🔔 О заказе {utils.bool_to_text(SETTINGS.get('auto_fulfill_notify_seller', True))}",
+              callback_data=f"{CB}:autofulfillnotify"),
+        )
+        kb.row(
+            B(f"📊 Опрос {utils.bool_to_text(SETTINGS.get('post_order_survey', True))}", callback_data=f"{CB}:survey"),
+            B("✏️ Текст опроса", callback_data=f"{CB}:surveytext"),
+        )
+        kb.add(B(f"⏱ Задержка выдачи: {SETTINGS.get('auto_fulfill_delay_sec', 3)}с", callback_data=f"{CB}:autofulfilldelay"))
         kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"), B("🧪 Тест API", callback_data=f"{CB}:test"))
         kb.add(B("🖼 Тест фото (отправить фото в AI)", callback_data=f"{CB}:testphoto"))
         kb.row(B(f"🌍 Язык {utils.bool_to_text(SETTINGS.get('match_language', True))}", callback_data=f"{CB}:lang"),
@@ -2008,9 +2378,55 @@ def init_telegram(cardinal: "Cardinal") -> None:
         save_config()
         show(call)
 
+    def toggle_autofulfill(call: CallbackQuery) -> None:
+        SETTINGS["auto_fulfill_paid_orders"] = not bool(SETTINGS.get("auto_fulfill_paid_orders", False))
+        save_config()
+        show(call)
+
+    def toggle_autofulfill_notify(call: CallbackQuery) -> None:
+        SETTINGS["auto_fulfill_notify_seller"] = not bool(SETTINGS.get("auto_fulfill_notify_seller", True))
+        save_config()
+        show(call)
+
+    def toggle_survey(call: CallbackQuery) -> None:
+        SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True))
+        save_config()
+        show(call)
+
+    def ask_af_delay(call: CallbackQuery) -> None:
+        msg = bot.send_message(call.message.chat.id,
+                               "Задержка перед отправкой payment_msg в секундах (0–60):",
+                               reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_AF_DELAY)
+        bot.answer_callback_query(call.id)
+
+    def set_af_delay(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        try:
+            v = int((m.text or "").strip())
+            if not 0 <= v <= 60:
+                raise ValueError
+        except Exception:
+            bot.reply_to(m, "❌ Введите число 0–60.")
+            return
+        SETTINGS["auto_fulfill_delay_sec"] = v
+        save_config()
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+
+    def ask_survey_text(call: CallbackQuery) -> None:
+        msg = bot.send_message(call.message.chat.id, "Пришлите новый текст опроса после заказа:",
+                               reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_SURVEY_TEXT)
+        bot.answer_callback_query(call.id)
+
+    def set_survey_text(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        SETTINGS["post_order_survey_text"] = (m.text or "").strip()
+        save_config()
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+
     def clear_history(call: CallbackQuery) -> None:
         with LOCK:
-            # Запоминаем уже загруженные чаты, чтобы они не подтянулись снова.
             for chat_id in list(HISTORY.keys()):
                 CHAT_HISTORY_BOOTSTRAPPED.add(str(chat_id))
             HISTORY.clear()
@@ -2242,7 +2658,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
                 lines.append(f"📝 {utils.escape(notes[:1200])}")
         if status == "error" and err:
             lines.extend(["", f"⚠️ <code>{utils.escape(err[:400])}</code>"])
-        lines.extend(["", "🛡 Проверяется HTTPS, SHA-256, UUID и синтаксис Python. Старый файл сохраняется как <code>.bak</code>."])
+        lines.extend(["", "🛡 Проверяется HTTPS, SHA-256, UUID и синтаксис Python."])
         return "\n".join(lines)
 
     def updates_kb() -> K:
@@ -2375,6 +2791,11 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.cbq_handler(toggle_tone, lambda c: c.data == f"{CB}:tone")
     tg.cbq_handler(toggle_nopromise, lambda c: c.data == f"{CB}:nopromise")
     tg.cbq_handler(toggle_confnotify, lambda c: c.data == f"{CB}:confnotify")
+    tg.cbq_handler(toggle_autofulfill, lambda c: c.data == f"{CB}:autofulfill")
+    tg.cbq_handler(toggle_autofulfill_notify, lambda c: c.data == f"{CB}:autofulfillnotify")
+    tg.cbq_handler(toggle_survey, lambda c: c.data == f"{CB}:survey")
+    tg.cbq_handler(ask_af_delay, lambda c: c.data == f"{CB}:autofulfilldelay")
+    tg.cbq_handler(ask_survey_text, lambda c: c.data == f"{CB}:surveytext")
     tg.cbq_handler(notify_test, lambda c: c.data == f"{CB}:notify_test")
     tg.cbq_handler(clear_history, lambda c: c.data == f"{CB}:clear_history")
     tg.cbq_handler(list_chats, lambda c: c.data == f"{CB}:chats")
@@ -2415,6 +2836,8 @@ def init_telegram(cardinal: "Cardinal") -> None:
                                validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
                    func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
     tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
+    tg.msg_handler(set_af_delay, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_AF_DELAY))
+    tg.msg_handler(set_survey_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SURVEY_TEXT))
     tg.msg_handler(handle_test_photo, content_types=["photo"],
                    func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TEST_PHOTO))
 
@@ -2449,4 +2872,5 @@ BIND_TO_POST_INIT = [post_init]
 BIND_TO_POST_START = [post_start]
 BIND_TO_NEW_MESSAGE = [on_message]
 BIND_TO_LAST_CHAT_MESSAGE_CHANGED = [on_last_chat]
+BIND_TO_NEW_ORDER = [on_new_paid_order]
 BIND_TO_DELETE = on_delete
