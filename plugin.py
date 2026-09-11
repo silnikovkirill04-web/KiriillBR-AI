@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.8.0"
-DESCRIPTION = "AI-заместитель продавца FunPay. Статус каждого заказа по номеру."
+VERSION = "2.9.0"
+DESCRIPTION = "AI-заместитель продавца FunPay. Статус заказа по номеру. Не путает заказы в одном чате."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -44,11 +44,17 @@ _VISION_PROMPT = ("Ты — AI-заместитель продавца FunPay. �
 DEFAULT_PROMPT = (
     "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n"
     "ЗАКАЗЫ В ЭТОМ ЧАТЕ (КРИТИЧНО):\n"
-    "- В системном блоке ниже — список заказов чата с номерами и статусами.\n"
-    "- Определи, о каком заказе спрашивает покупатель (по номеру #XXXXXXX или по контексту).\n"
-    "- refunded — возврат. НИКОГДА не подтверждай оплату, не благодари. Скажи, что заказ возвращён.\n"
-    "- confirmed — заказ закрыт. Не благодари за оплату повторно.\n"
-    "- paid — оплата пришла. Можешь подтвердить оплату.\n"
+    "- В системном блоке ниже — список заказов чата с номерами и статусами. Свежие первыми.\n"
+    "- Есть отдельная строка «САМЫЙ СВЕЖИЙ ЗАКАЗ В ЧАТЕ: #XXXX (статус)» — используй её, "
+    "если покупатель не назвал номер.\n"
+    "- Если покупатель пишет «оплатил», «видно оплату», «есть оплаченный заказ?» — это про "
+    "САМЫЙ СВЕЖИЙ заказ. Если у него paid — подтверди оплату.\n"
+    "- Статус refunded/confirmed относится ТОЛЬКО к заказу с конкретным номером #XXXX. "
+    "НИКОГДА не переноси его на другие заказы. Если у свежего заказа paid, а у старого refunded — "
+    "на вопрос про оплату отвечай про paid, НЕ про возврат.\n"
+    "- paid — оплата пришла, ждём выдачу. Можешь подтвердить оплату.\n"
+    "- confirmed — заказ закрыт покупателем. Не благодари за оплату повторно.\n"
+    "- refunded — по ЭТОМУ заказу возврат, деньги вернулись покупателю. Не благодари за оплату.\n"
     "- НЕ путай статусы разных заказов между собой.\n\n"
     "ЧТО ТЫ ДЕЛАЕШЬ (ЭТО НЕ ОФФТОП): оплата, заказ, статус, сроки, доставка, автовыдача, товар, лот, "
     "цена, наличие, количество, характеристики, скидка, торг, отзывы, подтверждение, вопросы после покупки.\n\n"
@@ -85,7 +91,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
 DEFAULTS = {
-    "version": 28, "enabled": True, "setup_done": False,
+    "version": 29, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -134,8 +140,9 @@ POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="KBAI")
 _HISTORY_HARD_CAP = 200
 _ORDER_DEDUP_TTL = 24 * 3600
 _ORDER_CLOSED_TTL = 7 * 86400
-_STATUS_RU = {"paid": "оплачен (ждём выдачу)", "confirmed": "подтверждён и закрыт",
-    "refunded": "ВОЗВРАТ (деньги вернулись покупателю)"}
+_STATUS_RU = {"paid": "оплачен, ждём выдачу",
+    "confirmed": "закрыт и подтверждён покупателем",
+    "refunded": "деньги возвращены покупателю по этому заказу"}
 
 def _merge(a, b):
     if isinstance(a, dict) and isinstance(b, dict):
@@ -178,11 +185,11 @@ def load_config():
             SETTINGS.setdefault("auto_thank_text", DEFAULTS["auto_thank_text"])
             SETTINGS["version"] = 25
             save_config()
-        if cv < 28:
+        if cv < 29:
             cur = str(SETTINGS.get("system_prompt") or "")
-            if cur.startswith("Ты — AI-заместитель продавца") and "ЗАКАЗЫ В ЭТОМ ЧАТЕ" not in cur:
+            if cur.startswith("Ты — AI-заместитель продавца") and "САМЫЙ СВЕЖИЙ ЗАКАЗ" not in cur:
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
-            SETTINGS["version"] = 28
+            SETTINGS["version"] = 29
             save_config()
     except Exception:
         pass
@@ -385,7 +392,7 @@ def install_update(c, manifest=None):
             try:
                 shutil.copy2(target, backup)
             except Exception:
-                logger.debug("Не удалось создать backup", exc_info=True)
+                pass
         os.replace(tmp_path, target)
         tmp_path = ""
         SETTINGS["last_installed_version"] = rv
@@ -401,7 +408,6 @@ def install_update(c, manifest=None):
         with LOCK:
             UPDATE_STATE.update(status="error", error=msg)
         logger.error("Ошибка установки: %s", msg)
-        logger.debug("TRACEBACK", exc_info=True)
         return False, msg
     finally:
         if tmp_path:
@@ -421,7 +427,6 @@ def _restart_cardinal(delay=1.2):
             os.execv(sys.executable, argv)
         except Exception:
             logger.error("Не удалось автоматически перезапустить Cardinal")
-            logger.debug("TRACEBACK", exc_info=True)
     threading.Thread(target=_job, daemon=True, name="KBAI-restart").start()
 
 def _update_notification_text(manifest):
@@ -476,7 +481,7 @@ def check_updates_cycle(c, notify=True, force=False):
                         f"✅ <b>KiriillBR AI обновлён до v{utils.escape(str(manifest['version']))}</b>\n"
                         "Файл заменён. Для применения нужен перезапуск Cardinal.", keyboard=kb)
             except Exception:
-                logger.debug("TRACEBACK", exc_info=True)
+                pass
             if SETTINGS.get("auto_restart_after_update", False):
                 _restart_cardinal(2.0)
         return manifest, msg
@@ -492,7 +497,7 @@ def update_worker(c):
             if SETTINGS.get("update_checks_enabled", True):
                 check_updates_cycle(c, notify=True, force=True)
         except Exception:
-            logger.debug("Ошибка воркера обновлений", exc_info=True)
+            pass
         try:
             minutes = int(SETTINGS.get("update_check_interval_minutes", 30) or 30)
         except Exception:
@@ -1044,7 +1049,7 @@ def _get_chat_order_status(chat_id):
                 latest = st
     return latest
 
-def _orders_for_prompt(chat_id, limit=5):
+def _orders_for_prompt(chat_id, limit=3):
     ck = str(chat_id or "")
     if not ck:
         return []
@@ -1301,7 +1306,7 @@ def _observe_transaction_message(c, item):
         elif type_name in {"ORDER_REFUNDED", "ORDER_REFUND"}:
             _handle_order_refunded(c, item)
     except Exception:
-        logger.debug("_observe_transaction_message failed", exc_info=True)
+        pass
 
 def on_new_paid_order(c, e):
     try:
@@ -1317,7 +1322,7 @@ def on_new_paid_order(c, e):
             return
         _handle_new_paid_order(c, order)
     except Exception:
-        logger.debug("on_new_paid_order failed", exc_info=True)
+        pass
 
 def send_post_order_survey(c, chat_id, chat_name):
     if not SETTINGS.get("post_order_survey", True):
@@ -1330,7 +1335,6 @@ def send_post_order_survey(c, chat_id, chat_name):
         add_history(chat_id, "assistant", survey)
         return True
     except Exception:
-        logger.warning("Не удалось отправить опрос chat=%s", chat_id, exc_info=True)
         return False
 
 def _pending_survey_get(chat_id):
@@ -1487,6 +1491,7 @@ _RE_GREET = re.compile(r"^(?:привет\w*|здравствуй\w*|добры�
 _RE_THANKS = re.compile(r"(?:спасибо|благодарю|спс)", re.I)
 _RE_WELL = re.compile(r"\bкак (?:у (?:тебя|вас) )?дела\b|\bкак жизнь\b|\bкак настроение\b", re.I)
 _RE_BYE = re.compile(r"^(?:пока|до свидания|до встречи|всего доброго)[!., ]*$", re.I)
+_RE_REFUND_WORD = re.compile(r"возврат|вернул|возвращ|refund", re.I)
 
 def _apply_watermark(text):
     body = str(text or "").rstrip()
@@ -1512,6 +1517,21 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
         cleaned = _strip_seller_offer(out)
         if cleaned and cleaned != out:
             out = cleaned
+    # ГЛАВНАЯ ЗАЩИТА: если свежий заказ чата paid, а AI написал «возврат/вернул» — переписать ответ.
+    try:
+        _chat_id = str(getattr(m, "chat_id", "") or "")
+        if _chat_id and _RE_REFUND_WORD.search(out):
+            _latest = _orders_for_prompt(_chat_id, limit=1)
+            if _latest:
+                _loid, _lst = _latest[0]
+                if _lst == "paid":
+                    logger.warning("wrong_refund_on_paid chat=%s order=%s -> rewriting", _chat_id, _loid)
+                    out = f"Да, заказ #{_loid} оплачен, спасибо! Сейчас подготовлю и выдам товар."
+                elif _lst == "confirmed":
+                    logger.info("strip refund on confirmed chat=%s order=%s", _chat_id, _loid)
+                    out = f"Заказ #{_loid} подтверждён и закрыт. Если нужна помощь — напишите."
+    except Exception:
+        logger.debug("paid-guard failed", exc_info=True)
     if not out:
         out = "Хорошо, отвечу по существу. Уточните, пожалуйста, что именно нужно."
     final = _apply_watermark(out)
@@ -1644,7 +1664,7 @@ def _enrich(c, lid):
                     extra.pop(bad, None)
                 LOTS[lid]["extra_fields"] = extra
     except Exception:
-        logger.debug("enrich %s", lid, exc_info=True)
+        pass
 
 def sync_lots(c, enrich=True):
     try:
@@ -1835,21 +1855,25 @@ def _lot_prompt(lot):
     return base
 
 def _chat_status_hint(chat_id):
-    orders = _orders_for_prompt(chat_id, limit=5)
+    orders = _orders_for_prompt(chat_id, limit=3)
     if not orders:
         return ""
-    lines = ["\nЗАКАЗЫ В ЭТОМ ЧАТЕ (по номерам, свежие первыми):"]
+    lines = ["\nЗАКАЗЫ В ЭТОМ ЧАТЕ (свежие первыми, максимум 3):"]
     for oid, st in orders:
         ru = _STATUS_RU.get(st, st)
         lines.append(f"- #{oid} — {st} ({ru})")
+    latest_oid, latest_st = orders[0]
+    latest_ru = _STATUS_RU.get(latest_st, latest_st)
     lines.append("")
-    lines.append("КАК ИСПОЛЬЗОВАТЬ:")
-    lines.append("- Определи номер заказа из истории чата или по последнему активному заказу.")
-    lines.append("- paid — можешь подтвердить оплату, назвать следующий шаг.")
-    lines.append("- confirmed — заказ закрыт, НЕ благодари за оплату повторно.")
-    lines.append("- refunded — по заказу ВОЗВРАТ. НИКОГДА не пиши «оплата видна, спасибо», "
-        "НЕ благодари. Скажи, что заказ возвращён, спроси, нужен ли новый.")
-    lines.append("- НЕ путай статусы разных заказов между собой.")
+    lines.append(f"САМЫЙ СВЕЖИЙ ЗАКАЗ В ЧАТЕ: #{latest_oid} — {latest_st} ({latest_ru})")
+    lines.append("")
+    lines.append("КАК ОТВЕЧАТЬ:")
+    lines.append("- Если покупатель не назвал номер заказа — отвечай про САМЫЙ СВЕЖИЙ заказ.")
+    lines.append("- Если покупатель пишет «оплатил», «видно оплату», «есть оплаченный заказ» — "
+                 "отвечай про САМЫЙ СВЕЖИЙ. Если у него paid — подтверди оплату.")
+    lines.append("- refunded/confirmed относятся ТОЛЬКО к заказу с указанным номером #XXXX. "
+                 "НИКОГДА не переноси их на другие заказы и не применяй к свежему, если это разные заказы.")
+    lines.append("- Если у самого свежего заказа статус paid — НЕ говори «заказ возвращён».")
     lines.append("- НИКОГДА не пиши «продавец свяжется с вами».")
     return "\n".join(lines) + "\n"
 
@@ -2081,7 +2105,6 @@ def on_last_chat(c, e):
             logger.exception("legacy handler")
     POOL.submit(job)
 
-# ============ Telegram UI (продолжение в следующем блоке) ============
 def init_telegram(cardinal: "Cardinal") -> None:
     load_config()
     if not cardinal.telegram:
@@ -2163,7 +2186,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             bot.edit_message_text(main_text(), call.message.chat.id, call.message.id, reply_markup=main_kb())
             bot.answer_callback_query(call.id)
         except Exception:
-            logger.debug("show failed", exc_info=True)
+            pass
 
     def toggle(call):
         SETTINGS["enabled"] = not SETTINGS["enabled"]; save_config(); show(call)
