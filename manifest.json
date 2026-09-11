@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "92bc1eeb7a0d1a4487feb85a97cd87db7f3b9acfdf356b2beb4a4eb167c7fec5",
-  "notes": "AI больше не отказывает по оплате/заказу. Спасибо за оплату. Опрос после подтверждения.",
+  "sha256": "31206a83b029312129a2bbc03b337bdc68f34594b5b6b9b8c3fc32149596b539",
+  "notes": "Убрано двоение уведомлений и «спасибо». Не благодарит по подтверждённым/возвращённым заказам. Не предлагает подключить продавца после оплаты.",
   "mandatory": false
 }
