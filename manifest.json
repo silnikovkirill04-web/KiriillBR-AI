@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "18625450bcc537f519941f04453b5565f30f6289ccd46c8f1404f39ce3633270",
-  "notes": "Статус каждого заказа по номеру (paid/confirmed/refunded). AI не путает заказы в одном чате. Не подтверждает оплату после возврата/подтверждения.",
+  "sha256": "5672517804cef49cb4e70720299a5040c99ada9152eb6d7a3f33d9265ec3f3d5",
+  "notes": "Жёсткий paid-guard: если свежий заказ в чате paid, ответ AI про возврат переписывается. Не путает заказы между собой.",
   "mandatory": false
 }
