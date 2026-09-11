@@ -2450,4 +2450,48 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.msg_handler(make_setter("api_key"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
     tg.msg_handler(make_setter("api_model"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
     tg.msg_handler(make_setter("system_prompt"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_PROMPT))
-    tg.msg_handler
+    tg.msg_handler(make_setter("seller_info"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
+    tg.msg_handler(make_setter("ai_timeout",
+                               validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TIMEOUT))
+    tg.msg_handler(make_setter("history_char_budget",
+                               validate=lambda v: v.isdigit() and 2000 <= int(v) <= 40000, transform=int),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BUDGET))
+
+    tg.msg_handler(make_setter("seller_notify_cooldown",
+                               validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
+    tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
+
+    tg.msg_handler(cmd_ai, commands=["ai"])
+    cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
+
+
+def post_init(c: "Cardinal") -> None:
+    if not os.path.exists(CFG_PATH):
+        load_config()
+    try:
+        sync_lots(c, enrich=False)
+    except Exception:
+        logger.debug("post_init", exc_info=True)
+
+
+def post_start(c: "Cardinal") -> None:
+    threading.Thread(target=lot_worker, args=(c,), daemon=True, name="KBAI-lots").start()
+    threading.Thread(target=update_worker, args=(c,), daemon=True, name="KBAI-updates").start()
+
+
+def on_delete(c: "Cardinal", call: CallbackQuery) -> None:
+    STOP.set()
+    try:
+        POOL.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        pass
+
+
+BIND_TO_PRE_INIT = [init_telegram]
+BIND_TO_POST_INIT = [post_init]
+BIND_TO_POST_START = [post_start]
+BIND_TO_NEW_MESSAGE = [on_message]
+BIND_TO_LAST_CHAT_MESSAGE_CHANGED = [on_last_chat]
+BIND_TO_DELETE = on_delete
