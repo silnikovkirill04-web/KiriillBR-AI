@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "2a5ed7b832750878ffe30eb50f1576e470cb8e9fb64ee224ba4601be0ccf9e3e",
-  "notes": "Синхронизация заказов с FunPay каждые 30 сек. Сложные вопросы — к продавцу. Paid в приоритете при путанице.",
+  "sha256": "fb36e1a6e47d6349e1cb8851b90a888d1f170b45db1c6ed03083efcd23811bce",
+  "notes": "4 уровня детекции событий: тип сообщения → парсинг текста FunPay → диагностика → guard. Логирует funpay_event_unknown.",
   "mandatory": false
 }
