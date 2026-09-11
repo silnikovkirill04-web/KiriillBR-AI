@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "9bc39d61a6586607d1188a6551cf729e62afbbd553b994f1633c571e1880b7d7",
-  "notes": "Оффтоп-фильтр: код, взлом, читы, задачи, ключи, токены — отказ. Исправлен сброс памяти чатов.",
+  "sha256": "dee62300913f4726150d78965db63422b49c1d280f7b332fb991581b3ebddb80",
+  "notes": "Возвращена обработка оплат: ORDER_PURCHASED ловится, уведомление продавцу всегда, автовыдача payment_msg, опрос после заказа.",
   "mandatory": false
 }
