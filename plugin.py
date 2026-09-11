@@ -13,11 +13,10 @@ from tg_bot.static_keyboards import CLEAR_STATE_BTN
 if TYPE_CHECKING:
     from cardinal import Cardinal
     from FunPayAPI.updater.events import NewMessageEvent
-
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "3.2.0"
-DESCRIPTION = "AI-заместитель продавца FunPay. 4 уровня детекции событий."
+VERSION = "3.2.1"
+DESCRIPTION = "AI-заместитель продавца FunPay. Статусы заказов + парсер событий."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -43,22 +42,23 @@ _VISION_PROMPT = ("Ты — AI-заместитель продавца FunPay. �
     "Не выдумывай того, чего не видно.")
 DEFAULT_PROMPT = (
     "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n"
-    "ЗАКАЗЫ И ОПЛАТА:\n"
-    "- Ты НЕ знаешь текущего статуса заказов и не выдумывай его.\n"
-    "- Если покупатель пишет «оплатил», «видно оплату» — ответь: «Спасибо за оплату! "
-    "Продавец выдаст товар в ближайшее время.»\n"
-    "- Если покупатель просит возврат — ответь: «Возврат оформляет продавец. "
-    "Я передал ваш запрос — он ответит в этом чате.»\n"
-    "- НИКОГДА не называй номер заказа, если покупатель его сам не написал.\n"
-    "- НИКОГДА не говори «заказ возвращён» или «заказ подтверждён», не видя этого в чате.\n\n"
-    "ЧТО ТЫ ДЕЛАЕШЬ (ЭТО НЕ ОФФТОП): оплата, заказ, статус, сроки, доставка, автовыдача, товар, лот, "
+    "СТАТУСЫ ЗАКАЗОВ В ЭТОМ ЧАТЕ (ВАЖНО):\n"
+    "- Ниже — список заказов чата с номерами и статусами. Свежие первыми.\n"
+    "- Есть строка «САМЫЙ СВЕЖИЙ ЗАКАЗ В ЧАТЕ: #XXXX (статус)» — используй её, если номер не назван.\n"
+    "- paid — оплата пришла. На «оплатил?» / «видно?» отвечай «Да, заказ #XXXX оплачен, спасибо!»\n"
+    "- confirmed — заказ закрыт. Отвечай «Заказ #XXXX подтверждён и закрыт.»\n"
+    "- refunded — возврат. Отвечай «Заказ #XXXX возвращён, деньги вернулись покупателю.»\n"
+    "- Если покупатель просит возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос.»\n"
+    "- Статус относится ТОЛЬКО к заказу с указанным номером. Не переноси на другие.\n"
+    "- НЕ путай: если у свежего paid, а у старого refunded — на вопрос про оплату отвечай про paid.\n\n"
+    "ЧТО ТЫ ДЕЛАЕШЬ (НЕ ОФФТОП): оплата, заказ, статус, сроки, доставка, автовыдача, товар, лот, "
     "цена, наличие, количество, характеристики, скидка, торг, отзывы, подтверждение, вопросы после покупки.\n\n"
     "ЧТО ТЫ НЕ ДЕЛАЕШЬ (оффтоп): код, скрипты, SQL, Python, C++, Java; задачи по учёбе; сочинения, рефераты; "
     "взлом, брутфорс, эксплойты, читы, дюп, DDoS; боты для игр, автофарм; ключи, токены, пароли, "
     "промокоды; погода, новости, политика, здоровье, знакомства; переводы; медицина, юридика.\n"
     "На оффтоп: «Извините, я помощник продавца FunPay и могу отвечать только по вопросам, "
     "связанным с покупкой и товаром в этом чате.»\n"
-    "НИКОГДА не используй эту фразу, если вопрос про оплату/заказ/товар/сроки/доставку/цену/наличие/скидку/отзыв.\n\n"
+    "НИКОГДА не используй эту фразу на вопросы про оплату/заказ/товар.\n\n"
     "ПРО ОПЛАТУ И ЗАКАЗ (сам, без продавца):\n"
     "- Оплата, статус заказа, подтверждение, выдача, доставка, отзыв — ты УПОЛНОМОЧЕН отвечать сам.\n"
     "- НИКОГДА не пиши «продавец свяжется с вами», «передам продавцу» по этим вопросам.\n\n"
@@ -91,8 +91,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 персданных, вредоносного ПО, аккаунтов соцсетей, телефонных номеров, аккаунтов оптом,
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
-DEFAULTS = {
-    "version": 32, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 33, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -106,7 +105,7 @@ DEFAULTS = {
     "neutral_on_anger": True, "no_unconfirmed_promises": True,
     "post_order_survey": True,
     "post_order_survey_text": ("Спасибо за заказ! 🙌 Подскажите, как в целом прошёл наш диалог? "
-        "Оцените, пожалуйста, от 1 до 10 и коротко объясните — что понравилось, что можно улучшить."),
+        "Оцените от 1 до 10 и коротко объясните — что понравилось, что можно улучшить."),
     "auto_thank_after_payment": True,
     "auto_thank_text": "Спасибо за оплату! 🙌 Сейчас подготовлю и выдам ваш товар.",
     "auto_fulfill_paid_orders": False, "auto_fulfill_delay_sec": 3,
@@ -114,8 +113,7 @@ DEFAULTS = {
     "update_manifest_url": PUBLISHER_UPDATE_MANIFEST_URL,
     "update_check_interval_minutes": 30, "auto_update": False,
     "auto_restart_after_update": False, "last_notified_version": "",
-    "last_installed_version": "", "pending_restart_version": "",
-}
+    "last_installed_version": "", "pending_restart_version": ""}
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
 HISTORY = {}
@@ -144,7 +142,7 @@ _ORDER_CLOSED_TTL = 7 * 86400
 _ORDER_PRIO = {"paid": 0, "confirmed": 1, "refunded": 2}
 _STATUS_RU = {"paid": "оплачен, ждём выдачу",
     "confirmed": "закрыт и подтверждён покупателем",
-    "refunded": "деньги возвращены покупателю по этому заказу"}
+    "refunded": "деньги возвращены покупателю"}
 
 def _merge(a, b):
     if isinstance(a, dict) and isinstance(b, dict):
@@ -187,12 +185,12 @@ def load_config():
             SETTINGS.setdefault("auto_thank_text", DEFAULTS["auto_thank_text"])
             SETTINGS["version"] = 25
             save_config()
-        if cv < 32:
+        if cv < 33:
             cur = str(SETTINGS.get("system_prompt") or "")
-            if cur.startswith("Ты — AI-заместитель продавца") and "Ты НЕ знаешь текущего статуса" not in cur:
+            if cur.startswith("Ты — AI-заместитель продавца") and "СТАТУСЫ ЗАКАЗОВ" not in cur:
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
             SETTINGS.setdefault("orders_refresh_sec", 30)
-            SETTINGS["version"] = 32
+            SETTINGS["version"] = 33
             save_config()
     except Exception:
         pass
@@ -310,7 +308,6 @@ def fetch_update_manifest(force=False):
         msg = f"{type(exc).__name__}: {exc}"
         with LOCK:
             UPDATE_STATE.update(checked_at=now, status="error", error=msg, manifest=None, available=False)
-        logger.warning("Не удалось проверить обновления: %s", msg)
         return None, msg
 
 def _plugin_file_path(c):
@@ -410,7 +407,6 @@ def install_update(c, manifest=None):
         msg = f"{type(exc).__name__}: {exc}"
         with LOCK:
             UPDATE_STATE.update(status="error", error=msg)
-        logger.error("Ошибка установки: %s", msg)
         return False, msg
     finally:
         if tmp_path:
@@ -429,7 +425,7 @@ def _restart_cardinal(delay=1.2):
             argv = [sys.executable] + (list(sys.argv[1:]) if getattr(sys, "frozen", False) else list(sys.argv))
             os.execv(sys.executable, argv)
         except Exception:
-            logger.error("Не удалось автоматически перезапустить Cardinal")
+            pass
     threading.Thread(target=_job, daemon=True, name="KBAI-restart").start()
 
 def _update_notification_text(manifest):
@@ -461,7 +457,6 @@ def notify_update(c, manifest, force=False):
         save_config()
         return True
     except Exception:
-        logger.warning("Не удалось отправить уведомление об обновлении", exc_info=True)
         return False
 
 def check_updates_cycle(c, notify=True, force=False):
@@ -630,19 +625,10 @@ _RE_PURCHASE_TOPIC = re.compile(r"(?:\bоплат\w*|\bзаплат\w*|\bопл�
     r"\bвыда\w*|\bдостав\w*|\bавтовыда\w*|\bпришл\w*|\bполуч\w*|\bподтверд\w*|\bотзыв\w*|"
     r"\bцен\w*|\bналичи\w*|\bсрок\w*|\bлот\w*|\bтовар\w*|\bскидк\w*|\bдешевл\w*|\bторг\w*|"
     r"\bвидн\w*\s+оплат|\bпришл\w*\s+оплат|\bпо\s+заказ|\bпо\s+покупк|\bпо\s+лот|\bпо\s+товар)", re.I)
-
-# === 4 УРОВНЯ ДЕТЕКЦИИ: регулярки для парсинга текста FunPay ===
-_RE_FPAY_REFUND = re.compile(
-    r"(?:вернул|возвратил)\s+деньги\s+покупателю.*?по\s+заказу\s*#?([A-Z0-9]{6,12})",
-    re.I,
-)
-_RE_FPAY_CONFIRMED = re.compile(
-    r"(?:подтвердил\s+выполнение\s+заказа|заказ\s+подтвержд[её]н|подтвержд[её]н\s+заказ)\s*#?([A-Z0-9]{6,12})",
-    re.I,
-)
+_RE_FPAY_REFUND = re.compile(r"(?:вернул|возвратил)\s+деньги\s+покупателю.*?по\s+заказу\s*#?([A-Z0-9]{6,12})", re.I)
+_RE_FPAY_CONFIRMED = re.compile(r"(?:подтвердил\s+выполнение\s+заказа|заказ\s+подтвержд[её]н|подтвержд[её]н\s+заказ)\s*#?([A-Z0-9]{6,12})", re.I)
 _RE_FPAY_PAID = re.compile(r"оплатил\s+заказ\s*#?([A-Z0-9]{6,12})", re.I)
 _RE_FPAY_HINT = re.compile(r"(?:оплач|возврат|вернул|вернёт|вернет|подтверд|refund|confirm)", re.I)
-
 _RE_OFFTOPIC_CODE = re.compile(r"(?:напиш\w*\s+(?:мне\s+)?(?:код|скрипт|программ\w*|функци\w*|бот\w*|"
     r"парсер\w*|сортиров\w*)|напиш\w*\s+(?:на\s+)?(?:python|питон|js|javascript|java|c\+\+|c#|"
     r"csharp|sql|bash|html|css|php|go|rust|kotlin|swift)|(?:код|скрипт|программ\w*|функци\w*|бот)\s+на\s+"
@@ -718,7 +704,6 @@ def is_complex(text):
     return bool(_COMPLEX_TOPIC.search(str(text or "")))
 
 def _parse_funpay_event(text):
-    """Парсит текст системного сообщения FunPay. Возвращает (status, order_id) или ("", "")."""
     s = str(text or "")
     if not s:
         return "", ""
@@ -922,7 +907,7 @@ def tone_hint(text):
         return ""
     if looks_angry(text):
         return ("Покупатель раздражён или агрессивен. НЕ зеркаль агрессию. "
-                "Ответь спокойно, по-деловому, сосредоточься на решении вопроса.")
+                "Ответь спокойно, по-деловому.")
     return ""
 
 _SELLER_HANDOFF_PATTERNS = [r"уточн\w*\s+у\s+продавц",
@@ -983,7 +968,7 @@ def notify_seller(c, m, buyer_text, ai_answer="", reason="", header=""):
         try:
             c.telegram.send_notification(body, keyboard=keyboard)
         except Exception:
-            logger.warning("Не удалось отправить уведомление продавцу", exc_info=True)
+            pass
     threading.Thread(target=_job, daemon=True, name="KBAI-notify").start()
     return True
 
@@ -995,7 +980,7 @@ def notify_seller_text(c, *, header, body):
         try:
             c.telegram.send_notification(text)
         except Exception:
-            logger.warning("Не удалось отправить уведомление продавцу о заказе", exc_info=True)
+            pass
     threading.Thread(target=_job, daemon=True, name="KBAI-order-notify").start()
     return True
 
@@ -1158,7 +1143,7 @@ def _send_auto_thank(c, chat_id, chat_name, order_id):
             c.send_message(chat_id, text, chat_name or "покупатель", watermark=False)
             add_history(chat_id, "assistant", text)
         except Exception:
-            logger.warning("auto_thank failed", exc_info=True)
+            pass
     POOL.submit(_job)
 
 def _fulfill_paid_order(c, order):
@@ -1186,7 +1171,7 @@ def _fulfill_paid_order(c, order):
     lot = _find_lot_for_order(order)
     if lot is None:
         if SETTINGS.get("auto_fulfill_notify_seller", True):
-            notify_seller_text(c, header="🛒 <b>Новый оплаченный заказ</b>",
+            notify_seller_text(c, header="🛒 <b>Оплачен заказ</b>",
                 body=(f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
                     f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
                     f"❓ Лот не определён. Выдайте вручную."))
@@ -1202,7 +1187,7 @@ def _fulfill_paid_order(c, order):
                     body=(f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
                         f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
                         f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
-                        f"⚠️ Payment_msg заблокирован: <b>{utils.escape(violation)}</b>."))
+                        f"⚠️ payment_msg заблокирован: <b>{utils.escape(violation)}</b>."))
             return
         try:
             delay = max(0, min(60, int(SETTINGS.get("auto_fulfill_delay_sec", 3) or 0)))
@@ -1301,12 +1286,10 @@ def _handle_order_refunded(c, item):
         _mark_order_closed(order_id, chat_id, "refunded")
 
 def _observe_transaction_message(c, item):
-    """4-уровневая детекция: тип → текст → диагностика."""
     try:
         type_name = _detect_message_type_name(item)
         text = str(getattr(item, "text", "") or "")
         chat_id = str(getattr(item, "chat_id", "") or "")
-
         if type_name == "ORDER_PURCHASED":
             _handle_paid_order_message(c, item)
             return
@@ -1316,12 +1299,10 @@ def _observe_transaction_message(c, item):
         if type_name in {"ORDER_REFUNDED", "ORDER_REFUND", "REFUND"}:
             _handle_order_refunded(c, item)
             return
-
         if text:
             status, oid = _parse_funpay_event(text)
             if status and oid:
-                logger.info("funpay_text_event status=%s order=%s chat=%s",
-                            status, oid, chat_id)
+                logger.info("funpay_text_event status=%s order=%s chat=%s", status, oid, chat_id)
                 if status == "paid":
                     if _get_order_status(oid) not in ("confirmed", "refunded"):
                         _set_order_status(oid, chat_id, "paid")
@@ -1330,12 +1311,11 @@ def _observe_transaction_message(c, item):
                 elif status == "confirmed":
                     _mark_order_closed(oid, chat_id, "confirmed")
                 return
-
         if text and _RE_FPAY_HINT.search(text):
             logger.info("funpay_event_unknown type=%s chat=%s text=%r",
                         type_name or "(none)", chat_id, text[:200])
     except Exception:
-        logger.debug("_observe_transaction_message failed", exc_info=True)
+        pass
 
 def on_new_paid_order(c, e):
     try:
@@ -1404,8 +1384,7 @@ def _extract_message_image(m):
                 break
         if not url or not url.lower().startswith(("http://", "https://")):
             return ""
-        r = requests.get(url, timeout=(6, 20), stream=True,
-                         headers={"User-Agent": UPDATE_USER_AGENT})
+        r = requests.get(url, timeout=(6, 20), stream=True, headers={"User-Agent": UPDATE_USER_AGENT})
         r.raise_for_status()
         ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype and ctype not in _VISION_ALLOWED_MIME:
@@ -1545,6 +1524,20 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
         cleaned = _strip_seller_offer(out)
         if cleaned and cleaned != out:
             out = cleaned
+    try:
+        _chat_id = str(getattr(m, "chat_id", "") or "")
+        if _chat_id and _RE_REFUND_WORD.search(out):
+            _latest = _orders_for_prompt(_chat_id, limit=1)
+            if _latest:
+                _loid, _lst = _latest[0]
+                if _lst == "paid":
+                    logger.warning("forced_paid_reply chat=%s order=%s", _chat_id, _loid)
+                    out = f"Да, заказ #{_loid} оплачен, спасибо! Сейчас подготовлю и выдам товар."
+                elif _lst == "confirmed":
+                    logger.info("strip_refund_on_confirmed chat=%s order=%s", _chat_id, _loid)
+                    out = f"Заказ #{_loid} подтверждён и закрыт. Если нужна помощь — напишите."
+    except Exception:
+        pass
     if not out:
         out = "Хорошо, отвечу по существу. Уточните, пожалуйста, что именно нужно."
     final = _apply_watermark(out)
@@ -1727,19 +1720,6 @@ def lot_worker(c):
             except Exception:
                 logger.exception("lot_worker")
 
-def _inspect_account_methods(c):
-    """Логирует доступные методы Account для отладки интеграции."""
-    try:
-        acc = c.account
-        names = [x for x in dir(acc) if not x.startswith("_")]
-        keywords = ("sale", "order", "sell", "purchase", "lot", "chat", "get_")
-        interesting = sorted([n for n in names
-                              if any(k in n.lower() for k in keywords)])
-        logger.info("FunPayAPI account methods (%d): %s",
-                    len(interesting), ", ".join(interesting[:60]))
-    except Exception:
-        logger.debug("inspect account methods failed", exc_info=True)
-
 def add_history(chat_id, role, text):
     t = str(text or "").strip()[:3000]
     if not t:
@@ -1888,6 +1868,28 @@ def _lot_prompt(lot):
             base += "\n\nИГРОВЫЕ ПАРАМЕТРЫ ЛОТА:\n" + "\n".join(lines)
     return base
 
+def _chat_status_hint(chat_id):
+    orders = _orders_for_prompt(chat_id, limit=3)
+    if not orders:
+        return ""
+    lines = ["\nЗАКАЗЫ В ЭТОМ ЧАТЕ (свежие первыми, максимум 3):"]
+    for oid, st in orders:
+        ru = _STATUS_RU.get(st, st)
+        lines.append(f"- #{oid} — {st} ({ru})")
+    latest_oid, latest_st = orders[0]
+    latest_ru = _STATUS_RU.get(latest_st, latest_st)
+    lines.append("")
+    lines.append(f"САМЫЙ СВЕЖИЙ ЗАКАЗ В ЧАТЕ: #{latest_oid} — {latest_st} ({latest_ru})")
+    lines.append("")
+    lines.append("КАК ОТВЕЧАТЬ:")
+    lines.append("- paid → «Да, заказ #XXXX оплачен, спасибо!»")
+    lines.append("- confirmed → «Заказ #XXXX подтверждён и закрыт.»")
+    lines.append("- refunded → «Заказ #XXXX возвращён, деньги вернулись покупателю.»")
+    lines.append("- Если номер не назван — отвечай про САМЫЙ СВЕЖИЙ заказ.")
+    lines.append("- Статус относится ТОЛЬКО к заказу с указанным номером. Не переноси на другие.")
+    lines.append("- Если просят возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос.»")
+    return "\n".join(lines) + "\n"
+
 def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text=""):
     seller = str(SETTINGS.get("seller_info") or "").strip()
     memory_note = ("Ты видишь ВСЮ историю этого чата. Отвечай ТОЛЬКО на последнее сообщение." if full_chat
@@ -1904,11 +1906,12 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text=""):
         promises = ("\nОБЕЩАНИЯ И СКИДКИ:\n- НИКОГДА не обещай скидку/бонус/подарок/акцию, "
             "если это явно не указано в ТЕКУЩИЙ ТОВАР.\n"
             "- Если покупатель спрашивает про скидку, а в лоте её нет — скажи, что в лоте не указана.\n")
+    status_hint = _chat_status_hint(chat_id)
     return (f"{SETTINGS['system_prompt']}\n\nПАМЯТЬ ДИАЛОГА:\n{memory_note}\n\n"
         f"КОНТЕКСТ ТОВАРА:\n{viewing_note}\n\n"
         f"ИНФОРМАЦИЯ О ПРОДАВЦЕ:\n{seller or 'не задана'}\n\n"
         f"ТЕКУЩИЙ ТОВАР:\n{_lot_prompt(lot)}\n\n{FUNPAY_RULES_SNAPSHOT}\n\n"
-        f"{promises}{extra}\n"
+        f"{status_hint}\n{promises}{extra}\n"
         "Дополнительно:\n- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар.\n"
         "- Название платформы внутри товара — НЕ контакт.")
 
@@ -2113,8 +2116,7 @@ def on_last_chat(c, e):
             logger.exception("legacy handler")
     POOL.submit(job)
 
-# ============ Telegram UI — продолжение в блоке 2 ============
-def init_telegram(cardinal: "Cardinal") -> None:
+def init_telegram(cardinal):
     load_config()
     if not cardinal.telegram:
         return
@@ -2193,7 +2195,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-
     def toggle(call):
         SETTINGS["enabled"] = not SETTINGS["enabled"]; save_config(); show(call)
     def toggle_wm(call):
@@ -2228,7 +2229,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
         tg.clear_state(m.chat.id, m.from_user.id, True)
         SETTINGS["auto_thank_text"] = (m.text or "").strip(); save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-
     def ask_af_delay(call):
         msg = bot.send_message(call.message.chat.id, "Задержка перед отправкой payment_msg (0–60):",
                                reply_markup=CLEAR_STATE_BTN())
@@ -2244,7 +2244,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             bot.reply_to(m, "❌ Введите число 0–60."); return
         SETTINGS["auto_fulfill_delay_sec"] = v; save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-
     def ask_survey_text(call):
         msg = bot.send_message(call.message.chat.id, "Пришлите новый текст опроса после заказа:",
                                reply_markup=CLEAR_STATE_BTN())
@@ -2254,7 +2253,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
         tg.clear_state(m.chat.id, m.from_user.id, True)
         SETTINGS["post_order_survey_text"] = (m.text or "").strip(); save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-
     def reset_statuses(call):
         with LOCK:
             ORDER_STATUS.clear()
@@ -2266,7 +2264,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
         except Exception:
             pass
         show(call)
-
     def clear_history(call):
         with LOCK:
             for chat_id in list(HISTORY.keys()):
@@ -2282,7 +2279,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
         except Exception:
             pass
         show(call)
-
     def list_chats(call):
         with LOCK:
             items = list(HISTORY.items())
@@ -2305,7 +2301,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-
     def show_rules(call):
         text = ("📋 <b>Снимок правил FunPay в промпте</b>\n"
             "Источник: <a href='https://funpay.com/trade/info'>funpay.com/trade/info</a>\n\n"
@@ -2316,14 +2311,12 @@ def init_telegram(cardinal: "Cardinal") -> None:
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-
     def ask(state, prompt):
         def cb(call):
             msg = bot.send_message(call.message.chat.id, prompt, reply_markup=CLEAR_STATE_BTN())
             tg.set_state(call.message.chat.id, msg.id, call.from_user.id, state)
             bot.answer_callback_query(call.id)
         return cb
-
     def make_setter(field, validate=None, transform=None):
         def setter(m):
             tg.clear_state(m.chat.id, m.from_user.id, True)
@@ -2334,7 +2327,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             save_config()
             bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
         return setter
-
     def test_api(call):
         bot.answer_callback_query(call.id, "Проверяю…")
         try:
@@ -2356,7 +2348,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
         except Exception as e:
             bot.send_message(call.message.chat.id,
                 f"❌ Ошибка:\n<code>{utils.escape(f'{type(e).__name__}: {e}'[:500])}</code>")
-
     def ask_test_photo(call):
         msg = bot.send_message(call.message.chat.id,
             "📷 Отправьте фото — я передам его в AI (vision) и покажу ответ.\n\n"
@@ -2365,7 +2356,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_TEST_PHOTO)
         bot.answer_callback_query(call.id)
-
     def handle_test_photo(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         if not getattr(m, "photo", None):
@@ -2420,7 +2410,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             bot.reply_to(m, f"❌ API {code}:\n<code>{utils.escape(body)}</code>")
         except Exception as e:
             bot.reply_to(m, f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}")
-
     def notify_test(call):
         bot.answer_callback_query(call.id, "Отправляю…")
         def job():
@@ -2433,7 +2422,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             except Exception as e:
                 logger.warning("test notify failed: %s", e)
         threading.Thread(target=job, daemon=True, name="KBAI-notify-test").start()
-
     def refresh_lots(call):
         bot.answer_callback_query(call.id, "Запущено…")
         msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую лоты…")
@@ -2445,7 +2433,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             except Exception:
                 pass
         POOL.submit(job)
-
     def updates_text():
         with LOCK:
             manifest = UPDATE_STATE.get("manifest")
@@ -2475,7 +2462,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
             lines.extend(["", f"⚠️ <code>{utils.escape(err[:400])}</code>"])
         lines.extend(["", "🛡 Проверяется HTTPS, SHA-256, UUID и синтаксис Python."])
         return "\n".join(lines)
-
     def updates_kb():
         kb = K(row_width=2)
         kb.row(B(f"🔎 Автопроверка {utils.bool_to_text(SETTINGS.get('update_checks_enabled', True))}",
@@ -2496,14 +2482,12 @@ def init_telegram(cardinal: "Cardinal") -> None:
             kb.add(B(f"♻️ Перезапустить и включить v{pending}", callback_data=f"{CB}:upd:restart"))
         kb.add(B("◀️ Назад", callback_data=f"{CB}:main"))
         return kb
-
     def open_updates(call):
         try:
             bot.edit_message_text(updates_text(), call.message.chat.id, call.message.id, reply_markup=updates_kb())
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-
     def update_cb(call):
         action = call.data.split(":")[-1]
         try:
@@ -2553,10 +2537,8 @@ def init_telegram(cardinal: "Cardinal") -> None:
         except Exception:
             pass
         open_updates(call)
-
     def cmd_ai(m):
         bot.send_message(m.chat.id, main_text(), reply_markup=main_kb())
-
     def set_update_interval(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         try:
@@ -2568,7 +2550,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
         SETTINGS["update_check_interval_minutes"] = v
         save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ К обновлениям", callback_data=f"{CB}:update")))
-
     def set_wm_text(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         raw = (m.text or "").strip()
@@ -2601,20 +2582,15 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.cbq_handler(ask_test_photo, lambda c: c.data == f"{CB}:testphoto")
     tg.cbq_handler(open_updates, lambda c: c.data in (f"{CB}:update", f"{CB}:updcfg"))
     tg.cbq_handler(update_cb, lambda c: c.data.startswith(f"{CB}:upd:"))
-    tg.cbq_handler(ask(ST_URL, "Введите base URL API (например <code>https://openrouter.ai/api/v1</code>):"),
-        lambda c: c.data == f"{CB}:url")
-    tg.cbq_handler(ask(ST_KEY, "Введите API key (можно <code>env:OPENROUTER_API_KEY</code>):"),
-        lambda c: c.data == f"{CB}:key")
-    tg.cbq_handler(ask(ST_MODEL, "Введите ID модели (например <code>openai/gpt-4o-mini</code>):"),
-        lambda c: c.data == f"{CB}:model")
+    tg.cbq_handler(ask(ST_URL, "Введите base URL API:"), lambda c: c.data == f"{CB}:url")
+    tg.cbq_handler(ask(ST_KEY, "Введите API key:"), lambda c: c.data == f"{CB}:key")
+    tg.cbq_handler(ask(ST_MODEL, "Введите ID модели:"), lambda c: c.data == f"{CB}:model")
     tg.cbq_handler(ask(ST_PROMPT, "Пришлите новый главный промпт:"), lambda c: c.data == f"{CB}:prompt")
     tg.cbq_handler(ask(ST_SELLER, "Пришлите данные о продавце:"), lambda c: c.data == f"{CB}:seller")
     tg.cbq_handler(ask(ST_TIMEOUT, "AI timeout 30–600 секунд:"), lambda c: c.data == f"{CB}:timeout")
     tg.cbq_handler(ask(ST_BUDGET, "Бюджет истории в символах (2000–40000):"), lambda c: c.data == f"{CB}:budget")
-    tg.cbq_handler(ask(ST_WM_TEXT, "Введите текст водяного знака. Отправьте <code>-</code> чтобы очистить:"),
-        lambda c: c.data == f"{CB}:wmtext")
-    tg.cbq_handler(ask(ST_NOTIFY_COOLDOWN, "Введите cooldown уведомлений продавцу в минутах (0–60):"),
-        lambda c: c.data == f"{CB}:cooldown")
+    tg.cbq_handler(ask(ST_WM_TEXT, "Введите текст водяного знака:"), lambda c: c.data == f"{CB}:wmtext")
+    tg.cbq_handler(ask(ST_NOTIFY_COOLDOWN, "Cooldown уведомлений 0–60 мин:"), lambda c: c.data == f"{CB}:cooldown")
     tg.cbq_handler(test_api, lambda c: c.data == f"{CB}:test")
     tg.cbq_handler(refresh_lots, lambda c: c.data == f"{CB}:lots")
 
@@ -2639,27 +2615,33 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.msg_handler(set_survey_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SURVEY_TEXT))
     tg.msg_handler(handle_test_photo, content_types=["photo"],
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TEST_PHOTO))
-
     tg.msg_handler(cmd_ai, commands=["ai"])
     cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
 
 
-def post_init(c: "Cardinal") -> None:
+def post_init(c):
     if not os.path.exists(CFG_PATH):
         load_config()
-    _inspect_account_methods(c)
+    try:
+        acc = c.account
+        names = [x for x in dir(acc) if not x.startswith("_")]
+        keywords = ("sale", "order", "sell", "purchase", "lot", "chat", "get_")
+        interesting = sorted([n for n in names if any(k in n.lower() for k in keywords)])
+        logger.info("FunPayAPI account methods (%d): %s", len(interesting), ", ".join(interesting[:60]))
+    except Exception:
+        pass
     try:
         sync_lots(c, enrich=False)
     except Exception:
         logger.debug("post_init", exc_info=True)
 
 
-def post_start(c: "Cardinal") -> None:
+def post_start(c):
     threading.Thread(target=lot_worker, args=(c,), daemon=True, name="KBAI-lots").start()
     threading.Thread(target=update_worker, args=(c,), daemon=True, name="KBAI-updates").start()
 
 
-def on_delete(c: "Cardinal", call=None) -> None:
+def on_delete(c, call=None):
     STOP.set()
     try:
         POOL.shutdown(wait=False, cancel_futures=True)
