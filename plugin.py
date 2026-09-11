@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 DESCRIPTION = ("AI-заместитель продавца FunPay на OpenAI-compatible API с автообновлениями. "
                "Помнит диалог, видит лот покупателя и игровые параметры лота, соблюдает правила FunPay, "
                "отвечает на языке покупателя, спокойно на агрессию, не выдумывает скидки/бонусы.")
@@ -29,8 +29,6 @@ CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
 
-# ============================== Канал обновлений ==============================
-# Ссылка на manifest.json в твоём репозитории. Замени, если репозиторий переименуется.
 PUBLISHER_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/manifest.json"
 UPDATE_MANIFEST_SCHEMA = 1
 UPDATE_MAX_BYTES = 3 * 1024 * 1024
@@ -41,6 +39,7 @@ CB = "KBAI"
 ST_MODEL, ST_PROMPT, ST_SELLER = f"{CB}_model", f"{CB}_prompt", f"{CB}_seller"
 ST_URL, ST_KEY, ST_TIMEOUT, ST_BUDGET = f"{CB}_url", f"{CB}_key", f"{CB}_timeout", f"{CB}_budget"
 ST_WM_TEXT, ST_NOTIFY_COOLDOWN = f"{CB}_wmtext", f"{CB}_cooldown"
+ST_UPD_INT = f"{CB}_updint"
 
 DEFAULT_PROMPT = (
     "Ты — AI-заместитель продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n\n"
@@ -50,15 +49,15 @@ DEFAULT_PROMPT = (
     "- Отвечай ТОЛЬКО на последнее сообщение покупателя. Не пересказывай историю.\n"
     "- Подстраивайся под стиль покупателя: неформально — неформально, формально — сдержанно.\n\n"
     "РОЛИ В ИСТОРИИ:\n"
-    "- assistant — твои прошлые ответы И сообщения продавца. Если уже отвечали — не повторяй.\n"
-    "- user — только покупатель. Не повторяй один ответ дважды подряд.\n\n"
+    "- assistant — твои прошлые ответы И сообщения продавца.\n"
+    "- user — только покупатель. Отвечай нормально, без ссылок на «уже отвечал».\n\n"
     "КОНТЕКСТ ТОВАРА:\n"
     "- ТЕКУЩИЙ ТОВАР — лот покупателя. НЕ проси уточнить, отвечай сразу по нему.\n"
-    "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА (Кубки, Бравлеры, Праймы и т.д.) — авторитетный источник, отвечай точно по цифрам.\n\n"
+    "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n\n"
     "ПРАВИЛА:\n"
     "- Определяй смысл, а не слова. Учитывай транслит, сленг, опечатки.\n"
     "- «Аккаунт Standoff/Steam/Telegram» — обычный товар, не данные продавца.\n"
-    "- Скидка/торг — на усмотрение продавца, ты передал запрос. Если продавец уже ответил — подтверди.\n"
+    "- Скидка/торг — на усмотрение продавца, ты передал запрос. Не пиши «уже отвечал», просто ответь по существу.\n"
     "- «Поможете?» — согласись и упомяни, что передал продавцу.\n"
     "- НИКОГДА не отвечай «не понял вопрос», «нет данных», если можно дать полезный ответ.\n"
     "- Не раскрывай баланс, пароли, токены, cookies, личные контакты, платёжные реквизиты.\n"
@@ -93,7 +92,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 """
 
 DEFAULTS = {
-    "version": 11, "enabled": True, "setup_done": False,
+    "version": 12, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -110,7 +109,6 @@ DEFAULTS = {
     "match_language": True,
     "neutral_on_anger": True,
     "no_unconfirmed_promises": True,
-    # Автообновления
     "update_checks_enabled": True,
     "update_manifest_url": PUBLISHER_UPDATE_MANIFEST_URL,
     "update_check_interval_minutes": 30,
@@ -165,15 +163,24 @@ def load_config() -> None:
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
         if cv < 11:
-            SETTINGS.setdefault("update_checks_enabled", True)
-            SETTINGS.setdefault("update_manifest_url", PUBLISHER_UPDATE_MANIFEST_URL)
-            SETTINGS.setdefault("update_check_interval_minutes", 30)
-            SETTINGS.setdefault("auto_update", False)
-            SETTINGS.setdefault("auto_restart_after_update", False)
-            SETTINGS.setdefault("last_notified_version", "")
-            SETTINGS.setdefault("last_installed_version", "")
-            SETTINGS.setdefault("pending_restart_version", "")
+            for k, v in (
+                ("update_checks_enabled", True),
+                ("update_manifest_url", PUBLISHER_UPDATE_MANIFEST_URL),
+                ("update_check_interval_minutes", 30),
+                ("auto_update", False),
+                ("auto_restart_after_update", False),
+                ("last_notified_version", ""),
+                ("last_installed_version", ""),
+                ("pending_restart_version", ""),
+            ):
+                SETTINGS.setdefault(k, v)
             SETTINGS["version"] = 11
+            save_config()
+        if cv < 12:
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if "РОЛИ В ИСТОРИИ" in cur and "Отвечай нормально, без ссылок" not in cur:
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 12
             save_config()
     except Exception:
         pass
@@ -280,7 +287,6 @@ def fetch_update_manifest(force: bool = False) -> tuple[dict[str, Any] | None, s
         with LOCK:
             UPDATE_STATE.update(status="error", error="URL должен быть HTTPS", available=False)
         return None, "URL должен быть HTTPS."
-
     now = time.time()
     with LOCK:
         cached = UPDATE_STATE.get("manifest")
@@ -289,7 +295,8 @@ def fetch_update_manifest(force: bool = False) -> tuple[dict[str, Any] | None, s
             return cached, ""
     try:
         r = requests.get(url, timeout=(6, 20),
-                         headers={"User-Agent": UPDATE_USER_AGENT, "Accept": "application/json",
+                         headers={"User-Agent": UPDATE_USER_AGENT,
+                                  "Accept": "application/json",
                                   "Cache-Control": "no-cache"})
         r.raise_for_status()
         manifest = _validate_manifest(r.json())
@@ -400,8 +407,8 @@ def install_update(c: "Cardinal", manifest: dict[str, Any] | None = None) -> tup
         SETTINGS["pending_restart_version"] = rv
         save_config()
         with LOCK:
-            UPDATE_STATE.update(status="installed_pending_restart", available=False,
-                                error="", manifest=manifest)
+            UPDATE_STATE.update(status="installed_pending_restart",
+                                available=False, error="", manifest=manifest)
         logger.info("Обновление v%s установлено в %s. Нужен перезапуск.", rv, target)
         return True, f"Версия v{rv} установлена. Нужен перезапуск Cardinal."
     except Exception as exc:
@@ -1021,18 +1028,6 @@ def _bootstrap_chat_history(c: "Cardinal", m: Any, current_text: str) -> None:
     logger.info("chat=%s history_bootstrap=%d", chat_key, len(imported))
 
 
-def _recent_assistant_said_about(chat_id: Any, pattern: str) -> bool:
-    rx = re.compile(pattern, re.I)
-    with LOCK:
-        h = list(HISTORY.get(str(chat_id), []))
-    for item in h:
-        if item.get("role") != "assistant":
-            continue
-        if rx.search(item.get("content") or ""):
-            return True
-    return False
-
-
 # ============================== Детерминированные интенты ==============================
 _RE_DISCOUNT = re.compile(r"\bскидк\w*|\bдешевле\b|\bторг\w*|\bснизить цен\w*|\bпромокод\w*|\bакци\w*", re.I)
 _RE_OTHER_LOT = re.compile(r"^(?:друг\w*|а друг\w*|ещ[её]\b|не этот|не то|хочу друг\w*)[!?., ]*$", re.I)
@@ -1099,14 +1094,6 @@ def handle_deterministic(c: "Cardinal", m: Any, text: str) -> bool:
         _say(c, m, "До встречи! 👋")
         return True
     if _RE_DISCOUNT.search(n):
-        already = _recent_assistant_said_about(m.chat_id, r"скидк")
-        if already:
-            _say(c, m,
-                 "По скидке уже отвечал выше — скидка на усмотрение продавца. Передал повторный запрос продавцу 👌",
-                 notify=True,
-                 notify_header="🆘 <b>Покупатель повторно просит скидку</b>",
-                 reason="Повторная просьба о скидке", buyer_text=text)
-            return True
         _say(c, m,
              "Скидка остаётся на усмотрение продавца. Я передал ваш запрос продавцу — "
              "если он согласен, ответит в этом чате 👌",
@@ -1125,14 +1112,6 @@ def handle_deterministic(c: "Cardinal", m: Any, text: str) -> bool:
         _say(c, m, body)
         return True
     if _RE_HELP.search(n) and len(n.split()) <= 6:
-        already = _recent_assistant_said_about(m.chat_id, r"помож|подскаж")
-        if already:
-            _say(c, m,
-                 "Готов помочь — напишите одним сообщением, что именно нужно уточнить. Запрос уже передан продавцу.",
-                 notify=True,
-                 notify_header="🆘 <b>Покупатель повторно просит помощи</b>",
-                 reason="Повторная просьба о помощи", buyer_text=text)
-            return True
         _say(c, m,
              "Да, помогу 🤝 Напишите, что именно нужно уточнить. "
              "Параллельно я передал ваш запрос продавцу — если понадобится, он ответит в этом чате.",
@@ -1468,7 +1447,7 @@ def _sys_prompt(lot: dict[str, Any] | None, full_chat: bool,
         f"{promises}{extra}\n"
         "Дополнительно:\n"
         "- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар, НЕ данные продавца.\n"
-        "- Скидка/торг — на усмотрение продавца, ты передал запрос. Если уже отказали — подтверди.\n"
+        "- Скидка/торг — на усмотрение продавца, ты передал запрос. Не пиши «уже отвечал», просто ответь по существу.\n"
         "- Название платформы внутри товара — НЕ контакт.\n"
         "- Если в ИГРОВЫХ ПАРАМЕТРАХ ЛОТА есть нужное значение — отвечай точно по нему."
     )
@@ -1703,13 +1682,13 @@ def init_telegram(cardinal: "Cardinal") -> None:
             f"🌍 Язык: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b> · "
             f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
             f"🚫 Обещания: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b> · "
-            f"🔔 Уведомл. неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
+            f"🔔 Неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
             f"🎮 Игровые параметры: <b>подтягиваются</b>\n"
             f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
             f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
             f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'не задан'}</b>\n"
             f"🛍 Лотов: <b>{len(LOTS)}</b> · 👀 Смотрят: <b>{n_view}</b>\n"
-            f"💬 Память: <b>{n_chats}</b> чатов / <b>{n_msgs}</b> сообщений · бюджет <b>{SETTINGS['history_char_budget']}</b>\n"
+            f"💬 Память: <b>{n_chats}</b> чатов / <b>{n_msgs}</b> сообщений\n"
             f"⏱ Timeout: <b>{SETTINGS['ai_timeout']}с</b>\n"
             f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>"
         )
@@ -1731,7 +1710,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
                B(f"🧊 Тон {utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}", callback_data=f"{CB}:tone"))
         kb.row(B(f"🚫 Без обещаний {utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}", callback_data=f"{CB}:nopromise"),
                B(f"🔔 Неувер. {utils.bool_to_text(SETTINGS.get('confidence_notify', True))}", callback_data=f"{CB}:confnotify"))
-        kb.row(B(f"🔄 Обновления: {update_status_line()[:20]}", callback_data=f"{CB}:update"),
+        kb.row(B(f"🔄 Обновления: {update_status_line()[:24]}", callback_data=f"{CB}:update"),
                B("⚙️ Автообновл.", callback_data=f"{CB}:updcfg"))
         kb.add(B("🗑 Сбросить всю память", callback_data=f"{CB}:clear_history"))
         kb.add(B("◀️ Назад", callback_data=f"{CBT.EDIT_PLUGIN}:{UUID}:0"))
@@ -1876,7 +1855,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
                 pass
         POOL.submit(job)
 
-    # --- Меню обновлений ---
     def updates_text() -> str:
         with LOCK:
             manifest = UPDATE_STATE.get("manifest")
@@ -1908,8 +1886,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             lines.extend(["", f"⚠️ <code>{utils.escape(err[:400])}</code>"])
         lines.extend([
             "",
-            "🛡 Проверяется HTTPS, SHA-256, UUID и синтаксис Python. "
-            "Старый файл сохраняется как <code>.bak</code>.",
+            "🛡 Проверяется HTTPS, SHA-256, UUID и синтаксис Python. Старый файл сохраняется как <code>.bak</code>.",
         ])
         return "\n".join(lines)
 
@@ -1986,7 +1963,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             if action == "interval":
                 msg = bot.send_message(call.message.chat.id, "Интервал проверки 10–1440 минут:",
                                        reply_markup=CLEAR_STATE_BTN())
-                tg.set_state(call.message.chat.id, msg.id, call.from_user.id, f"{CB}_updint")
+                tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_UPD_INT)
                 bot.answer_callback_query(call.id); return
         except Exception:
             logger.debug("update_cb failed", exc_info=True)
@@ -2007,7 +1984,6 @@ def init_telegram(cardinal: "Cardinal") -> None:
         save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ К обновлениям", callback_data=f"{CB}:update")))
 
-    # --- Регистрация ---
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(toggle, lambda c: c.data == f"{CB}:tog")
     tg.cbq_handler(toggle_wm, lambda c: c.data == f"{CB}:wm")
@@ -2059,7 +2035,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
     tg.msg_handler(make_setter("seller_notify_cooldown",
                                validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
                    func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
-    tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, f"{CB}_updint"))
+    tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
 
     tg.msg_handler(cmd_ai, commands=["ai"])
     cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
