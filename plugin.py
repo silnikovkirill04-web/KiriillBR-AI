@@ -58,7 +58,12 @@ DEFAULT_PROMPT = (
     "- Подстраивайся под стиль покупателя: неформально — неформально, формально — сдержанно.\n\n"
     "РОЛИ В ИСТОРИИ:\n"
     "- assistant — твои прошлые ответы И сообщения продавца.\n"
-    "- user — только покупатель. Отвечай нормально, без ссылок на «уже отвечал».\n\n"
+    "- user — только покупатель. Отвечай нормально, без ссылок на «уже отвечал».\n"
+    "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНЫ вступления вида: «Продавец уже ответил», "
+    "«Я уже отвечал», «Мы это обсуждали», «Смотрите выше», «Об этом уже писали», "
+    "«В предыдущем сообщении», «Ранее я говорил». Если покупатель повторяет вопрос — "
+    "просто ответь на него снова, одним сообщением, по существу.\n"
+    "- Начинай ответ СРАЗУ с сути. Без вступлений, извинений и ссылок на историю.\n\n"
     "КОНТЕКСТ ТОВАРА:\n"
     "- ТЕКУЩИЙ ТОВАР — лот покупателя. НЕ проси уточнить, отвечай сразу по нему.\n"
     "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n"
@@ -249,6 +254,12 @@ def load_config() -> None:
             save_config()
         if cv < 19:
             SETTINGS["version"] = 19
+            save_config()
+        if cv < 20:
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if cur.startswith("Ты — AI-заместитель продавца") and "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНЫ" not in cur:
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 20
             save_config()
     except Exception:
         pass
@@ -734,12 +745,37 @@ _FORBIDDEN_AI_PHRASES = [
     re.compile(r"\bторг\w*\s+нет\b", re.I),
 ]
 
+_RE_ALREADY_ANSWERED = re.compile(
+    r"(?:^|\n)\s*"
+    r"(?:(?:продавец|продавец уже|я уже|мы уже|вы уже)\s+)?"
+    r"(?:уже\s+)?"
+    r"(?:отвеч\w*|ответил\w*|писал\w*|говорил\w*|упоминал\w*|уточнял\w*)"
+    r"(?:\s+на\s+(?:этот|данный|это|такой)\s+вопрос\w*)?"
+    r"(?:\s+по\s+(?:этому|данному|этому)\s+вопрос\w*)?"
+    r"[^\n.!?]*[.!?]?\s*",
+    re.I,
+)
+
+
+def _strip_already_answered(text: str) -> str:
+    """Убирает шаблонные фразы «Продавец уже ответил», «Я уже отвечал» и т.п."""
+    if not text:
+        return text
+    result = str(text).strip()
+    for _ in range(5):
+        new = _RE_ALREADY_ANSWERED.sub("", result).strip()
+        if new == result:
+            break
+        result = new
+    return result
+
 
 def _clean_ai_answer(text: str) -> str:
     result = str(text or "")
     for pat in _FORBIDDEN_AI_PHRASES:
         result = pat.sub("скидка на усмотрение продавца", result)
-    return result
+    result = _strip_already_answered(result)
+    return result.strip()
 
 
 _REFUSAL = {
@@ -2506,4 +2542,224 @@ def init_telegram(cardinal: "Cardinal") -> None:
             available = bool(UPDATE_STATE.get("available"))
         if available and isinstance(manifest, dict):
             kb.add(B(f"⬆️ Установить v{manifest.get('version')}", callback_data=f"{CB}:upd:install"))
-        pending = str(SETT
+        pending = str(SETTINGS.get("pending_restart_version") or "")
+        if pending and _version_key(pending) > _version_key(VERSION):
+            kb.add(B("♻️ Перезапустить Cardinal", callback_data=f"{CB}:upd:restart"))
+        kb.add(B("◀️ Назад", callback_data=f"{CB}:main"))
+        return kb
+
+    def show_updates(call: CallbackQuery) -> None:
+        try:
+            bot.edit_message_text(updates_text(), call.message.chat.id, call.message.id,
+                                  reply_markup=updates_kb())
+            bot.answer_callback_query(call.id)
+        except Exception:
+            logger.debug("show_updates failed", exc_info=True)
+
+    def toggle_upd_checks(call: CallbackQuery) -> None:
+        SETTINGS["update_checks_enabled"] = not bool(SETTINGS.get("update_checks_enabled", True))
+        save_config(); show_updates(call)
+
+    def toggle_upd_auto(call: CallbackQuery) -> None:
+        SETTINGS["auto_update"] = not bool(SETTINGS.get("auto_update", False))
+        save_config(); show_updates(call)
+
+    def toggle_upd_autorestart(call: CallbackQuery) -> None:
+        SETTINGS["auto_restart_after_update"] = not bool(SETTINGS.get("auto_restart_after_update", False))
+        save_config(); show_updates(call)
+
+    def upd_check_now(call: CallbackQuery) -> None:
+        bot.answer_callback_query(call.id, "Проверяю…")
+
+        def job():
+            try:
+                check_updates_cycle(cardinal, notify=True, force=True)
+            except Exception:
+                logger.debug("upd_check_now failed", exc_info=True)
+            try:
+                bot.edit_message_text(updates_text(), call.message.chat.id, call.message.id,
+                                      reply_markup=updates_kb())
+            except Exception:
+                pass
+        POOL.submit(job)
+
+    def upd_install_now(call: CallbackQuery) -> None:
+        bot.answer_callback_query(call.id, "Устанавливаю…")
+
+        def job():
+            try:
+                ok, msg = install_update(cardinal)
+                note = "✅ " + msg if ok else "❌ " + msg
+            except Exception as e:
+                note = f"❌ {type(e).__name__}: {e}"
+            try:
+                bot.send_message(call.message.chat.id, utils.escape(note))
+                bot.edit_message_text(updates_text(), call.message.chat.id, call.message.id,
+                                      reply_markup=updates_kb())
+            except Exception:
+                pass
+        POOL.submit(job)
+
+    def upd_restart_now(call: CallbackQuery) -> None:
+        bot.answer_callback_query(call.id, "Перезапускаю Cardinal…")
+        _restart_cardinal(1.0)
+
+    def ask_upd_interval(call: CallbackQuery) -> None:
+        msg = bot.send_message(call.message.chat.id,
+                               "Введите интервал автопроверки обновлений в минутах (10–1440).",
+                               reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_UPD_INT)
+        bot.answer_callback_query(call.id)
+
+    def set_upd_interval(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        try:
+            v = int((m.text or "").strip())
+            if not 10 <= v <= 1440:
+                raise ValueError
+        except Exception:
+            bot.reply_to(m, "❌ Введите число 10–1440."); return
+        SETTINGS["update_check_interval_minutes"] = v
+        save_config()
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:update")))
+    tg.msg_handler(set_upd_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
+
+    def ask_wm_text(call: CallbackQuery) -> None:
+        msg = bot.send_message(call.message.chat.id,
+                               "Введите текст водяного знака (или «-», чтобы отключить).",
+                               reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_WM_TEXT)
+        bot.answer_callback_query(call.id)
+
+    def set_wm_text(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        v = (m.text or "").strip()
+        if v == "-":
+            v = ""
+        SETTINGS["watermark_text"] = v
+        save_config()
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+    tg.msg_handler(set_wm_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_WM_TEXT))
+
+    def ask_survey_text(call: CallbackQuery) -> None:
+        msg = bot.send_message(call.message.chat.id,
+                               "Введите текст опроса после подтверждения заказа.",
+                               reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_SURVEY_TEXT)
+        bot.answer_callback_query(call.id)
+
+    def set_survey_text(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        SETTINGS["post_order_survey_text"] = (m.text or "").strip()
+        save_config()
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+    tg.msg_handler(set_survey_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SURVEY_TEXT))
+
+    def ask_cooldown(call: CallbackQuery) -> None:
+        msg = bot.send_message(call.message.chat.id,
+                               "Введите cooldown уведомлений продавцу в минутах (0–120).",
+                               reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_NOTIFY_COOLDOWN)
+        bot.answer_callback_query(call.id)
+
+    def set_cooldown(m: Message) -> None:
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        try:
+            v = int((m.text or "").strip())
+            if not 0 <= v <= 120:
+                raise ValueError
+        except Exception:
+            bot.reply_to(m, "❌ Введите число 0–120."); return
+        SETTINGS["seller_notify_cooldown"] = v
+        save_config()
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+    tg.msg_handler(set_cooldown, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
+
+    tg.msg_handler(make_setter("api_url", validate=lambda v: _is_safe_url(v)),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
+    tg.msg_handler(make_setter("api_key"),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
+    tg.msg_handler(make_setter("api_model"),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
+    tg.msg_handler(make_setter("system_prompt"),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_PROMPT))
+    tg.msg_handler(make_setter("seller_info"),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
+    tg.msg_handler(make_setter("ai_timeout",
+                               validate=lambda v: v.isdigit() and 10 <= int(v) <= 600,
+                               transform=int),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TIMEOUT))
+    tg.msg_handler(make_setter("history_char_budget",
+                               validate=lambda v: v.isdigit() and 2000 <= int(v) <= 200000,
+                               transform=int),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BUDGET))
+
+    tg.cbq_handler(show, lambda c: c.data == f"{CB}:main")
+    tg.cbq_handler(toggle, lambda c: c.data == f"{CB}:tog")
+    tg.cbq_handler(toggle_wm, lambda c: c.data == f"{CB}:wm")
+    tg.cbq_handler(toggle_notify, lambda c: c.data == f"{CB}:notify")
+    tg.cbq_handler(toggle_bootstrap, lambda c: c.data == f"{CB}:bootstrap")
+    tg.cbq_handler(toggle_lang, lambda c: c.data == f"{CB}:lang")
+    tg.cbq_handler(toggle_tone, lambda c: c.data == f"{CB}:tone")
+    tg.cbq_handler(toggle_nopromise, lambda c: c.data == f"{CB}:nopromise")
+    tg.cbq_handler(toggle_confnotify, lambda c: c.data == f"{CB}:confnotify")
+    tg.cbq_handler(toggle_survey, lambda c: c.data == f"{CB}:survey")
+    tg.cbq_handler(toggle_autofulfill, lambda c: c.data == f"{CB}:autofulfill")
+    tg.cbq_handler(toggle_autofulfill_notify, lambda c: c.data == f"{CB}:autofulfillnotify")
+    tg.cbq_handler(ask_autofulfill_delay, lambda c: c.data == f"{CB}:autofulfilldelay")
+    tg.cbq_handler(clear_history, lambda c: c.data == f"{CB}:clear_history")
+    tg.cbq_handler(list_chats, lambda c: c.data == f"{CB}:chats")
+    tg.cbq_handler(show_rules, lambda c: c.data == f"{CB}:rules")
+    tg.cbq_handler(test_api, lambda c: c.data == f"{CB}:test")
+    tg.cbq_handler(notify_test, lambda c: c.data == f"{CB}:notify_test")
+    tg.cbq_handler(refresh_lots, lambda c: c.data == f"{CB}:lots")
+    tg.cbq_handler(ask_wm_text, lambda c: c.data == f"{CB}:wmtext")
+    tg.cbq_handler(ask_survey_text, lambda c: c.data == f"{CB}:surveytext")
+    tg.cbq_handler(ask_cooldown, lambda c: c.data == f"{CB}:cooldown")
+
+    tg.cbq_handler(ask(ST_URL,     "Введите API URL (HTTPS)."),         lambda c: c.data == f"{CB}:url")
+    tg.cbq_handler(ask(ST_KEY,     "Введите API key (можно env:VAR)."), lambda c: c.data == f"{CB}:key")
+    tg.cbq_handler(ask(ST_MODEL,   "Введите имя модели."),              lambda c: c.data == f"{CB}:model")
+    tg.cbq_handler(ask(ST_PROMPT,  "Введите новый системный промпт."),  lambda c: c.data == f"{CB}:prompt")
+    tg.cbq_handler(ask(ST_SELLER,  "Опишите информацию о продавце."),   lambda c: c.data == f"{CB}:seller")
+    tg.cbq_handler(ask(ST_TIMEOUT, "Введите timeout AI в секундах (10–600)."),
+                   lambda c: c.data == f"{CB}:timeout")
+    tg.cbq_handler(ask(ST_BUDGET,  "Введите бюджет истории в символах (2000–200000)."),
+                   lambda c: c.data == f"{CB}:budget")
+
+    tg.cbq_handler(show_updates,           lambda c: c.data == f"{CB}:update")
+    tg.cbq_handler(toggle_upd_checks,      lambda c: c.data == f"{CB}:upd:checks")
+    tg.cbq_handler(toggle_upd_auto,        lambda c: c.data == f"{CB}:upd:auto")
+    tg.cbq_handler(toggle_upd_autorestart, lambda c: c.data == f"{CB}:upd:autorestart")
+    tg.cbq_handler(upd_check_now,          lambda c: c.data == f"{CB}:upd:check")
+    tg.cbq_handler(ask_upd_interval,       lambda c: c.data == f"{CB}:upd:interval")
+    tg.cbq_handler(upd_install_now,        lambda c: c.data == f"{CB}:upd:install")
+    tg.cbq_handler(upd_restart_now,        lambda c: c.data == f"{CB}:upd:restart")
+    tg.cbq_handler(show_updates,           lambda c: c.data == f"{CB}:updcfg")
+
+
+def init(cardinal: "Cardinal") -> None:
+    init_telegram(cardinal)
+    if not cardinal.telegram:
+        return
+    threading.Thread(target=lot_worker, args=(cardinal,), daemon=True,
+                     name="KBAI-lots").start()
+    threading.Thread(target=update_worker, args=(cardinal,), daemon=True,
+                     name="KBAI-updates").start()
+
+
+def stop(cardinal: "Cardinal") -> None:
+    STOP.set()
+    try:
+        POOL.shutdown(wait=False, cancel_futures=True)
+    except TypeError:
+        POOL.shutdown(wait=False)
+    except Exception:
+        logger.debug("POOL shutdown failed", exc_info=True)
+
+
+BIND_TO_PRE_INIT = [init]
+BIND_TO_NEW_MESSAGE = [on_message]
+BIND_TO_LAST_CHAT_MESSAGE_CHANGED = [on_last_chat]
+BIND_TO_NEW_ORDER = [on_new_paid_order]
+BIND_TO_DELETE = stop
