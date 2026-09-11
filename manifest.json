@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "0b51261ab0b1966e5c1e73f45bb8c7015a283a11094e76dd64aef3b1e3075e90",
-  "notes": "Добавлен опрос после подтверждения заказа. Вкл/выкл и текст опроса — в меню плагина.",
+  "sha256": "a55b3124dab62cfb391d1b7e0397de1b889f47a703128236e0e023c243a46b20",
+  "notes": "Пропорциональный расчёт цен (например 300 MMR = 3 × цена за 100 MMR). Запрет формулировки «скидка не предусмотрена». Уведомление продавцу при торге.",
   "mandatory": false
 }
