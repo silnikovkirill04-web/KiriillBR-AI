@@ -20,10 +20,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 DESCRIPTION = ("AI-заместитель продавца FunPay: отвечает по товару/заказу, "
                "благодарит за оплату, просит отзыв после подтверждения, "
-               "отказывает только на оффтоп (код/взлом/задачи).")
+               "не дублирует уведомления, не благодарит по закрытым заказам.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -80,42 +80,46 @@ DEFAULT_PROMPT = (
     "связанным с покупкой и товаром в этом чате.»\n"
     "НИКОГДА не используй эту фразу, если вопрос про оплату, заказ, товар, "
     "сроки, доставку, цену, наличие, скидку или отзыв.\n\n"
+    "ПРО ОПЛАТУ И ЗАКАЗ (ВАЖНО):\n"
+    "- Ты УПОЛНОМОЧЕН сам подтверждать оплату и отвечать по заказу.\n"
+    "- После оплаты НИКОГДА не предлагай «подключить продавца», «уточнить у продавца», "
+    "«передам продавцу» — это уже решённый вопрос, отвечай сам.\n"
+    "- Если покупатель пишет «оплатил», «видно оплату?», «подтвердите» — отвечай "
+    "«Да, оплата видна, спасибо! Следующий шаг: …» и назови шаг (выдача/ожидание проверки/подтверждение).\n"
+    "- Если заказ уже подтверждён или по нему был возврат — не благодари за оплату, "
+    "а вежливо уточни, что нужно.\n\n"
     "ПАМЯТЬ И СТИЛЬ:\n"
-    "- Ты видишь всю историю чата. Не здоровайся повторно, понимай короткие продолжения.\n"
+    "- Ты видишь всю историю чата. Не здоровайся повторно.\n"
     "- Отвечай ТОЛЬКО на последнее сообщение покупателя.\n"
     "- Подстраивайся под стиль: неформально — неформально, формально — сдержанно.\n\n"
     "РОЛИ В ИСТОРИИ:\n"
     "- assistant — твои прошлые ответы И сообщения продавца.\n"
     "- user — только покупатель. Не повторяй один ответ дважды подряд.\n"
-    "- ЗАПРЕЩЕНЫ вступления: «Продавец уже ответил», «Я уже отвечал», «Смотрите выше». "
-    "Если покупатель повторяет вопрос — ответь снова по сути.\n"
+    "- ЗАПРЕЩЕНЫ вступления: «Продавец уже ответил», «Я уже отвечал», «Смотрите выше».\n"
     "- Начинай ответ СРАЗУ с сути.\n\n"
     "КОНТЕКСТ ТОВАРА:\n"
     "- ТЕКУЩИЙ ТОВАР — лот покупателя. Не проси уточнить, отвечай сразу по нему.\n"
     "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n\n"
-    "ФОТО:\n"
-    "- Если покупатель прислал фото — посмотри, что на нём, ответь по сути.\n"
-    "- Скриншот оплаты/чека — это подтверждение оплаты, отвечай «Да, вижу оплату, спасибо!».\n\n"
     "ПРАВИЛА:\n"
     "- Определяй смысл, а не слова. Учитывай транслит, сленг, опечатки.\n"
     "- «Аккаунт Standoff/Steam/Telegram» — обычный товар, не данные продавца.\n"
-    "- Скидка/торг — на усмотрение продавца, ты передал запрос.\n"
-    "- Не раскрывай баланс, пароли, токены, cookies, личные контакты, платёжные реквизиты.\n"
-    "- Не выдумывай цену, наличие, гарантию, сроки, если их нет в блоке ТОВАР.\n"
-    "- Если не знаешь — честно скажи, что уточнишь у продавца.\n"
+    "- Скидка/торг — на усмотрение продавца.\n"
+    "- Не раскрывай баланс, пароли, токены, cookies, личные контакты, реквизиты.\n"
+    "- Не выдумывай цену, наличие, гарантию, сроки.\n"
+    "- Если не знаешь — скажи, что уточнишь у продавца (кроме оплаты/заказа!).\n"
     "- Соблюдай ПРАВИЛА FUNPAY ниже."
 )
 
 FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ ОГРАНИЧЕНИЯ:
 
-[1.1] Не передавай и не запрашивай контакты (Telegram, Discord, VK, телефон, e-mail).
+[1.1] Не передавай и не запрашивай контакты.
 [1.2] Не предлагай накрутку/шантаж/изменение отзыва.
 [1.3] Не разглашай имя/ID/сумму заказа с целью вреда.
 [1.4] НЕ помогай покупать/продавать аккаунт FunPay.
 [1.7-1.8] Не оскорбляй, не угрожай, не спамь.
 [1.9] Не рекламируй сторонние ресурсы.
-[1.10] Не мошенничай, не обманывай, не вреди.
-[1.11] Не помогай с обменом денег между системами, кардингом.
+[1.10] Не мошенничай.
+[1.11] Не помогай с обменом денег, кардингом.
 [1.12] Не давай ссылки на файлообменники без необходимости.
 
 [2.1.1] НИКОГДА не соглашайся передать товар без оплаты через FunPay.
@@ -123,16 +127,14 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 [2.1.4] На разрешённые вопросы отвечай по существу.
 
 [2.2.x] НИКОГДА не помогай с продажей: незаконных товаров, обучения незаконной деятельности,
-персданных, вредоносного ПО, аккаунтов соцсетей (кроме специальных разделов), телефонных номеров,
-аккаунтов оптом, эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
+персданных, вредоносного ПО, аккаунтов соцсетей, телефонных номеров, аккаунтов оптом,
+эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 
-ПРИ ОТКАЗЕ: коротко откажи и не выполняй. В остальных случаях отвечай по существу.
-
-Название платформы в товаре (Telegram Premium, Discord Nitro, аккаунт Steam) — НЕ нарушение.
+ПРИ ОТКАЗЕ: коротко откажи и не выполняй.
 """
 
 DEFAULTS = {
-    "version": 25, "enabled": True, "setup_done": False,
+    "version": 26, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -182,7 +184,10 @@ CHAT_LOT: dict[str, str] = {}
 CHAT_LOT_AT: dict[str, float] = {}
 SELLER_NOTIFY_AT: dict[str, float] = {}
 SURVEY_SENT: dict[str, float] = {}
-THANKED_ORDERS: dict[str, float] = {}
+# Дедупликация по order_id — чтобы не дублировались уведомления и «спасибо».
+PROCESSED_ORDERS: dict[str, float] = {}
+# Заказы, по которым уже подтвердили/вернули деньги — не благодарим.
+CLOSED_ORDERS: dict[str, float] = {}
 AUTO_FULFILLED_ORDERS: dict[str, float] = {}
 UPDATE_STATE: dict[str, Any] = {
     "checked_at": 0.0, "status": "not_checked", "error": "",
@@ -192,6 +197,10 @@ LOCK = threading.RLock()
 STOP = threading.Event()
 POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="KBAI")
 _HISTORY_HARD_CAP = 200
+
+# TTL для дедупликации (сек)
+_ORDER_DEDUP_TTL = 24 * 3600
+_ORDER_CLOSED_TTL = 7 * 86400
 
 
 def _merge(a, b):
@@ -249,6 +258,12 @@ def load_config() -> None:
             if cur.startswith("Ты — AI-заместитель продавца") and "ЧТО ТЫ ДЕЛАЕШЬ (ОТВЕЧАЙ" not in cur:
                 SETTINGS["system_prompt"] = DEFAULT_PROMPT
             SETTINGS["version"] = 25
+            save_config()
+        if cv < 26:
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if cur.startswith("Ты — AI-заместитель продавца") and "ПРО ОПЛАТУ И ЗАКАЗ" not in cur:
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 26
             save_config()
     except Exception:
         pass
@@ -724,7 +739,6 @@ _RE_PROD_NUM = re.compile(
     r"(?:подписчик\w*|просмотр\w*|лайк\w*|зв[её]зд\w*|голос\w*|штук\w*|единиц\w*|"
     r"количеств\w*|пакет\w*|цен\w*|стоим\w*|руб\w*|₽|usd|eur|доллар\w*|евро)", re.I)
 
-# Купля-продажа — ТОЧНО НЕ оффтоп.
 _RE_PURCHASE_TOPIC = re.compile(
     r"(?:"
     r"\bоплат\w*|\bзаплат\w*|\bоплатил\w*|\bоплач\w*|"
@@ -819,11 +833,9 @@ _OFFTOPIC_REPLY = (
 
 
 def is_offtopic(text: str) -> bool:
-    """Оффтоп — только код/взлом/задачи/ключи/трёп. Всё про покупку — НЕ оффтоп."""
     s = str(text or "").strip()
     if not s:
         return False
-    # Если сообщение про покупку/заказ/товар — не оффтоп, даже если внутри есть код
     if _RE_PURCHASE_TOPIC.search(s):
         return False
     if _RE_OFFTOPIC_CODE.search(s):
@@ -849,6 +861,16 @@ _FORBIDDEN_AI_PHRASES = [
     re.compile(r"\bторг\w*\s+нет\b", re.I),
 ]
 
+# Лишние фразы про продавца, когда мы сами уполномочены отвечать.
+_SELLER_OFFER_PHRASES = [
+    re.compile(r"\bподключ\w*\s+продавц\w*", re.I),
+    re.compile(r"\bпередам\s+(?:ваш\s+)?(?:вопрос|запрос)\s+продавц\w*", re.I),
+    re.compile(r"\bпереда[юл]\s+продавц\w*", re.I),
+    re.compile(r"\bуточн\w*\s+у\s+продавц\w*", re.I),
+    re.compile(r"\bсвяж\w*сь\s+с\s+продавц\w*", re.I),
+    re.compile(r"\bпродавец\s+(?:ответит|подскажет|уточнит|свяжется|подключится)", re.I),
+]
+
 _RE_ALREADY_ANSWERED = re.compile(
     r"(?:^|\n)\s*"
     r"(?:(?:продавец|продавец уже|я уже|мы уже|вы уже)\s+)?"
@@ -871,6 +893,16 @@ def _strip_already_answered(text: str) -> str:
             break
         result = new
     return result
+
+
+def _strip_seller_offer(text: str) -> str:
+    """Убирает «подключу продавца», если контекст — оплата/заказ."""
+    result = str(text or "")
+    for pat in _SELLER_OFFER_PHRASES:
+        result = pat.sub("", result)
+    result = re.sub(r"\s{2,}", " ", result).strip()
+    result = re.sub(r"^[.,;:!?—–-]+\s*", "", result)
+    return result.strip()
 
 
 def _clean_ai_answer(text: str) -> str:
@@ -1056,7 +1088,7 @@ def language_hint(text: str) -> str:
     if lang in _LANG_NAME:
         return (
             f"Покупатель пишет на {_LANG_NAME[lang]} языке. Отвечай на этом же языке. "
-            "Не переключайся на русский, даже если предыдущие сообщения были на русском."
+            "Не переключайся на русский."
         )
     return ""
 
@@ -1066,8 +1098,8 @@ def tone_hint(text: str) -> str:
         return ""
     if looks_angry(text):
         return (
-            "Покупатель раздражён или агрессивен. НЕ зеркаль агрессию и не оправдывайся. "
-            "Ответь спокойно, по-деловому и вежливо, сосредоточься на решении его вопроса."
+            "Покупатель раздражён или агрессивен. НЕ зеркаль агрессию. "
+            "Ответь спокойно, по-деловому, сосредоточься на решении вопроса."
         )
     return ""
 
@@ -1075,11 +1107,7 @@ def tone_hint(text: str) -> str:
 _SELLER_HANDOFF_PATTERNS = [
     r"уточн\w*\s+у\s+продавц",
     r"передам\s+(?:ваш\s+)?(?:вопрос|запрос)?\s*продавц",
-    r"передал\s+(?:ваш\s+)?(?:вопрос|запрос)?\s*продавц",
-    r"передаю\s+(?:ваш\s+)?(?:вопрос|запрос)?\s*продавц",
     r"сообщ\w*\s+продавц",
-    r"свяж\w*с\s+с\s+продавц",
-    r"продавец\s+(?:ответит|подскажет|уточнит|свяжется|поможет)",
 ]
 
 _UNCERTAIN_PATTERNS = [
@@ -1204,6 +1232,54 @@ def _order_short_id(order: Any) -> str:
     return "CHAT:" + str(getattr(order, "chat_id", "") or "?")
 
 
+# ============================ Дедупликация заказов ============================
+def _mark_order_processed(order_id: str) -> bool:
+    """True, если заказ обрабатывается впервые. False, если уже был."""
+    key = str(order_id or "").strip().upper()
+    if not key:
+        return True
+    now = time.time()
+    with LOCK:
+        for k, ts in list(PROCESSED_ORDERS.items()):
+            if now - ts > _ORDER_DEDUP_TTL:
+                PROCESSED_ORDERS.pop(k, None)
+        if key in PROCESSED_ORDERS:
+            logger.info("order=%s dedup: уже обработан", key)
+            return False
+        PROCESSED_ORDERS[key] = now
+    return True
+
+
+def _mark_order_closed(order_id: str) -> None:
+    """Помечает заказ как подтверждённый / возвращённый. Больше не благодарим."""
+    key = str(order_id or "").strip().upper()
+    if not key:
+        return
+    now = time.time()
+    with LOCK:
+        CLOSED_ORDERS[key] = now
+        for k, ts in list(CLOSED_ORDERS.items()):
+            if now - ts > _ORDER_CLOSED_TTL:
+                CLOSED_ORDERS.pop(k, None)
+    logger.info("order=%s marked closed", key)
+
+
+def _is_order_closed(order_id: str) -> bool:
+    key = str(order_id or "").strip().upper()
+    if not key:
+        return False
+    now = time.time()
+    with LOCK:
+        ts = CLOSED_ORDERS.get(key)
+    return bool(ts and now - ts < _ORDER_CLOSED_TTL)
+
+
+def _extract_order_id_from_text(text: str) -> str:
+    m = re.search(r"#([A-Z0-9]{6,12})", str(text or ""), re.I)
+    return m.group(1).upper() if m else ""
+
+
+# ============================ Лоты ============================
 def _find_lot_for_order(order: Any) -> dict[str, Any] | None:
     for attr in ("lot_id", "offer_id"):
         lid = getattr(order, attr, None)
@@ -1225,27 +1301,18 @@ def _find_lot_for_order(order: Any) -> dict[str, Any] | None:
 
 
 def _send_auto_thank(c: "Cardinal", chat_id: Any, chat_name: str, order_id: str) -> None:
-    """Отправляет покупателю благодарность за оплату. Однократно на заказ."""
+    """Отправляет покупателю благодарность. Однократно на заказ, не для закрытых."""
     if not SETTINGS.get("auto_thank_after_payment", True):
+        return
+    if _is_order_closed(order_id):
+        logger.info("auto_thank_skip: order=%s закрыт (подтверждён/возврат)", order_id)
         return
     text = str(SETTINGS.get("auto_thank_text") or "").strip()
     if not text:
         return
-    key = str(chat_id or "")
-    if not key:
+    if not chat_id:
         return
-    now = time.time()
-    with LOCK:
-        last = float(THANKED_ORDERS.get(key, 0.0) or 0.0)
-        if last and now - last < 7200:
-            logger.debug("auto_thank_skip: уже благодарили chat=%s", key)
-            return
-        THANKED_ORDERS[key] = now
-        for k, ts in list(THANKED_ORDERS.items()):
-            if now - ts > 7 * 86400:
-                THANKED_ORDERS.pop(k, None)
 
-    # Прогоняем через privacy-guard
     v = outbound_violation(text)
     if v and v != "empty":
         logger.warning("auto_thank blocked by privacy guard: %s", v)
@@ -1266,6 +1333,9 @@ def _send_auto_thank(c: "Cardinal", chat_id: Any, chat_name: str, order_id: str)
 def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
     if not SETTINGS.get("auto_fulfill_paid_orders", False):
         return
+    if _is_order_closed(_order_short_id(order)):
+        logger.info("auto_fulfill_skip: order=%s закрыт", _order_short_id(order))
+        return
     chat_id = str(getattr(order, "chat_id", "") or "")
     if not chat_id:
         logger.warning("auto_fulfill_skip: нет chat_id order=%s", _order_short_id(order))
@@ -1280,7 +1350,7 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
         except Exception:
             last_ts = 0.0
         if last_ts and now - last_ts < 3600:
-            logger.debug("auto_fulfill_skip: order=%s уже обработан", order_id)
+            logger.debug("auto_fulfill_skip: order=%s уже выдан", order_id)
             return
         AUTO_FULFILLED_ORDERS[f"{chat_id}:{order_id}"] = now
         for k, ts in list(AUTO_FULFILLED_ORDERS.items()):
@@ -1297,7 +1367,7 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
                 body=(
                     f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
                     f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
-                    f"❓ Лот не определён автоматически. Выдайте данные вручную."
+                    f"❓ Лот не определён автоматически. Выдайте вручную."
                 ),
             )
         return
@@ -1319,7 +1389,7 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
                         f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
                         f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
                         f"⚠️ Payment_msg заблокирован privacy-guard: <b>{utils.escape(violation)}</b>. "
-                        "Выдайте данные вручную."
+                        "Выдайте вручную."
                     ),
                 )
             return
@@ -1368,12 +1438,54 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
         )
 
 
+def _handle_new_paid_order(c: "Cardinal", order: Any) -> None:
+    """Единая точка обработки нового оплаченного заказа.
+    Вызывается и из сообщения ORDER_PURCHASED, и из хука BIND_TO_NEW_ORDER.
+    Дедуплицирует по order_id — уведомления и благодарность не двоятся.
+    """
+    if order is None:
+        return
+    order_id = _order_short_id(order)
+    if not order_id or order_id.startswith("CHAT:"):
+        # не смогли определить ID — обрабатываем как есть, но по chat_id
+        order_id = "CHAT:" + str(getattr(order, "chat_id", "") or "?")
+    if not _mark_order_processed(order_id):
+        return
+
+    buyer_name = _order_buyer_name(order)
+    chat_id = str(getattr(order, "chat_id", "") or "")
+    lot = _find_lot_for_order(order)
+    title = ""
+    if lot:
+        lid = str(lot.get("id") or "")
+        title = str(lot.get("title") or lot.get("description") or f"лот #{lid}")[:120]
+
+    # 1. Уведомление продавцу — один раз
+    if SETTINGS.get("auto_fulfill_notify_seller", True) or SETTINGS.get("seller_notify", True):
+        body = (
+            f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
+            f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>"
+        )
+        if title:
+            body += f"\n🎁 Лот: <b>{utils.escape(title)}</b>"
+        if SETTINGS.get("auto_fulfill_paid_orders", False):
+            body += "\n⚡ Режим автовыдачи: включён"
+        else:
+            body += "\n💬 Автовыдача выключена — выдайте вручную."
+        notify_seller_text(c, header="🛒 <b>Оплачен заказ</b>", body=body)
+
+    # 2. Благодарность покупателю — один раз, не для закрытых
+    _send_auto_thank(c, chat_id, str(getattr(order, "chat_name", "") or buyer_name), order_id)
+
+    # 3. Автовыдача — один раз
+    _fulfill_paid_order(c, order)
+
+
 def _handle_paid_order_message(c: "Cardinal", item: Any) -> None:
-    """Обработка системного ORDER_PURCHASED."""
+    """Обработка системного сообщения ORDER_PURCHASED."""
     logger.info("ORDER_PURCHASED received chat=%s", getattr(item, "chat_id", "?"))
     chat_id = str(getattr(item, "chat_id", "") or "")
     if not chat_id:
-        logger.debug("ORDER_PURCHASED: нет chat_id")
         return
 
     order = None
@@ -1391,45 +1503,36 @@ def _handle_paid_order_message(c: "Cardinal", item: Any) -> None:
             pass
 
         order = _PseudoOrder()
-        mm = re.search(r"#([A-Z0-9]{8})", text, re.I)
-        order.id = mm.group(1).upper() if mm else ""
+        order.id = _extract_order_id_from_text(text)
         order.chat_id = chat_id
+        order.chat_name = str(getattr(item, "chat_name", "") or "")
         bm = re.search(r"(?:Покупатель|The buyer)\s+@?([^\s,.]+)", text, re.I)
         order.buyer_username = bm.group(1) if bm else ""
-        desc = text[mm.end():].strip(" .:;,-—–\n") if mm else text
-        desc = re.sub(r"^(?:Покупатель|The buyer)[^.]*\.\s*", "", desc, flags=re.I)
-        order.description = desc[:400]
+        # Описание — остаток текста без ID и покупателя
+        desc = re.sub(r"#([A-Z0-9]{6,12})", " ", text, flags=re.I)
+        desc = re.sub(r"(?:Покупатель|The buyer)[^.]*\.\s*", " ", desc, flags=re.I)
+        order.description = desc.strip()[:400]
 
-    logger.info("ORDER_PURCHASED chat=%s order=%s",
-                chat_id, _order_short_id(order))
+    _handle_new_paid_order(c, order)
 
-    order_id = _order_short_id(order)
-    buyer_name = _order_buyer_name(order)
-    lot = _find_lot_for_order(order)
-    title = ""
-    if lot:
-        lid = str(lot.get("id") or "")
-        title = str(lot.get("title") or lot.get("description") or f"лот #{lid}")[:120]
 
-    # 1. Уведомление продавцу
-    if SETTINGS.get("auto_fulfill_notify_seller", True) or SETTINGS.get("seller_notify", True):
-        body = (
-            f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
-            f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>"
-        )
-        if title:
-            body += f"\n🎁 Лот: <b>{utils.escape(title)}</b>"
-        if SETTINGS.get("auto_fulfill_paid_orders", False):
-            body += "\n⚡ Режим автовыдачи: включён"
-        else:
-            body += "\n💬 Автовыдача выключена — выдайте вручную."
-        notify_seller_text(c, header="🛒 <b>Оплачен заказ</b>", body=body)
+def _handle_order_confirmed(c: "Cardinal", item: Any) -> None:
+    """Подтверждение заказа — помечаем как закрытый + опрос."""
+    text = str(getattr(item, "text", "") or "")
+    order_id = _extract_order_id_from_text(text)
+    if order_id:
+        _mark_order_closed(order_id)
+        logger.info("ORDER_CONFIRMED order=%s", order_id)
+    _trigger_post_order_survey(c, item)
 
-    # 2. Благодарность покупателю
-    _send_auto_thank(c, chat_id, str(getattr(item, "chat_name", "") or ""), order_id)
 
-    # 3. Автовыдача payment_msg (если включено)
-    _fulfill_paid_order(c, order)
+def _handle_order_refunded(c: "Cardinal", item: Any) -> None:
+    """Возврат по заказу — помечаем как закрытый."""
+    text = str(getattr(item, "text", "") or "")
+    order_id = _extract_order_id_from_text(text)
+    if order_id:
+        _mark_order_closed(order_id)
+        logger.info("ORDER_REFUNDED order=%s", order_id)
 
 
 def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
@@ -1440,7 +1543,9 @@ def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
         if type_name == "ORDER_PURCHASED":
             _handle_paid_order_message(c, item)
         elif type_name in {"ORDER_CONFIRMED", "ORDER_CONFIRMED_BY_ADMIN"}:
-            _trigger_post_order_survey(c, item)
+            _handle_order_confirmed(c, item)
+        elif type_name in {"ORDER_REFUNDED", "ORDER_REFUND"}:
+            _handle_order_refunded(c, item)
     except Exception:
         logger.debug("_observe_transaction_message failed", exc_info=True)
 
@@ -1462,25 +1567,7 @@ def on_new_paid_order(c: "Cardinal", e: Any) -> None:
             logger.debug("on_new_paid_order: не удалось извлечь заказ из %r", type(e))
             return
         logger.info("NEW_ORDER hook order=%s", _order_short_id(order))
-        order_id = _order_short_id(order)
-        buyer_name = _order_buyer_name(order)
-        chat_id = str(getattr(order, "chat_id", "") or "")
-
-        if SETTINGS.get("auto_fulfill_notify_seller", True) or SETTINGS.get("seller_notify", True):
-            body = (
-                f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
-                f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>"
-            )
-            if SETTINGS.get("auto_fulfill_paid_orders", False):
-                body += "\n⚡ Режим автовыдачи: включён"
-            else:
-                body += "\n💬 Автовыдача выключена — выдайте вручную."
-            notify_seller_text(c, header="🛒 <b>Оплачен заказ</b>", body=body)
-
-        if chat_id:
-            _send_auto_thank(c, chat_id, buyer_name, order_id)
-
-        _fulfill_paid_order(c, order)
+        _handle_new_paid_order(c, order)
     except Exception:
         logger.debug("on_new_paid_order failed", exc_info=True)
 
@@ -1695,6 +1782,12 @@ def _say(c: "Cardinal", m: Any, text: str, *, notify: bool = False,
         logger.warning("Privacy guard: %s", v)
         out = refusal(v)
         notify = False
+    # Если сообщение покупателя про оплату/заказ — вырезаем «подключу продавца»
+    if buyer_text and _RE_PURCHASE_TOPIC.search(buyer_text):
+        cleaned = _strip_seller_offer(out)
+        if cleaned and cleaned != out:
+            logger.info("stripped seller-offer phrase from reply")
+            out = cleaned
     final = _apply_watermark(out)
     try:
         c.send_message(m.chat_id, final, m.chat_name, watermark=False)
@@ -2064,7 +2157,7 @@ def _sys_prompt(lot: dict[str, Any] | None, full_chat: bool,
     seller = str(SETTINGS.get("seller_info") or "").strip()
     memory_note = (
         "Ты видишь ВСЮ историю этого чата. Используй её для контекста, но отвечай ТОЛЬКО на последнее "
-        "сообщение покупателя — не пересказывай историю, не отвечай на старые вопросы повторно."
+        "сообщение покупателя — не пересказывай историю."
     ) if full_chat else "Ты видишь последние сообщения чата."
     viewing_note = (
         "В блоке ТЕКУЩИЙ ТОВАР уже передан лот, который покупатель смотрит на FunPay. "
@@ -2081,11 +2174,11 @@ def _sys_prompt(lot: dict[str, Any] | None, full_chat: bool,
     if SETTINGS.get("no_unconfirmed_promises", True):
         promises = (
             "\nОБЕЩАНИЯ И СКИДКИ:\n"
-            "- НИКОГДА не обещай скидку, бонус, подарок, акцию, бесплатную услугу, срочность, "
-            "приоритет в очереди, гарантию и прочие блага, если это явно не указано в блоке ТЕКУЩИЙ ТОВАР.\n"
-            "- Если покупатель спрашивает про скидку/бонус, а в лоте их нет — честно скажи: "
+            "- НИКОГДА не обещай скидку, бонус, подарок, акцию, срочность, гарантию, "
+            "если это явно не указано в блоке ТЕКУЩИЙ ТОВАР.\n"
+            "- Если покупатель спрашивает про скидку/бонус, а в лоте их нет — скажи: "
             "«В лоте скидка/бонус не указана».\n"
-            "- Не обещай от лица продавца то, чего ты не знаешь. Можно передать запрос продавцу.\n"
+            "- Не обещай от лица продавца то, чего ты не знаешь.\n"
         )
     return (
         f"{SETTINGS['system_prompt']}\n\n"
@@ -2095,12 +2188,13 @@ def _sys_prompt(lot: dict[str, Any] | None, full_chat: bool,
         f"ТЕКУЩИЙ ТОВАР:\n{_lot_prompt(lot)}\n\n"
         f"{FUNPAY_RULES_SNAPSHOT}\n\n"
         f"{promises}{extra}\n"
-        "ВАЖНО:\n"
-        "- Оплата, заказ, товар, лот, цена, наличие, сроки, доставка, отзыв — это ТВОИ темы. "
-        "НИКОГДА не отказывай по ним формулой оффтопа.\n"
-        "- Если покупатель пишет «я оплатил», «видно оплату?» — отвечай «Да, вижу оплату, спасибо!» "
-        "и, если известно, скажи про следующий шаг (выдача/автовыдача).\n"
-        "- Оффтоп-формулу используй только для кода/взлома/задач/ключей/трёпа.\n"
+        "ВАЖНО (ЗАКАЗ И ОПЛАТА):\n"
+        "- Оплата, заказ, товар, лот, цена, наличие, сроки, доставка, отзыв — это ТВОИ темы.\n"
+        "- НИКОГДА не отказывай по ним формулой оффтопа.\n"
+        "- Если покупатель пишет «оплатил», «видно оплату?», «подтвердите» — отвечай "
+        "«Да, оплата видна, спасибо!» и назови следующий шаг (выдача/проверка/подтверждение).\n"
+        "- НИКОГДА не предлагай «подключить продавца», «уточнить у продавца», "
+        "«передать продавцу» по вопросам оплаты/заказа — ты уполномочен сам.\n"
         "Дополнительно:\n"
         "- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар, НЕ данные продавца.\n"
         "- Название платформы внутри товара — НЕ контакт.\n"
@@ -2202,10 +2296,6 @@ def handle_message(c: "Cardinal", m: Any, text: str) -> None:
             extra_trigger = True
             header = "🆘 <b>AI упомянул скидку/бонус</b>"
             reason = "AI ответил про скидку/бонус — проверьте"
-        elif re.search(r"(?:передам|передал|уточн\w*|сообщ\w*)\s+(?:это\s+)?продавц", na):
-            extra_trigger = True
-            header = "🆘 <b>AI предлагает подключить продавца</b>"
-            reason = "AI передал вопрос продавцу"
     notify = bool((uncertain or extra_trigger) and SETTINGS.get("confidence_notify", True))
     _say(c, m, answer, notify=notify, notify_header=header, reason=reason, buyer_text=text)
 
@@ -2268,7 +2358,6 @@ def on_message(c: "Cardinal", e: "NewMessageEvent") -> None:
     if not is_enabled(c):
         return
     m = e.message
-
     _observe_transaction_message(c, m)
 
     if getattr(c, "old_mode_enabled", False):
