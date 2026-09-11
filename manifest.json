@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "02d4e171f8d4bc6d8a58024453a1b3204fdb22e6b625f9b5c1f7a7374dce578b",
-  "notes": "Комиссия FunPay учтена: AI больше не называет цену продавца как цену покупателя. Пропорциональный расчёт цен. Запрет на «скидка не предусмотрена». Уведомление продавцу при торге.",
+  "sha256": "b523201255d41948105ce0a416b1f276cf177fa4f4b94f5c056d318ff6ecb9bc",
+  "notes": "Автовыдача определяется по FunPay + тексту лота. Отдельный обработчик вопроса про автовыдачу.",
   "mandatory": false
 }
