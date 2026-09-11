@@ -1,18 +1,7 @@
 """KiriillBR AI — AI-автоответчик FunPay Cardinal (API-only) с автообновлениями.
 Автор: @qneiz"""
 from __future__ import annotations
-import ast
-import base64
-import difflib
-import hashlib
-import json
-import logging
-import os
-import re
-import shutil
-import sys
-import threading
-import time
+import ast, base64, difflib, hashlib, json, logging, os, re, shutil, sys, threading, time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
@@ -32,13 +21,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger("FPC.KiriillBRAI")
 
 NAME = "KiriillBR AI 🤖"
-VERSION = "2.0.8"
+VERSION = "2.0.9"
 DESCRIPTION = ("AI-заместитель продавца FunPay на OpenAI-compatible API с автообновлениями. "
-               "Помнит диалог, видит лот покупателя и игровые параметры лота, корректно определяет автовыдачу "
-               "(флаг FunPay + текст описания), читает фото (для vision-моделей), умеет автоматически выдавать "
-               "оплаченные заказы по платёжному сообщению лота и уведомлять продавца, соблюдает правила FunPay, "
-               "отвечает на языке покупателя, спокойно на агрессию, считает пропорционально цене лота "
-               "с учётом комиссии FunPay, не выдумывает скидки/бонусы, отправляет опрос после подтверждения заказа.")
+               "Помнит диалог, видит лот покупателя и игровые параметры, определяет автовыдачу, читает фото "
+               "(vision-модели), ловит оплату заказов через ORDER_PURCHASED в чате, выдаёт payment_msg покупателю "
+               "и уведомляет продавца, соблюдает правила FunPay, отвечает на языке покупателя, спокойно на агрессию, "
+               "считает пропорционально цене лота с учётом комиссии FunPay, не выдумывает скидки, отправляет опрос "
+               "после подтверждения заказа. Автор / ТГК: @qneiz")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -73,28 +62,26 @@ DEFAULT_PROMPT = (
     "КОНТЕКСТ ТОВАРА:\n"
     "- ТЕКУЩИЙ ТОВАР — лот покупателя. НЕ проси уточнить, отвечай сразу по нему.\n"
     "- ИГРОВЫЕ ПАРАМЕТРЫ ЛОТА — авторитетный источник, отвечай точно по цифрам.\n"
-    "- Поле «Автовыдача» — данные от FunPay и/или текста лота. Если «да» — автовыдача есть, "
-    "отвечай «да». Если «нет» — не подключена. НИКОГДА не выдумывай и не отрицай.\n\n"
+    "- Поле «Автовыдача» — данные от FunPay и/или текста лота. Если «да» — есть, "
+    "если «нет» — не подключена. НИКОГДА не выдумывай и не отрицай.\n\n"
     "ФОТО:\n"
     "- Если покупатель прислал картинку — посмотри, что на ней, и ответь по сути. "
-    "Не выдумывай содержимое, если не можешь распознать. Опиши коротко то, что видишь, "
-    "и свяжи с вопросом покупателя. Если картинка не относится к делу — не комментируй её.\n\n"
+    "Не выдумывай содержимое, если не можешь распознать. Опиши коротко, что видишь, "
+    "и свяжи с вопросом покупателя.\n\n"
     "ЦЕНООБРАЗОВАНИЕ И КОМИССИЯ FUNPAY:\n"
     "- Цена в лоте — это сумма ПРОДАВЦУ (без комиссии). Покупатель платит БОЛЬШЕ из-за комиссии FunPay.\n"
     "- НИКОГДА не называй цену продавца как итоговую сумму для покупателя.\n"
     "- Если покупатель спрашивает «сколько я заплачу» — «Цена лота — X₽ за Y (это сумма продавцу). "
     "Итоговая сумма с комиссией FunPay отображается при оформлении заказа».\n"
-    "- Если покупатель просит другой объём — считай пропорционально: Итог = (Запрошенный / Единица) × Цена_за_единицу, "
-    "добавляй оговорку «это базовая цена без комиссии».\n"
+    "- Другой объём — считай пропорционально, добавляй «без комиссии».\n"
     "- НИКОГДА не пиши «скидка не предусмотрена», «торг не предусмотрен».\n\n"
     "ПРАВИЛА:\n"
     "- Определяй смысл, а не слова. Учитывай транслит, сленг, опечатки.\n"
     "- «Аккаунт Standoff/Steam/Telegram» — обычный товар, не данные продавца.\n"
-    "- Скидка/торг — на усмотрение продавца, ты передал запрос. Никогда не пиши «скидка не предусмотрена».\n"
+    "- Скидка/торг — на усмотрение продавца, ты передал запрос.\n"
     "- «Поможете?» — согласись и упомяни, что передал продавцу.\n"
     "- НИКОГДА не отвечай «не понял вопрос», «нет данных», если можно дать полезный ответ.\n"
-    "- Не раскрывай баланс, пароли, токены, cookies, личные контакты, платёжные реквизиты.\n"
-    "- Не выдумывай цену, наличие, гарантию, сроки, если их нет в блоке ТОВАР.\n"
+    "- Не раскрывай баланс, пароли, токены, cookies, личные контакты, реквизиты.\n"
     "- Если не знаешь — честно скажи, что уточнишь у продавца.\n"
     "- Соблюдай ПРАВИЛА FUNPAY ниже."
 )
@@ -125,7 +112,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY — ОБЯЗАТЕЛЬНЫЕ О
 """
 
 DEFAULTS = {
-    "version": 18, "enabled": True, "setup_done": False,
+    "version": 19, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -185,7 +172,6 @@ POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="KBAI")
 _HISTORY_HARD_CAP = 200
 
 
-# ============================== Конфиг ==============================
 def _merge(a, b):
     if isinstance(a, dict) and isinstance(b, dict):
         r = dict(a)
@@ -261,6 +247,9 @@ def load_config() -> None:
             SETTINGS.setdefault("auto_fulfill_notify_seller", True)
             SETTINGS["version"] = 18
             save_config()
+        if cv < 19:
+            SETTINGS["version"] = 19
+            save_config()
     except Exception:
         pass
 
@@ -287,7 +276,6 @@ def is_enabled(c: "Cardinal") -> bool:
     return bool(p and p.enabled and SETTINGS.get("enabled", True))
 
 
-# ============================== Автообновления ==============================
 def _version_key(value: str) -> tuple[int, int, int, int]:
     nums = [int(x) for x in re.findall(r"\d+", str(value or ""))[:4]]
     return tuple((nums + [0, 0, 0, 0])[:4])  # type: ignore[return-value]
@@ -626,7 +614,6 @@ def update_status_line() -> str:
     return "ещё не проверялись"
 
 
-# ============================== Транслит + matching ==============================
 _RE_P = re.compile(r"[^\w\sа-яёa-z0-9]+", re.I)
 _RE_S = re.compile(r"\s+")
 _RU2LAT = str.maketrans({
@@ -723,7 +710,6 @@ def find_lots(text: str, limit: int = 3) -> list[tuple[dict[str, Any], float]]:
     return r[:limit]
 
 
-# ============================== Privacy guard ==============================
 _RE_EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _RE_HANDLE = re.compile(r"(?<![\w@])@[A-Za-z0-9_][A-Za-z0-9_.-]{2,63}")
 _RE_PHONE = re.compile(r"(?<!\d)(?:\+?\d[\s().-]*){7,16}(?!\d)")
@@ -818,7 +804,6 @@ def _safe_for_notify(text: str, limit: int = 1000) -> str:
     return value[:limit]
 
 
-# ============================== FunPay Rules detection ==============================
 _RE_CONTACT = re.compile(r"(?:телеграм|telegram|\bтг\b|\btg\b|дискорд|discord|whatsapp|ватсап|e-?mail|почт|телефон)", re.I)
 _RE_CONTACT_ASK = re.compile(r"(?:дай|скинь|кинь|покажи|напиши|ваш|твой|контакт|связ|написать)", re.I)
 _RE_CONTACT_PRODUCT = re.compile(r"(?:подписчик|premium|премиум|nitro|нитро|зв[её]зд|boost|буст)", re.I)
@@ -881,7 +866,6 @@ def policy_refusal(code: str) -> str:
     return refusal(code)
 
 
-# ============================== Язык и тон ==============================
 _LANG_RU = re.compile(r"[а-яё]", re.I)
 _LANG_UK = re.compile(r"[іїєґ]", re.I)
 _LANG_EN = re.compile(r"[a-z]", re.I)
@@ -948,25 +932,20 @@ def tone_hint(text: str) -> str:
     return ""
 
 
-# ============================== Детекторы уведомлений ==============================
 _SELLER_HANDOFF_PATTERNS = [
-    r"уточн\w*\s+у\s+продавц",
-    r"уточн\w*\s+(?:это\s+)?у\s+продавц",
+    r"уточн\w*\s+у\s+продавц", r"уточн\w*\s+(?:это\s+)?у\s+продавц",
     r"передам\s+(?:ваш\s+)?(?:вопрос|запрос)?\s*продавц",
     r"передал\s+(?:ваш\s+)?(?:вопрос|запрос)?\s*продавц",
     r"передаю\s+(?:ваш\s+)?(?:вопрос|запрос)?\s*продавц",
-    r"сообщ\w*\s+продавц",
-    r"свяж\w*с\s+с\s+продавц",
-    r"обращ\w*сь\s+к\s+продавц",
-    r"напиш\w*\s+продавц",
+    r"сообщ\w*\s+продавц", r"свяж\w*с\s+с\s+продавц",
+    r"обращ\w*сь\s+к\s+продавц", r"напиш\w*\s+продавц",
     r"продавец\s+(?:ответит|подскажет|уточнит|свяжется|поможет)",
-    r"передал\s+запрос\s+продавц",
-    r"позов\w*\s+продавц",
-    r"вызов\w*\s+продавц",
+    r"передал\s+запрос\s+продавц", r"позов\w*\s+продавц", r"вызов\w*\s+продавц",
 ]
 
 _UNCERTAIN_PATTERNS = [
-    r"не\s+знаю", r"не\s+уверен\w*", r"не\s+могу\s+(?:точно|сказать|подтвердить|ответить)",
+    r"не\s+знаю", r"не\s+уверен\w*",
+    r"не\s+могу\s+(?:точно|сказать|подтвердить|ответить)",
     r"нет\s+(?:точн\w*\s+)?(?:данн\w*|информац\w*|сведен\w*)",
     r"не\s+указан\w*", r"не\s+располага\w*",
     r"уточните", r"уточнить", r"подскажите",
@@ -996,7 +975,6 @@ def is_uncertain_answer(text: str) -> bool:
     return False
 
 
-# ============================== Уведомление продавцу ==============================
 def notify_seller(c: "Cardinal", m: Any, buyer_text: str, ai_answer: str = "",
                   reason: str = "", header: str = "") -> bool:
     if not SETTINGS.get("seller_notify", True) or not getattr(c, "telegram", None):
@@ -1049,7 +1027,6 @@ def notify_seller(c: "Cardinal", m: Any, buyer_text: str, ai_answer: str = "",
 
 
 def notify_seller_text(c: "Cardinal", *, header: str, body: str) -> bool:
-    """Простое уведомление продавцу без привязки к Message-объекту."""
     if not getattr(c, "telegram", None):
         return False
     text = f"{header}\n\n{body}"
@@ -1064,7 +1041,6 @@ def notify_seller_text(c: "Cardinal", *, header: str, body: str) -> bool:
     return True
 
 
-# ============================== Автовыдача: детекторы ==============================
 _AUTO_DELIVERY_TEXT_RE = re.compile(
     r"(?iu)(?:авто|auto)\s*[-–—_/\\|.:]*\s*выдач\w*|"
     r"автовыдач\w*|"
@@ -1111,15 +1087,10 @@ def _lot_autodelivery(lot: dict[str, Any]) -> tuple[bool, str]:
 
 def is_autodelivery_question(text: str) -> bool:
     n = norm(text)
-    if not n:
-        return False
-    return bool(_RE_AUTODELIVERY_QUESTION.search(n))
+    return bool(n and _RE_AUTODELIVERY_QUESTION.search(n))
 
 
-# ============================== Извлечение фото ==============================
 def _extract_message_image(m: Any) -> str:
-    """Достаёт картинку из сообщения FunPay и возвращает data-URL для OpenAI vision.
-    Если картинки нет или она слишком большая — возвращает пустую строку."""
     try:
         url = ""
         for attr in ("image_link", "image_url", "image"):
@@ -1127,11 +1098,8 @@ def _extract_message_image(m: Any) -> str:
             if isinstance(v, str) and v.strip():
                 url = v.strip()
                 break
-        if not url:
+        if not url or not url.lower().startswith(("http://", "https://")):
             return ""
-        if not url.lower().startswith(("http://", "https://")):
-            return ""
-
         r = requests.get(url, timeout=(6, 20), stream=True,
                          headers={"User-Agent": UPDATE_USER_AGENT})
         r.raise_for_status()
@@ -1160,7 +1128,6 @@ def _extract_message_image(m: Any) -> str:
         return ""
 
 
-# ============================== Опрос после заказа ==============================
 def send_post_order_survey(c: "Cardinal", chat_id: Any, chat_name: str) -> bool:
     if not SETTINGS.get("post_order_survey", True):
         return False
@@ -1178,9 +1145,8 @@ def send_post_order_survey(c: "Cardinal", chat_id: Any, chat_name: str) -> bool:
 
 
 def _pending_survey_get(chat_id: Any) -> bool:
-    key = str(chat_id or "")
     with LOCK:
-        return bool(SURVEY_SENT.get(key))
+        return bool(SURVEY_SENT.get(str(chat_id or "")))
 
 
 def _pending_survey_mark(chat_id: Any) -> None:
@@ -1198,10 +1164,7 @@ def _pending_survey_mark(chat_id: Any) -> None:
 def _trigger_post_order_survey(c: "Cardinal", m: Any) -> None:
     chat_id = getattr(m, "chat_id", "")
     chat_name = str(getattr(m, "chat_name", "") or "")
-    if not chat_id:
-        return
-    if _pending_survey_get(chat_id):
-        logger.debug("chat=%s post_order_survey=already_sent", chat_id)
+    if not chat_id or _pending_survey_get(chat_id):
         return
 
     def _job() -> None:
@@ -1213,27 +1176,7 @@ def _trigger_post_order_survey(c: "Cardinal", m: Any) -> None:
     POOL.submit(_job)
 
 
-def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
-    try:
-        mt = getattr(item, "type", None)
-        if mt is None:
-            return
-        type_name = getattr(mt, "name", "") or ""
-        if not type_name:
-            raw = str(mt)
-            if "." in raw:
-                raw = raw.rsplit(".", 1)[-1]
-            type_name = raw.upper()
-        type_name = type_name.upper()
-        if type_name in {"ORDER_CONFIRMED", "ORDER_CONFIRMED_BY_ADMIN"}:
-            _trigger_post_order_survey(c, item)
-    except Exception:
-        logger.debug("_observe_transaction_message failed", exc_info=True)
-
-
-# ============================== Автовыдача оплаченных заказов ==============================
 def _find_lot_for_order(order: Any) -> dict[str, Any] | None:
-    """Пытается найти лот по данным заказа."""
     for attr in ("lot_id", "offer_id"):
         lid = getattr(order, attr, None)
         if lid:
@@ -1263,28 +1206,25 @@ def _order_buyer_name(order: Any) -> str:
 
 def _order_short_id(order: Any) -> str:
     raw = str(getattr(order, "id", "") or "").strip().lstrip("#")
-    return raw.upper() or "—"
+    if raw:
+        return raw.upper()
+    return "CHAT:" + str(getattr(order, "chat_id", "") or "?")
 
 
 def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
-    """Реагирует на оплаченный заказ: пытается выдать данные и уведомляет продавца."""
     if not SETTINGS.get("auto_fulfill_paid_orders", False):
         return
-
     chat_id = str(getattr(order, "chat_id", "") or "")
     if not chat_id:
-        logger.debug("auto_fulfill_skip: нет chat_id в заказе")
+        logger.warning("auto_fulfill_skip: нет chat_id в заказе order=%s desc=%r",
+                       _order_short_id(order), str(getattr(order, "description", ""))[:80])
         return
 
     order_id = _order_short_id(order)
     buyer_name = _order_buyer_name(order)
 
-    # Защита от повторной обработки одного заказа.
     now = time.time()
     with LOCK:
-        if chat_id in AUTO_FULFILLED_ORDERS and order_id in AUTO_FULFILLED_ORDERS.get(chat_id, ""):
-            pass
-        last_ts = 0.0
         try:
             last_ts = float(AUTO_FULFILLED_ORDERS.get(f"{chat_id}:{order_id}", 0.0) or 0.0)
         except Exception:
@@ -1293,7 +1233,6 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
             logger.debug("auto_fulfill_skip: order=%s уже обработан", order_id)
             return
         AUTO_FULFILLED_ORDERS[f"{chat_id}:{order_id}"] = now
-        # Чистим старые записи.
         for k, ts in list(AUTO_FULFILLED_ORDERS.items()):
             if now - ts > 30 * 86400:
                 AUTO_FULFILLED_ORDERS.pop(k, None)
@@ -1346,7 +1285,7 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
                         f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
                         f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
                         f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
-                        f"⚠️ Платёжное сообщение лота заблокировано privacy-guard: <b>{utils.escape(violation)}</b>. "
+                        f"⚠️ Платёжное сообщение заблокировано privacy-guard: <b>{utils.escape(violation)}</b>. "
                         "Выдайте данные вручную."
                     ),
                 )
@@ -1375,7 +1314,7 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
                         f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
                         f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
                         f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
-                        f"⚡ Отправил платёжное сообщение лота через {delay}с."
+                        f"⚡ Отправил платёжное сообщение через {delay}с."
                     ),
                 )
             return
@@ -1391,13 +1330,78 @@ def _fulfill_paid_order(c: "Cardinal", order: Any) -> None:
                 f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
                 f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
                 f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
-                f"💬 У лота нет ни автовыдачи FunPay, ни платёжного сообщения. Выдайте данные вручную."
+                f"💬 У лота нет ни автовыдачи FunPay, ни платёжного сообщения. Выдайте вручную."
             ),
         )
 
 
+def _detect_message_type_name(item: Any) -> str:
+    mt = getattr(item, "type", None)
+    if mt is None:
+        return ""
+    name = getattr(mt, "name", "")
+    if name:
+        return str(name).upper()
+    raw = str(mt)
+    if "." in raw:
+        raw = raw.rsplit(".", 1)[-1]
+    return re.sub(r"[^A-Z0-9_]+", "_", raw.upper()).strip("_")
+
+
+def _handle_paid_order_message(c: "Cardinal", item: Any) -> None:
+    """Обработка системного сообщения ORDER_PURCHASED — покупатель оплатил заказ."""
+    if not SETTINGS.get("auto_fulfill_paid_orders", False):
+        return
+    chat_id = str(getattr(item, "chat_id", "") or "")
+    if not chat_id:
+        logger.debug("ORDER_PURCHASED: нет chat_id")
+        return
+
+    order = None
+    getter = getattr(c, "get_order_from_object", None)
+    if callable(getter):
+        try:
+            order = getter(item)
+        except Exception:
+            logger.debug("get_order_from_object failed", exc_info=True)
+
+    if order is None:
+        text = str(getattr(item, "text", "") or "")
+
+        class _PseudoOrder:
+            pass
+
+        order = _PseudoOrder()
+        m = re.search(r"#([A-Z0-9]{8})", text, re.I)
+        order.id = m.group(1).upper() if m else ""
+        order.chat_id = chat_id
+        bm = re.search(r"(?:Покупатель|The buyer)\s+@?([^\s,.]+)", text, re.I)
+        order.buyer_username = bm.group(1) if bm else ""
+        desc = text[m.end():].strip(" .:;,-—–\n") if m else text
+        desc = re.sub(r"^(?:Покупатель|The buyer)[^.]*\.\s*", "", desc, flags=re.I)
+        order.description = desc[:400]
+
+    logger.info("ORDER_PURCHASED chat=%s order=%s desc=%r",
+                chat_id, _order_short_id(order), str(getattr(order, "description", ""))[:80])
+    _fulfill_paid_order(c, order)
+
+
+def _observe_transaction_message(c: "Cardinal", item: Any) -> None:
+    """Ловит системные сообщения FunPay: оплата (ORDER_PURCHASED) и подтверждение заказа."""
+    try:
+        type_name = _detect_message_type_name(item)
+        if not type_name:
+            return
+        if type_name == "ORDER_PURCHASED":
+            _handle_paid_order_message(c, item)
+        elif type_name in {"ORDER_CONFIRMED", "ORDER_CONFIRMED_BY_ADMIN"}:
+            _trigger_post_order_survey(c, item)
+    except Exception:
+        logger.debug("_observe_transaction_message failed", exc_info=True)
+
+
 def on_new_paid_order(c: "Cardinal", e: Any) -> None:
-    """Хук Cardinal: пришёл новый оплаченный заказ (из списка продаж)."""
+    """Хук Cardinal BIND_TO_NEW_ORDER — подстраховка, если работает."""
     try:
         order = getattr(e, "order", None)
         if order is None:
@@ -1407,7 +1411,6 @@ def on_new_paid_order(c: "Cardinal", e: Any) -> None:
         logger.debug("on_new_paid_order failed", exc_info=True)
 
 
-# ============================== История: bootstrap из FunPay ==============================
 def _message_role(c: "Cardinal", item: Any) -> str | None:
     mt = getattr(item, "type", None)
     if mt is not None and mt is not MessageTypes.NON_SYSTEM:
@@ -1484,7 +1487,6 @@ def _bootstrap_chat_history(c: "Cardinal", m: Any, current_text: str) -> None:
     logger.info("chat=%s history_bootstrap=%d", chat_key, len(imported))
 
 
-# ============================== Детерминированные интенты ==============================
 _RE_DISCOUNT = re.compile(r"\bскидк\w*|\bдешевле\b|\bторг\w*|\bснизить цен\w*|\bпромокод\w*|\bакци\w*", re.I)
 _RE_COUNTER_OFFER = re.compile(
     r"(?:сможешь|можешь|согласен|согласна|сделаешь|отдашь|дашь|возьм[её]шь|уступишь)\b"
@@ -1540,20 +1542,15 @@ def _say(c: "Cardinal", m: Any, text: str, *, notify: bool = False,
 def handle_deterministic(c: "Cardinal", m: Any, text: str) -> bool:
     n = norm(text)
     if _RE_GREET.search(n):
-        _say(c, m, "Здравствуйте! 👋 Чем могу помочь?")
-        return True
+        _say(c, m, "Здравствуйте! 👋 Чем могу помочь?"); return True
     if _RE_WELL.search(n):
-        _say(c, m, "Всё хорошо, спасибо 😊 А у вас?")
-        return True
+        _say(c, m, "Всё хорошо, спасибо 😊 А у вас?"); return True
     if _RE_PRESENCE.search(n):
-        _say(c, m, "Да, я на связи 🤝")
-        return True
+        _say(c, m, "Да, я на связи 🤝"); return True
     if _RE_THANKS.search(n) and len(n.split()) <= 8:
-        _say(c, m, "Пожалуйста! 🤝")
-        return True
+        _say(c, m, "Пожалуйста! 🤝"); return True
     if _RE_BYE.search(n):
-        _say(c, m, "До встречи! 👋")
-        return True
+        _say(c, m, "До встречи! 👋"); return True
     if _RE_DISCOUNT.search(n):
         _say(c, m,
              "Скидка остаётся на усмотрение продавца. Я передал ваш запрос продавцу — "
@@ -1570,8 +1567,7 @@ def handle_deterministic(c: "Cardinal", m: Any, text: str) -> bool:
             body += "\n\nНапишите название или номер нужного."
         else:
             body = "Напишите, пожалуйста, название нужного лота."
-        _say(c, m, body)
-        return True
+        _say(c, m, body); return True
     if _RE_HELP.search(n) and len(n.split()) <= 6:
         _say(c, m,
              "Да, помогу 🤝 Напишите, что именно нужно уточнить. "
@@ -1583,16 +1579,13 @@ def handle_deterministic(c: "Cardinal", m: Any, text: str) -> bool:
     if _RE_SELLER_COUNT.search(n):
         with LOCK:
             cnt = len(LOTS)
-        _say(c, m, f"В профиле продавца сейчас {cnt} лотов.")
-        return True
+        _say(c, m, f"В профиле продавца сейчас {cnt} лотов."); return True
     violation = classify_policy_violation(text)
     if violation:
-        _say(c, m, policy_refusal(violation))
-        return True
+        _say(c, m, policy_refusal(violation)); return True
     return False
 
 
-# ============================== Лоты ==============================
 def _obj(o, a, d=""):
     try:
         v = getattr(o, a, d)
@@ -1629,13 +1622,9 @@ def _empty_lot_dict(lid: str) -> dict[str, Any]:
         "id": str(lid), "title": "", "description": "",
         "full_description": "", "price": None, "currency": "",
         "amount": None,
-        "auto_delivery_funpay": False,
-        "auto_delivery_text": False,
-        "auto_delivery_source": "none",
-        "auto_delivery": False,
-        "auto": False,
-        "payment_message": "",
-        "subcategory": "", "server": "", "extra_fields": {},
+        "auto_delivery_funpay": False, "auto_delivery_text": False,
+        "auto_delivery_source": "none", "auto_delivery": False, "auto": False,
+        "payment_message": "", "subcategory": "", "server": "", "extra_fields": {},
     }
 
 
@@ -1654,21 +1643,17 @@ def _lot_basic(lot) -> dict[str, Any]:
     )
     return {
         "id": str(getattr(lot, "id", "")),
-        "title": title,
-        "description": desc,
-        "full_description": "",
+        "title": title, "description": desc, "full_description": "",
         "price": getattr(lot, "price", None),
         "currency": str(getattr(lot, "currency", "") or ""),
         "amount": getattr(lot, "amount", None),
         "auto_delivery_funpay": funpay_auto,
         "auto_delivery_text": text_auto,
         "auto_delivery_source": source,
-        "auto_delivery": combined,
-        "auto": combined,
+        "auto_delivery": combined, "auto": combined,
         "payment_message": "",
         "subcategory": _obj(sub, "fullname") or _obj(sub, "name"),
-        "server": _obj(lot, "server"),
-        "extra_fields": {},
+        "server": _obj(lot, "server"), "extra_fields": {},
     }
 
 
@@ -1716,12 +1701,10 @@ def _enrich(c: "Cardinal", lid: str) -> None:
                 "text" if text_flag else
                 "none"
             )
-
             if getattr(f, "price", None) is not None:
                 LOTS[lid]["price"] = f.price
             if getattr(f, "amount", None) is not None:
                 LOTS[lid]["amount"] = f.amount
-
             extra = _extract_extra_params(f)
             if extra:
                 for bad in ("payment_msg_ru", "payment_msg_en", "payment_message"):
@@ -1736,8 +1719,7 @@ def sync_lots(c: "Cardinal", enrich: bool = True) -> int:
         p = c.profile or c.account.get_user(c.account.id)
         lots = list(p.get_lots()) if p else []
     except Exception:
-        logger.exception("sync_lots")
-        return 0
+        logger.exception("sync_lots"); return 0
     cache = {}
     for l in lots:
         d = _lot_basic(l)
@@ -1746,15 +1728,13 @@ def sync_lots(c: "Cardinal", enrich: bool = True) -> int:
     with LOCK:
         for lid, old in LOTS.items():
             if lid in cache:
-                # Переносим только те поля, которых нет в свежих данных.
                 if old.get("full_description") and not cache[lid].get("full_description"):
                     cache[lid]["full_description"] = old["full_description"]
                 if old.get("extra_fields") and not cache[lid].get("extra_fields"):
                     cache[lid]["extra_fields"] = old["extra_fields"]
                 if old.get("payment_message") and not cache[lid].get("payment_message"):
                     cache[lid]["payment_message"] = old["payment_message"]
-        LOTS.clear()
-        LOTS.update(cache)
+        LOTS.clear(); LOTS.update(cache)
     if enrich:
         for lid in list(cache):
             if STOP.is_set():
@@ -1775,7 +1755,6 @@ def lot_worker(c: "Cardinal") -> None:
                 logger.exception("lot_worker")
 
 
-# ============================== Память диалога ==============================
 def add_history(chat_id: Any, role: str, text: str) -> None:
     t = str(text or "").strip()[:3000]
     if not t:
@@ -1799,13 +1778,11 @@ def _history_for_api(chat_id: Any, exclude_last_user: str = "") -> list[dict[str
         ln = len(item.get("content") or "") + 8
         if total + ln > budget and keep:
             break
-        keep.append(item)
-        total += ln
+        keep.append(item); total += ln
     keep.reverse()
     return keep
 
 
-# ============================== Buyer viewing ==============================
 def _get_viewing(c: "Cardinal", m: Any) -> Any:
     viewing = getattr(m, "buyer_viewing", None)
     if viewing and getattr(viewing, "is_viewing_lot", False):
@@ -1813,8 +1790,7 @@ def _get_viewing(c: "Cardinal", m: Any) -> Any:
     buyer_id = getattr(m, "interlocutor_id", None)
     if not buyer_id:
         return None
-    key = str(buyer_id)
-    now = time.time()
+    key = str(buyer_id); now = time.time()
     with LOCK:
         cached = VIEWING_CACHE.get(key)
     if cached and now - cached[0] < 45:
@@ -1903,7 +1879,6 @@ def _get_lot(c: "Cardinal", m: Any, text: str) -> dict[str, Any] | None:
     return None
 
 
-# ============================== API ==============================
 def _lot_prompt(lot: dict[str, Any] | None) -> str:
     if not lot:
         return "Товар не определён. Не выдумывай; если нужен конкретный лот — уточни."
@@ -1980,20 +1955,15 @@ def _sys_prompt(lot: dict[str, Any] | None, full_chat: bool,
         f"{FUNPAY_RULES_SNAPSHOT}\n\n"
         f"{promises}{extra}\n"
         "АВТОВЫДАЧА:\n"
-        "- Поле «Автовыдача» в блоке ТЕКУЩИЙ ТОВАР — данные от FunPay и/или описания лота. "
-        "Если там «да» — автовыдача подключена, отвечай «да». Если «нет» — не подключена. "
-        "НИКОГДА не выдумывай автовыдачу, если её нет, и не отрицай, если она есть.\n\n"
+        "- Поле «Автовыдача» — данные от FunPay и/или описания лота. Если там «да» — есть, "
+        "если «нет» — нет. НИКОГДА не выдумывай и не отрицай.\n\n"
         "ФОТО:\n"
-        "- Если покупатель прислал картинку — посмотри, что на ней, и ответь по сути. "
-        "Не выдумывай содержимое, если не можешь распознать. Опиши коротко то, что видишь, "
-        "и свяжи с вопросом покупателя. Если картинка не относится к делу — не комментируй её.\n\n"
+        "- Если покупатель прислал картинку — опиши коротко, что видишь, и свяжи с вопросом.\n\n"
         "ЦЕНООБРАЗОВАНИЕ И КОМИССИЯ FUNPAY:\n"
-        "- Цена в лоте — сумма ПРОДАВЦУ (без комиссии). Покупатель платит БОЛЬШЕ из-за комиссии FunPay.\n"
-        "- НИКОГДА не называй цену продавца как итоговую для покупателя. Не пиши «за 100 MMR вы заплатите 75₽».\n"
-        "- Если покупатель спрашивает «сколько я заплачу» — «Цена лота — X₽ за Y (сумма продавцу). "
-        "Итоговая с комиссией FunPay — при оформлении заказа».\n"
-        "- Если покупатель просит другой объём — считай пропорционально: (Запрошенный / Единица) × Цена, "
-        "добавляй оговорку «это базовая цена без комиссии».\n"
+        "- Цена в лоте — сумма ПРОДАВЦУ (без комиссии). Покупатель платит БОЛЬШЕ.\n"
+        "- НИКОГДА не называй цену продавца как итоговую для покупателя.\n"
+        "- «Сколько я заплачу?» → «Цена лота — X₽ за Y (сумма продавцу). Итоговая с комиссией — при оформлении».\n"
+        "- Другой объём — пропорционально, с оговоркой «без комиссии».\n"
         "- НИКОГДА не пиши «скидка не предусмотрена», «торг не предусмотрен», «скидок нет».\n\n"
         "Дополнительно:\n"
         "- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар, НЕ данные продавца.\n"
@@ -2048,7 +2018,6 @@ def ask_ai(m: Any, buyer_text: str, lot: dict[str, Any] | None) -> str:
     return text
 
 
-# ============================== Отправка + логика ==============================
 def handle_message(c: "Cardinal", m: Any, text: str) -> None:
     violation = classify_policy_violation(text)
     if violation:
@@ -2088,10 +2057,8 @@ def handle_message(c: "Cardinal", m: Any, text: str) -> None:
         return
 
     counter_offer = bool(_RE_COUNTER_OFFER.search(norm(text)))
-
     uncertain = is_uncertain_answer(answer)
-    header = ""
-    reason = ""
+    header = ""; reason = ""
     if uncertain:
         na = norm(answer)
         if _build_trigger_re(_SELLER_HANDOFF_PATTERNS).search(na):
@@ -2113,26 +2080,21 @@ def handle_message(c: "Cardinal", m: Any, text: str) -> None:
             extra_trigger = True
             header = "🆘 <b>AI предлагает подключить продавца</b>"
             reason = "AI передал вопрос продавцу"
-
     if counter_offer:
         extra_trigger = True
         if not header:
             header = "🆘 <b>Покупатель предлагает свою цену</b>"
             reason = "Торг: покупатель назвал свою цену за объём"
-
     notify = bool((uncertain or extra_trigger) and SETTINGS.get("confidence_notify", True))
     _say(c, m, answer, notify=notify, notify_header=header, reason=reason, buyer_text=text)
 
 
-# ============================== FIFO ==============================
 def _drain(chat: str) -> None:
     while True:
         with LOCK:
             q = QUEUES.get(chat)
             if STOP.is_set() or not q:
-                QUEUES.pop(chat, None)
-                ACTIVE.discard(chat)
-                return
+                QUEUES.pop(chat, None); ACTIVE.discard(chat); return
             c, m, text = q.popleft()
         try:
             delay = max(0.0, float(SETTINGS.get("response_delay", 0.3)))
@@ -2155,20 +2117,17 @@ def _enqueue(c: "Cardinal", m: Any, text: str) -> None:
     with LOCK:
         QUEUES.setdefault(chat, deque()).append((c, m, str(text or "").strip()))
         if chat not in ACTIVE:
-            ACTIVE.add(chat)
-            start = True
+            ACTIVE.add(chat); start = True
     if start:
         try:
             POOL.submit(_drain, chat)
         except RuntimeError:
             with LOCK:
-                QUEUES.pop(chat, None)
-                ACTIVE.discard(chat)
+                QUEUES.pop(chat, None); ACTIVE.discard(chat)
 
 
 def _mark(mid: Any) -> bool:
-    k = str(mid)
-    now = time.time()
+    k = str(mid); now = time.time()
     with LOCK:
         for kk, ts in list(DONE.items()):
             if now - ts > 600:
@@ -2179,12 +2138,12 @@ def _mark(mid: Any) -> bool:
     return True
 
 
-# ============================== Hooks ==============================
 def on_message(c: "Cardinal", e: "NewMessageEvent") -> None:
     if not is_enabled(c) or getattr(c, "old_mode_enabled", False):
         return
     m = e.message
 
+    # Системные события — оплата/подтверждение — обрабатываем раньше фильтров по author_id.
     _observe_transaction_message(c, m)
 
     if getattr(m, "author_id", 0) in (0, getattr(c.account, "id", None)):
@@ -2230,6 +2189,9 @@ def on_last_chat(c: "Cardinal", e: Any) -> None:
             if not msgs:
                 return
             m = msgs[-1]
+            # В старом режиме системные события оплаты/подтверждения приходят
+            # как сообщения в чате — прогоняем их через observer.
+            _observe_transaction_message(c, m)
             if getattr(m, "author_id", 0) in (0, getattr(c.account, "id", None)):
                 return
             if not getattr(m, "buyer_viewing", None) and getattr(full, "looking_link", None):
@@ -2251,7 +2213,6 @@ def on_last_chat(c: "Cardinal", e: Any) -> None:
     POOL.submit(job)
 
 
-# ============================== Telegram UI ==============================
 def init_telegram(cardinal: "Cardinal") -> None:
     load_config()
     if not cardinal.telegram:
@@ -2357,37 +2318,20 @@ def init_telegram(cardinal: "Cardinal") -> None:
         SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show(call)
 
     def toggle_survey(call: CallbackQuery) -> None:
-        SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True))
-        save_config()
-        try:
-            bot.answer_callback_query(call.id, "✅ Изменено")
-        except Exception:
-            pass
-        show(call)
+        SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True)); save_config(); show(call)
 
     def toggle_autofulfill(call: CallbackQuery) -> None:
         SETTINGS["auto_fulfill_paid_orders"] = not bool(SETTINGS.get("auto_fulfill_paid_orders", False))
-        save_config()
-        try:
-            bot.answer_callback_query(call.id, "✅ Изменено")
-        except Exception:
-            pass
-        show(call)
+        save_config(); show(call)
 
     def toggle_autofulfill_notify(call: CallbackQuery) -> None:
         SETTINGS["auto_fulfill_notify_seller"] = not bool(SETTINGS.get("auto_fulfill_notify_seller", True))
-        save_config()
-        try:
-            bot.answer_callback_query(call.id, "✅ Изменено")
-        except Exception:
-            pass
-        show(call)
+        save_config(); show(call)
 
     def ask_autofulfill_delay(call: CallbackQuery) -> None:
         msg = bot.send_message(
             call.message.chat.id,
-            "Введите задержку перед отправкой платёжного сообщения в секундах (0–60).\n"
-            "Например, <code>3</code> — покупатель получит данные через 3 секунды после оплаты.",
+            "Введите задержку перед отправкой платёжного сообщения в секундах (0–60).",
             reply_markup=CLEAR_STATE_BTN(),
         )
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_AF_DELAY)
@@ -2400,8 +2344,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
             if not 0 <= v <= 60:
                 raise ValueError
         except Exception:
-            bot.reply_to(m, "❌ Введите число 0–60.")
-            return
+            bot.reply_to(m, "❌ Введите число 0–60."); return
         SETTINGS["auto_fulfill_delay_sec"] = v
         save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
@@ -2544,10 +2487,7 @@ def init_telegram(cardinal: "Cardinal") -> None:
                 lines.append(f"📝 {utils.escape(notes[:1200])}")
         if status == "error" and err:
             lines.extend(["", f"⚠️ <code>{utils.escape(err[:400])}</code>"])
-        lines.extend([
-            "",
-            "🛡 Проверяется HTTPS, SHA-256, UUID и синтаксис Python. Старый файл сохраняется как <code>.bak</code>.",
-        ])
+        lines.extend(["", "🛡 Проверяется HTTPS, SHA-256, UUID и синтаксис Python."])
         return "\n".join(lines)
 
     def updates_kb() -> K:
@@ -2566,198 +2506,4 @@ def init_telegram(cardinal: "Cardinal") -> None:
             available = bool(UPDATE_STATE.get("available"))
         if available and isinstance(manifest, dict):
             kb.add(B(f"⬆️ Установить v{manifest.get('version')}", callback_data=f"{CB}:upd:install"))
-        pending = str(SETTINGS.get("pending_restart_version") or "")
-        if pending and _version_key(pending) > _version_key(VERSION):
-            kb.add(B(f"♻️ Перезапустить и включить v{pending}", callback_data=f"{CB}:upd:restart"))
-        kb.add(B("◀️ Назад", callback_data=f"{CB}:main"))
-        return kb
-
-    def open_updates(call: CallbackQuery) -> None:
-        try:
-            bot.edit_message_text(updates_text(), call.message.chat.id, call.message.id, reply_markup=updates_kb())
-            bot.answer_callback_query(call.id)
-        except Exception:
-            logger.debug("open_updates failed", exc_info=True)
-
-    def update_cb(call: CallbackQuery) -> None:
-        action = call.data.split(":")[-1]
-        try:
-            if action == "checks":
-                SETTINGS["update_checks_enabled"] = not bool(SETTINGS.get("update_checks_enabled", True))
-                save_config(); bot.answer_callback_query(call.id, "✅"); open_updates(call); return
-            if action == "auto":
-                SETTINGS["auto_update"] = not bool(SETTINGS.get("auto_update", False))
-                if not SETTINGS["auto_update"]:
-                    SETTINGS["auto_restart_after_update"] = False
-                save_config(); bot.answer_callback_query(call.id, "✅"); open_updates(call); return
-            if action == "autorestart":
-                if not SETTINGS.get("auto_update", False):
-                    bot.answer_callback_query(call.id, "Сначала включите автоустановку.", show_alert=True); return
-                SETTINGS["auto_restart_after_update"] = not bool(SETTINGS.get("auto_restart_after_update", False))
-                save_config(); bot.answer_callback_query(call.id, "✅"); open_updates(call); return
-            if action == "check":
-                manifest, err = check_updates_cycle(cardinal, notify=False, force=True)
-                if manifest is None:
-                    bot.answer_callback_query(call.id, (err or "Ошибка")[:180], show_alert=True)
-                elif _version_key(str(manifest.get("version") or "")) > _version_key(VERSION):
-                    bot.answer_callback_query(call.id, f"Доступна v{manifest.get('version')}!", show_alert=True)
-                else:
-                    bot.answer_callback_query(call.id, f"v{VERSION} — актуальная.", show_alert=True)
-                open_updates(call); return
-            if action == "install":
-                with LOCK:
-                    manifest = UPDATE_STATE.get("manifest")
-                ok, msg = install_update(cardinal, manifest if isinstance(manifest, dict) else None)
-                bot.answer_callback_query(call.id, msg[:180], show_alert=True)
-                open_updates(call); return
-            if action == "restart":
-                pending = str(SETTINGS.get("pending_restart_version") or "")
-                if not pending:
-                    bot.answer_callback_query(call.id, "Нет обновления к применению.", show_alert=True); return
-                bot.answer_callback_query(call.id, "Перезапускаю…", show_alert=True)
-                try:
-                    bot.send_message(call.message.chat.id, f"♻️ Перезапускаю Cardinal для v{utils.escape(pending)}.")
-                except Exception:
-                    pass
-                _restart_cardinal(1.5); return
-            if action == "interval":
-                msg = bot.send_message(call.message.chat.id, "Интервал проверки 10–1440 минут:",
-                                       reply_markup=CLEAR_STATE_BTN())
-                tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_UPD_INT)
-                bot.answer_callback_query(call.id); return
-        except Exception:
-            logger.debug("update_cb failed", exc_info=True)
-        open_updates(call)
-
-    def cmd_ai(m: Message) -> None:
-        bot.send_message(m.chat.id, main_text(), reply_markup=main_kb())
-
-    def set_update_interval(m: Message) -> None:
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        try:
-            v = int((m.text or "").strip())
-            if not 10 <= v <= 1440:
-                raise ValueError
-        except Exception:
-            bot.reply_to(m, "❌ Введите число 10–1440."); return
-        SETTINGS["update_check_interval_minutes"] = v
-        save_config()
-        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ К обновлениям", callback_data=f"{CB}:update")))
-
-    def set_survey_text(m: Message) -> None:
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        v = (m.text or "").strip()
-        if v == "-":
-            SETTINGS["post_order_survey_text"] = DEFAULTS["post_order_survey_text"]
-        elif not v:
-            bot.reply_to(m, "❌ Текст не может быть пустым.")
-            return
-        else:
-            SETTINGS["post_order_survey_text"] = v
-        save_config()
-        bot.reply_to(m, "✅ Текст опроса сохранён.",
-                     reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-    tg.msg_handler(set_survey_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SURVEY_TEXT))
-
-    def set_wm_text(m: Message) -> None:
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        raw = (m.text or "").strip()
-        SETTINGS["watermark_text"] = "" if raw == "-" else raw
-        save_config()
-        bot.reply_to(m, "✅ Водяной знак обновлён.",
-                     reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-    tg.msg_handler(set_wm_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_WM_TEXT))
-
-    tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
-    tg.cbq_handler(toggle, lambda c: c.data == f"{CB}:tog")
-    tg.cbq_handler(toggle_wm, lambda c: c.data == f"{CB}:wm")
-    tg.cbq_handler(toggle_notify, lambda c: c.data == f"{CB}:notify")
-    tg.cbq_handler(toggle_bootstrap, lambda c: c.data == f"{CB}:bootstrap")
-    tg.cbq_handler(toggle_lang, lambda c: c.data == f"{CB}:lang")
-    tg.cbq_handler(toggle_tone, lambda c: c.data == f"{CB}:tone")
-    tg.cbq_handler(toggle_nopromise, lambda c: c.data == f"{CB}:nopromise")
-    tg.cbq_handler(toggle_confnotify, lambda c: c.data == f"{CB}:confnotify")
-    tg.cbq_handler(toggle_survey, lambda c: c.data == f"{CB}:survey")
-    tg.cbq_handler(toggle_autofulfill, lambda c: c.data == f"{CB}:autofulfill")
-    tg.cbq_handler(toggle_autofulfill_notify, lambda c: c.data == f"{CB}:autofulfillnotify")
-    tg.cbq_handler(ask_autofulfill_delay, lambda c: c.data == f"{CB}:autofulfilldelay")
-    tg.cbq_handler(notify_test, lambda c: c.data == f"{CB}:notify_test")
-    tg.cbq_handler(clear_history, lambda c: c.data == f"{CB}:clear_history")
-    tg.cbq_handler(list_chats, lambda c: c.data == f"{CB}:chats")
-    tg.cbq_handler(show_rules, lambda c: c.data == f"{CB}:rules")
-    tg.cbq_handler(open_updates, lambda c: c.data in (f"{CB}:update", f"{CB}:updcfg"))
-    tg.cbq_handler(update_cb, lambda c: c.data.startswith(f"{CB}:upd:"))
-    tg.cbq_handler(ask(ST_URL, "Введите base URL API (например <code>https://openrouter.ai/api/v1</code>):"), lambda c: c.data == f"{CB}:url")
-    tg.cbq_handler(ask(ST_KEY, "Введите API key (можно <code>env:OPENROUTER_API_KEY</code>):"), lambda c: c.data == f"{CB}:key")
-    tg.cbq_handler(ask(ST_MODEL, "Введите ID модели (например <code>openai/gpt-4o-mini</code>):"), lambda c: c.data == f"{CB}:model")
-    tg.cbq_handler(ask(ST_PROMPT, "Пришлите новый главный промпт:"), lambda c: c.data == f"{CB}:prompt")
-    tg.cbq_handler(ask(ST_SELLER, "Пришлите данные о продавце:"), lambda c: c.data == f"{CB}:seller")
-    tg.cbq_handler(ask(ST_TIMEOUT, "AI timeout 30–600 секунд:"), lambda c: c.data == f"{CB}:timeout")
-    tg.cbq_handler(ask(ST_BUDGET, "Бюджет истории в символах (2000–40000):"), lambda c: c.data == f"{CB}:budget")
-    tg.cbq_handler(ask(ST_WM_TEXT, "Введите текст водяного знака. Отправьте <code>-</code> чтобы очистить:"), lambda c: c.data == f"{CB}:wmtext")
-    tg.cbq_handler(ask(ST_NOTIFY_COOLDOWN, "Введите cooldown уведомлений продавцу в минутах (0–60):"), lambda c: c.data == f"{CB}:cooldown")
-    tg.cbq_handler(ask(ST_SURVEY_TEXT,
-                       "Пришлите текст опроса, который AI отправит после подтверждения заказа. "
-                       "Отправьте <code>-</code>, чтобы вернуть текст по умолчанию:"),
-                   lambda c: c.data == f"{CB}:surveytext")
-    tg.cbq_handler(test_api, lambda c: c.data == f"{CB}:test")
-    tg.cbq_handler(refresh_lots, lambda c: c.data == f"{CB}:lots")
-
-    tg.msg_handler(make_setter("api_url"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
-    tg.msg_handler(make_setter("api_key"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
-    tg.msg_handler(make_setter("api_model"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
-    tg.msg_handler(make_setter("system_prompt"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_PROMPT))
-    tg.msg_handler(make_setter("seller_info"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
-    tg.msg_handler(make_setter("ai_timeout",
-                               validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
-                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TIMEOUT))
-    tg.msg_handler(make_setter("history_char_budget",
-                               validate=lambda v: v.isdigit() and 2000 <= int(v) <= 40000, transform=int),
-                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BUDGET))
-
-    tg.msg_handler(make_setter("seller_notify_cooldown",
-                               validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
-                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
-    tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
-
-    tg.msg_handler(cmd_ai, commands=["ai"])
-    cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
-
-
-def post_init(c: "Cardinal") -> None:
-    if not os.path.exists(CFG_PATH):
-        load_config()
-    try:
-        sync_lots(c, enrich=False)
-    except Exception:
-        logger.debug("post_init", exc_info=True)
-
-
-def post_start(c: "Cardinal") -> None:
-    threading.Thread(target=lot_worker, args=(c,), daemon=True, name="KBAI-lots").start()
-    threading.Thread(target=update_worker, args=(c,), daemon=True, name="KBAI-updates").start()
-
-
-def on_delete(c: "Cardinal", call: CallbackQuery) -> None:
-    STOP.set()
-    try:
-        POOL.shutdown(wait=False, cancel_futures=True)
-    except Exception:
-        pass
-
-
-BIND_TO_PRE_INIT = [init_telegram]
-BIND_TO_POST_INIT = [post_init]
-BIND_TO_POST_START = [post_start]
-BIND_TO_NEW_MESSAGE = [on_message]
-BIND_TO_LAST_CHAT_MESSAGE_CHANGED = [on_last_chat]
-BIND_TO_DELETE = on_delete
-
-# Хук на новые оплаченные заказы. Если в твоей сборке Cardinal такой hook
-# не поддерживается — плагин просто пропустит авто-выдачу, остальное работает.
-try:
-    from cardinal import BIND_TO_NEW_ORDER as _CARDINAL_NEW_ORDER
-    if isinstance(_CARDINAL_NEW_ORDER, list):
-        _CARDINAL_NEW_ORDER.append(on_new_paid_order)
-except Exception:
-    logger.info("BIND_TO_NEW_ORDER не найден в Cardinal; авто-выдача оплаченных заказов отключена.")
+        pending = str(SETT
