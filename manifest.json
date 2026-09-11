@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "013804d3e25d80fa293b8fe5b4d725238e9dff2ecb44b94bbbbf81eefdb4885e",
-  "notes": "Первый релиз KiriillBR AI с автообновлениями.",
+  "sha256": "7c32c50dfe3a9ed21e15da1b9ae5d45b9a52bd32a99db1485bdc71027fbb1f2a",
+  "notes": "Тестовое обновление — проверка автообновления. Код не изменён, только версия.",
   "mandatory": false
 }
