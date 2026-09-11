@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from FunPayAPI.updater.events import NewMessageEvent
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "3.2.1"
-DESCRIPTION = "AI-заместитель продавца FunPay. Статусы заказов + парсер событий."
+VERSION = "3.2.2"
+DESCRIPTION = "AI-заместитель продавца FunPay. Статусы заказов сохраняются на диск."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -25,6 +25,7 @@ UPDATE_MANIFEST_SCHEMA = 1
 UPDATE_MAX_BYTES = 3 * 1024 * 1024
 UPDATE_USER_AGENT = f"KiriillBRAI/{VERSION} ({UUID})"
 CFG_PATH = "storage/plugins/kiriillbr_ai.json"
+ORDERS_PATH = "storage/plugins/kiriillbr_orders.json"
 CB = "KBAI"
 ST_MODEL, ST_PROMPT, ST_SELLER = f"{CB}_model", f"{CB}_prompt", f"{CB}_seller"
 ST_URL, ST_KEY, ST_TIMEOUT, ST_BUDGET = f"{CB}_url", f"{CB}_key", f"{CB}_timeout", f"{CB}_budget"
@@ -91,7 +92,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 персданных, вредоносного ПО, аккаунтов соцсетей, телефонных номеров, аккаунтов оптом,
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
-DEFAULTS = {"version": 33, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 34, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -192,6 +193,9 @@ def load_config():
             SETTINGS.setdefault("orders_refresh_sec", 30)
             SETTINGS["version"] = 33
             save_config()
+        if cv < 34:
+            SETTINGS["version"] = 34
+            save_config()
     except Exception:
         pass
 
@@ -210,6 +214,81 @@ def save_config():
                 os.path.exists(tmp) and os.remove(tmp)
             except OSError:
                 pass
+
+def save_orders_state():
+    try:
+        os.makedirs(os.path.dirname(ORDERS_PATH), exist_ok=True)
+        with LOCK:
+            data = {"saved_at": time.time(),
+                "order_status": {oid: list(v) for oid, v in ORDER_STATUS.items()},
+                "chat_orders": {ck: list(v) for ck, v in CHAT_ORDERS.items()},
+                "closed_orders": dict(CLOSED_ORDERS),
+                "processed_orders": dict(PROCESSED_ORDERS)}
+        tmp = f"{ORDERS_PATH}.{os.getpid()}.{threading.get_ident()}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, ORDERS_PATH)
+        finally:
+            try:
+                os.path.exists(tmp) and os.remove(tmp)
+            except OSError:
+                pass
+    except Exception:
+        logger.debug("save_orders_state failed", exc_info=True)
+
+def load_orders_state():
+    global ORDER_STATUS, CHAT_ORDERS, CLOSED_ORDERS, PROCESSED_ORDERS
+    if not os.path.exists(ORDERS_PATH):
+        return
+    try:
+        with open(ORDERS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+    now = time.time()
+    try:
+        saved_at = float(data.get("saved_at", 0) or 0)
+        if saved_at and now - saved_at > 30 * 86400:
+            return
+        osd = data.get("order_status") or {}
+        loaded = 0
+        for oid, val in osd.items():
+            try:
+                st, ck, ts = val[0], val[1], float(val[2])
+                if now - ts > _ORDER_CLOSED_TTL:
+                    continue
+                ORDER_STATUS[str(oid)] = (str(st), str(ck), ts)
+                loaded += 1
+            except Exception:
+                continue
+        co = data.get("chat_orders") or {}
+        for ck, lst in co.items():
+            try:
+                CHAT_ORDERS[str(ck)] = [str(x) for x in list(lst)][-10:]
+            except Exception:
+                continue
+        closed = data.get("closed_orders") or {}
+        for oid, ts in closed.items():
+            try:
+                ts = float(ts)
+                if now - ts <= _ORDER_CLOSED_TTL:
+                    CLOSED_ORDERS[str(oid)] = ts
+            except Exception:
+                continue
+        proc = data.get("processed_orders") or {}
+        for oid, ts in proc.items():
+            try:
+                ts = float(ts)
+                if now - ts <= _ORDER_DEDUP_TTL:
+                    PROCESSED_ORDERS[str(oid)] = ts
+            except Exception:
+                continue
+        logger.info("orders state loaded: %d заказов, %d чатов", loaded, len(CHAT_ORDERS))
+    except Exception:
+        logger.debug("load_orders_state failed", exc_info=True)
 
 def is_enabled(c):
     p = c.plugins.get(UUID)
@@ -502,6 +581,17 @@ def update_worker(c):
             minutes = 30
         minutes = max(5, min(1440, minutes))
         if STOP.wait(minutes * 60):
+            break
+
+def save_orders_worker(c):
+    if STOP.wait(60.0):
+        return
+    while not STOP.is_set():
+        try:
+            save_orders_state()
+        except Exception:
+            pass
+        if STOP.wait(120):
             break
 
 def update_status_line():
@@ -1038,6 +1128,7 @@ def _set_order_status(order_id, chat_id, status):
     if ck:
         _register_chat_order(ck, oid)
     logger.info("order=%s status=%s chat=%s", oid, status, ck)
+    save_orders_state()
 
 def _get_order_status(order_id):
     oid = str(order_id or "").strip().upper()
@@ -1082,6 +1173,7 @@ def _mark_order_processed(order_id):
         if key in PROCESSED_ORDERS:
             return False
         PROCESSED_ORDERS[key] = now
+    save_orders_state()
     return True
 
 def _mark_order_closed(order_id, chat_id="", status="confirmed"):
@@ -2219,7 +2311,6 @@ def init_telegram(cardinal):
         SETTINGS["auto_fulfill_notify_seller"] = not bool(SETTINGS.get("auto_fulfill_notify_seller", True)); save_config(); show(call)
     def toggle_survey(call):
         SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True)); save_config(); show(call)
-
     def ask_thank_text(call):
         msg = bot.send_message(call.message.chat.id, "Пришлите текст благодарности после оплаты:",
                                reply_markup=CLEAR_STATE_BTN())
@@ -2259,6 +2350,11 @@ def init_telegram(cardinal):
             CHAT_ORDERS.clear()
             CLOSED_ORDERS.clear()
             PROCESSED_ORDERS.clear()
+        try:
+            if os.path.exists(ORDERS_PATH):
+                os.remove(ORDERS_PATH)
+        except Exception:
+            pass
         try:
             bot.answer_callback_query(call.id, "✅ Статусы заказов сброшены")
         except Exception:
@@ -2618,10 +2714,10 @@ def init_telegram(cardinal):
     tg.msg_handler(cmd_ai, commands=["ai"])
     cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
 
-
 def post_init(c):
     if not os.path.exists(CFG_PATH):
         load_config()
+    load_orders_state()
     try:
         acc = c.account
         names = [x for x in dir(acc) if not x.startswith("_")]
@@ -2635,19 +2731,21 @@ def post_init(c):
     except Exception:
         logger.debug("post_init", exc_info=True)
 
-
 def post_start(c):
     threading.Thread(target=lot_worker, args=(c,), daemon=True, name="KBAI-lots").start()
     threading.Thread(target=update_worker, args=(c,), daemon=True, name="KBAI-updates").start()
-
+    threading.Thread(target=save_orders_worker, args=(c,), daemon=True, name="KBAI-orders-save").start()
 
 def on_delete(c, call=None):
+    try:
+        save_orders_state()
+    except Exception:
+        pass
     STOP.set()
     try:
         POOL.shutdown(wait=False, cancel_futures=True)
     except Exception:
         pass
-
 
 BIND_TO_PRE_INIT = [init_telegram]
 BIND_TO_POST_INIT = [post_init]
