@@ -1,1 +1,9 @@
-
+{
+  "schema": 1,
+  "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
+  "version": "4.1.1",
+  "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
+  "sha256": "4410633ebcd5db3e9c3dd061dfe9c45f43b814abbc6869f5b181c26d41731304",
+  "notes": "Усиленный vision: мат в тексте фото, анатомические формы. Все остальные защиты на месте.",
+  "mandatory": false
+}
