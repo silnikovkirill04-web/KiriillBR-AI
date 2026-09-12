@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "3.3.3",
+  "version": "4.0.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "84bee25c40608771c35400a1b1b90c3b39f46b23bd286fe032c317ab0b1085a0",
+  "sha256": "277ebf0ff1b8f682b8e32786dfbf8ae4497174df1967c4c4d070c8c6a7197935",
   "notes": "Авто-ЧС: 5x фото-вопросов за 24ч, 5 оффтопов за 30 мин, 3 похожих подряд.",
   "mandatory": false
 }
