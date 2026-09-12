@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "3.3.2"
+VERSION = "3.3.3"
 DESCRIPTION = "AI-помощник продавца FunPay. Сохраняет историю и заказы на диск."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -155,7 +155,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 персданных, вредоносного ПО, аккаунтов соцсетей, телефонных номеров, аккаунтов оптом,
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
-DEFAULTS = {"version": 42, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 43, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -211,6 +211,8 @@ _ORDER_CLOSED_TTL = 7 * 86400
 _SPAM_WINDOW = 30 * 60
 _SPAM_LIMIT = 5
 _SPAM_SIMILAR_LIMIT = 3
+_PHOTO_ASK_WINDOW = 24 * 3600
+_PHOTO_ASK_LIMIT = 5
 _ORDER_PRIO = {"paid": 0, "confirmed": 1, "refunded": 2}
 _STATUS_RU = {"paid": "оплачен, ждём выдачу",
     "confirmed": "закрыт и подтверждён покупателем",
@@ -295,6 +297,10 @@ def load_config():
             SETTINGS.pop("auto_blacklist_photo_ask", None)
             SETTINGS.setdefault("auto_blacklist_spam", True)
             SETTINGS["version"] = 42
+            save_config()
+        if cv < 43:
+            SETTINGS.setdefault("auto_blacklist_photo_ask", True)
+            SETTINGS["version"] = 43
             save_config()
     except Exception:
         pass
@@ -562,11 +568,13 @@ def _auto_blacklist_user(c, m, reason="Джейлбрейк / попытка в�
 
 def _track_suspicious(c, m, text):
     """
-    Считает спам / подозрительные сообщения от одного чата.
-    Срабатывает на 5 оффтоп-сообщений за 30 мин ИЛИ на 3 подряд похожих (>85%).
+    Считает:
+    - 5 оффтоп-сообщений за 30 мин → ЧС
+    - 3 похожих сообщения подряд (>85%) → ЧС
+    - 5 запросов «что на фото» за 24ч → ЧС
     Возвращает True, если покупатель улетел в ЧС (тогда отвечать не надо).
     """
-    if not SETTINGS.get("auto_blacklist_spam", True):
+    if not SETTINGS.get("auto_blacklist_spam", True) and not SETTINGS.get("auto_blacklist_photo_ask", True):
         return False
     chat_key = str(getattr(m, "chat_id", "") or "")
     if not chat_key:
@@ -574,26 +582,37 @@ def _track_suspicious(c, m, text):
     s = str(text or "").strip()
     if not s:
         return False
-    # Если это вопрос по покупке/товару/заказу/помощи — сбрасываем счётчик
-    if _RE_PURCHASE_TOPIC.search(s):
+
+    is_photo_ask = bool(_RE_PHOTO_ASK.search(s))
+
+    # Обычный вопрос по покупке/товару (НЕ фото) → сбрасываем счётчики
+    if _RE_PURCHASE_TOPIC.search(s) and not is_photo_ask:
         with LOCK:
             SPAM_WATCH.pop(chat_key, None)
         return False
-    # Подозрительным считаем: оффтоп ИЛИ очень короткий "мусор"
-    is_suspicious = is_offtopic(s)
-    if not is_suspicious:
+
+    is_offtopic_msg = is_offtopic(s)
+    is_short_garbage = False
+    if not is_offtopic_msg and not is_photo_ask:
         words = re.findall(r"[а-яa-zё]{3,}", s, re.I)
         if len(words) == 0 and len(s) < 40:
-            is_suspicious = True
-    if not is_suspicious:
+            is_short_garbage = True
+
+    if not (is_photo_ask or is_offtopic_msg or is_short_garbage):
         return False
 
     now = time.time()
     with LOCK:
         rec = SPAM_WATCH.get(chat_key)
         if not rec or now - rec.get("first_ts", 0) > _SPAM_WINDOW:
-            rec = {"count": 1, "first_ts": now, "last_text": s, "similar": 1}
-        else:
+            rec = {"count": 0, "first_ts": now, "last_text": s, "similar": 1,
+                   "photo_ask": 0, "first_photo_ts": now}
+        if now - rec.get("first_photo_ts", now) > _PHOTO_ASK_WINDOW:
+            rec["photo_ask"] = 0
+            rec["first_photo_ts"] = now
+        if is_photo_ask:
+            rec["photo_ask"] = int(rec.get("photo_ask", 0)) + 1
+        if is_offtopic_msg or is_short_garbage:
             rec["count"] = int(rec.get("count", 0)) + 1
             prev = rec.get("last_text", "") or ""
             sim = 0.0
@@ -606,12 +625,24 @@ def _track_suspicious(c, m, text):
                 rec["similar"] = int(rec.get("similar", 1)) + 1
             else:
                 rec["similar"] = 1
-            rec["last_text"] = s
+        rec["last_text"] = s
         SPAM_WATCH[chat_key] = rec
         count = int(rec.get("count", 0))
         similar = int(rec.get("similar", 0))
+        photo_ask = int(rec.get("photo_ask", 0))
 
-    if count < _SPAM_LIMIT and similar < _SPAM_SIMILAR_LIMIT:
+    # ▼ Проверка триггеров
+    trigger = ""
+    if SETTINGS.get("auto_blacklist_spam", True):
+        if count >= _SPAM_LIMIT:
+            trigger = f"{count} подозрительных сообщений за 30 мин"
+        elif similar >= _SPAM_SIMILAR_LIMIT:
+            trigger = f"{similar} похожих сообщений подряд"
+    if not trigger and SETTINGS.get("auto_blacklist_photo_ask", True):
+        if photo_ask >= _PHOTO_ASK_LIMIT:
+            trigger = f"{photo_ask} запросов «что на фото» за 24ч"
+
+    if not trigger:
         return False
 
     # ▼ Порог достигнут — авто-ЧС
@@ -622,14 +653,11 @@ def _track_suspicious(c, m, text):
     _add_to_blacklist(nick, auto=True)
     try:
         safe_nick = _safe_for_notify(nick, 120)
-        reason = (f"{count} подозрительных сообщений за 30 мин"
-                  if count >= _SPAM_LIMIT
-                  else f"{similar} похожих сообщений подряд")
         header = "🚨 <b>Авто-блокировка: спам / подозрительное поведение</b>"
         body = (f"👤 Ник: <b>{utils.escape(safe_nick)}</b>\n"
                 f"💬 Чат: <code>{utils.escape(chat_key)}</code>\n"
-                f"🧠 Причина: <i>{utils.escape(reason)}</i>\n"
-                f"📊 Счётчик: <b>{count}</b> оффтоп · <b>{similar}</b> подряд похожих\n\n"
+                f"🧠 Причина: <i>{utils.escape(trigger)}</i>\n"
+                f"📊 Счётчики: оффтоп <b>{count}</b> · похожих <b>{similar}</b> · фото <b>{photo_ask}</b>\n\n"
                 "Покупатель добавлен в чёрный список. Бот больше не отвечает ему.")
         notify_seller_text(c, header=header, body=body)
     except Exception:
@@ -1078,6 +1106,16 @@ _RE_PURCHASE_TOPIC = re.compile(r"(?:\bоплат\w*|\bзаплат\w*|\bопл�
     r"\bвидн\w*\s+оплат|\bпришл\w*\s+оплат|\bпо\s+заказ|\bпо\s+покупк|\bпо\s+лот|\bпо\s+товар|"
     r"\bфото\w*|\bскрин\w*|\bизображен\w*|\bкартинк\w*|\bфотк\w*|\bснимок\w*|\bснимк\w*|"
     r"\bпомож\w*|\bподскаж\w*|\bуточн\w*|\bкак\w*\s+купить|\bкак\w*\s+оформ\w*)", re.I)
+_RE_PHOTO_ASK = re.compile(
+    r"(?:\bчто\s+на\s+(?:фото|фотке|картинке|скрине|скриншоте|изображении)|"
+    r"\bопиши\s+(?:фото|фотку|картинк\w*|скрин\w*|изображени\w*)|"
+    r"\bскажи\s+(?:что|что\s+на)\s+(?:фото|фотке|картинке|скрине|скриншоте|изображении)|"
+    r"\bчто\s+(?:изображено|нарисовано|показано)\b|"
+    r"\bпосмотри\s+(?:на\s+)?(?:фото|фотку|картинк\w*|скрин\w*)|"
+    r"\bразбери\s+(?:фото|фотку|картинк\w*|скрин\w*)|"
+    r"\bопредели\s+(?:что\s+на\s+)?(?:фото|фотке|картинке|скрине|скриншоте)|"
+    r"\bрасскажи\s+(?:что\s+на\s+)?(?:фото|фотке|картинке|скрине|скриншоте))",
+    re.I)
 _RE_FPAY_REFUND = re.compile(r"(?:вернул|возвратил)\s+деньги\s+покупателю.*?по\s+заказу\s*#?([A-Z0-9]{6,12})", re.I)
 _RE_FPAY_CONFIRMED = re.compile(r"(?:подтвердил\s+выполнение\s+заказа|заказ\s+подтвержд[её]н|подтвержд[её]н\s+заказ)\s*#?([A-Z0-9]{6,12})", re.I)
 _RE_FPAY_PAID = re.compile(r"оплатил\s+заказ\s*#?([A-Z0-9]{6,12})", re.I)
@@ -2505,7 +2543,7 @@ def handle_message(c, m, text):
         _auto_blacklist_user(c, m, reason="Попытка джейлбрейка / запрос вредоносного кода")
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
         return
-    # ★ АВТО-ЧС: спам / подозрительное поведение
+    # ★ АВТО-ЧС: спам / 5× фото / 3× похожих
     if _track_suspicious(c, m, text):
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
         return
@@ -2723,7 +2761,8 @@ def init_telegram(cardinal):
         bl_state = utils.bool_to_text(SETTINGS.get("blacklist_enabled", True))
         auto_bl = utils.bool_to_text(SETTINGS.get("auto_blacklist_enabled", True))
         auto_spam = utils.bool_to_text(SETTINGS.get("auto_blacklist_spam", True))
-        head += f"🚫 ЧС: <b>{bl_count}</b> · вкл <b>{bl_state}</b> · авто-блок <b>{auto_bl}</b> · спам <b>{auto_spam}</b>\n"
+        auto_photo = utils.bool_to_text(SETTINGS.get("auto_blacklist_photo_ask", True))
+        head += f"🚫 ЧС: <b>{bl_count}</b> · авто-блок <b>{auto_bl}</b> · спам <b>{auto_spam}</b> · фото×5 <b>{auto_photo}</b>\n"
         head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>"
         return head
 
@@ -2760,6 +2799,8 @@ def init_telegram(cardinal):
                  callback_data=f"{CB}:bl_auto_toggle"),
                B(f"🗑 Авто-ЧС спам {utils.bool_to_text(SETTINGS.get('auto_blacklist_spam', True))}",
                  callback_data=f"{CB}:bl_spam_toggle"))
+        kb.add(B(f"📸 Авто-ЧС фото×5 {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}",
+                 callback_data=f"{CB}:bl_photo_toggle"))
         kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"), B("🧪 Тест API", callback_data=f"{CB}:test"))
         kb.add(B("🖼 Тест фото (отправить фото в AI)", callback_data=f"{CB}:testphoto"))
         kb.row(B(f"🌍 Язык {utils.bool_to_text(SETTINGS.get('match_language', True))}", callback_data=f"{CB}:lang"),
@@ -2923,9 +2964,6 @@ def init_telegram(cardinal):
             bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
         return setter
 
-    # =====================================================================
-    # ПРОМПТ: сбор в несколько сообщений
-    # =====================================================================
     def ask_prompt_start(call):
         PROMPT_BUFFER["text"] = ""
         PROMPT_BUFFER["msg_id"] = None
@@ -2990,11 +3028,7 @@ def init_telegram(cardinal):
                                  B("❌ Отмена", callback_data=f"{CB}:main")))
         except Exception:
             pass
-    # =====================================================================
 
-    # =====================================================================
-    # ЧЁРНЫЙ СПИСОК
-    # =====================================================================
     def show_blacklist(call):
         with LOCK:
             raw = list(SETTINGS.get("blacklist") or [])
@@ -3002,6 +3036,7 @@ def init_telegram(cardinal):
             f"Статус: <b>{utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}</b>",
             f"Авто-блок (джейлбрейк): <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}</b>",
             f"Авто-ЧС за спам: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_spam', True))}</b>",
+            f"Авто-ЧС за 5× фото: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}</b>",
             f"Всего ников: <b>{len(raw)}</b>", ""]
         if raw:
             lines.append("<b>Ники:</b>")
@@ -3010,9 +3045,8 @@ def init_telegram(cardinal):
         else:
             lines.append("<i>Список пуст. Нажмите «Добавить ник» ниже.</i>")
         lines.append("")
-        lines.append("Покупатели из этого списка полностью игнорируются: "
-                     "бот не отвечает и не уведомляет продавца.\n"
-                     "Авто-блок: джейлбрейк (мгновенно) и спам (5 оффтоп за 30 мин или 3 подряд похожих).")
+        lines.append("Авто-ЧС: джейлбрейк (мгновенно), спам (5 оффтоп / 30 мин или 3 похожих), "
+                     "5× запросов «что на фото» / 24ч.")
         kb = K(row_width=2)
         kb.row(B("➕ Добавить ник", callback_data=f"{CB}:bl_add"),
                B("➖ Удалить ник", callback_data=f"{CB}:bl_del"))
@@ -3023,6 +3057,8 @@ def init_telegram(cardinal):
                  callback_data=f"{CB}:bl_auto_toggle"))
         kb.add(B(f"🗑 Авто-ЧС за спам {utils.bool_to_text(SETTINGS.get('auto_blacklist_spam', True))}",
                  callback_data=f"{CB}:bl_spam_toggle"))
+        kb.add(B(f"📸 Авто-ЧС за 5× фото {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}",
+                 callback_data=f"{CB}:bl_photo_toggle"))
         kb.add(B("◀️ Назад", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text("\n".join(lines), call.message.chat.id,
@@ -3172,7 +3208,19 @@ def init_telegram(cardinal):
             show_blacklist(call)
         except Exception:
             show(call)
-    # =====================================================================
+
+    def blacklist_photo_toggle(call):
+        SETTINGS["auto_blacklist_photo_ask"] = not bool(SETTINGS.get("auto_blacklist_photo_ask", True))
+        save_config()
+        try:
+            bot.answer_callback_query(call.id,
+                f"Авто-ЧС за 5× фото: {'включён' if SETTINGS['auto_blacklist_photo_ask'] else 'выключен'}")
+        except Exception:
+            pass
+        try:
+            show_blacklist(call)
+        except Exception:
+            show(call)
 
     def test_api(call):
         bot.answer_callback_query(call.id, "Проверяю…")
@@ -3439,6 +3487,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(blacklist_toggle, lambda c: c.data == f"{CB}:bl_toggle")
     tg.cbq_handler(blacklist_auto_toggle, lambda c: c.data == f"{CB}:bl_auto_toggle")
     tg.cbq_handler(blacklist_spam_toggle, lambda c: c.data == f"{CB}:bl_spam_toggle")
+    tg.cbq_handler(blacklist_photo_toggle, lambda c: c.data == f"{CB}:bl_photo_toggle")
 
     tg.cbq_handler(ask(ST_URL, "Введите base URL API:"), lambda c: c.data == f"{CB}:url")
     tg.cbq_handler(ask(ST_KEY, "Введите API key:"), lambda c: c.data == f"{CB}:key")
