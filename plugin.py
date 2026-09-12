@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "4.1.0"
+VERSION = "4.1.1"
 DESCRIPTION = "AI-помощник продавца FunPay. Сохраняет историю и заказы на диск."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -43,23 +43,45 @@ _VISION_MAX_BYTES = 4 * 1024 * 1024
 _VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
 
 _VISION_PROMPT = (
-    "Ты — модератор контента и AI-заместитель продавца FunPay. Покупатель прислал фото.\n\n"
-    "★ ГЛАВНАЯ ЗАДАЧА — ПРОВЕРКА НА ЗАПРЕЩЁННОЕ ★\n"
-    "Первым делом внимательно посмотри на фото и определи, есть ли там что-то из списка ниже. "
-    "Если ДА — начни ответ ровно с одной метки в квадратных скобках, БЕЗ текста перед ней:\n\n"
-    "   [[NSFW]]   — обнажёнка, гениталии, грудь, порно, эротика, интим, 18+, секс, половые органы, "
+    "Ты — строгий модератор контента и AI-заместитель продавца FunPay. Покупатель прислал фото.\n\n"
+    "★★★★★ ПЕРВОЕ И ГЛАВНОЕ ★★★★★\n"
+    "Прежде чем описывать что-либо, выполни ДВЕ проверки:\n\n"
+    "ПРОВЕРКА 1 — ТЕКСТ НА ФОТО (OCR):\n"
+    "Прочитай ВСЁ, что написано на фото — даже мелкий текст, надписи, водяные знаки, мемы, "
+    "подписи, субтитры, обложки видео, посты, скриншоты. Читай дословно, символ в символ.\n"
+    "Если в тексте есть МАТ, ОСКОРБЛЕНИЯ, 18+ (бля, хуй, хуесос, пизда, ебат, сук, "
+    "мудак, гандон, долбоёб, шлюх, порно, секс, голый, сиски, жопа, кал, навоз, "
+    "говно и любые похожие корни) — начни ответ СТРОГО со слова [[TEXT_NSFW]].\n"
+    "Пример: «[[TEXT_NSFW]] На фото надпись \"Сверху ХУЕСОС - 50 RUB\"».\n\n"
+    "ПРОВЕРКА 2 — АНАТОМИЯ И ФОРМЫ:\n"
+    "Внимательно посмотри на формы, очертания, отверстия, позы. Если на фото есть:\n"
+    "   — любой рот, губы, отверстие, щель, складка, форма, которая СХОДИТСЯ с формой "
+    "женских половых органов, вагины, вульвы, пизды (даже если это рот мужчины, губы, "
+    "отверстие в еде, складки на одежде, форма облаков и т.п.);\n"
+    "   — сходство с мужским половым органом (пенис, член, хуй) в любой форме: "
+    "палки, морковки, бананы, сосиски, бутылки, огурец, форма рук и т.п.;\n"
+    "   — сходство с ягодицами, попой, анальным отверстием;\n"
+    "   — иная эротическая, интимная, шокирующая или вульгарная сцена.\n"
+    "→ начни ответ СТРОГО со слова [[ANATOMY_NSFW]].\n"
+    "Пример: «[[ANATOMY_NSFW]] На фото мужчина, рот которого по форме напоминает женские "
+    "половые органы; он в костюме и очках, вокруг деньги».\n\n"
+    "ПРОВЕРКА 3 — СТАНДАРТНЫЙ NSFW:\n"
+    "Если на фото явные:\n"
+    "   [[NSFW]]   — обнажёнка, гениталии, грудь, порно, эротика, интим, 18+, секс, "
     "голая/полуголый человек, нижнее бельё крупным планом.\n"
-    "   [[SHOCK]]  — расчленёнка, кровь, трупы, раны, жестокость, насилие, сцены смерти.\n"
-    "   [[SCAT]]   — кал, фекалии, навоз, испражнения, моча в большой ёмкости, туалет крупным планом, "
+    "   [[SHOCK]]  — расчленёнка, кровь, трупы, раны, жестокость, сцены смерти.\n"
+    "   [[SCAT]]   — кал, фекалии, навоз, испражнения, моча, туалет крупным планом, "
     "горшок, унитаз с содержимым, попа крупным планом.\n"
-    "   [[TRASH]]  — всё откровенно мерзкое, вульгарное, непристойное: тужащийся кот/собака, "
-    "рвота, шокирующие позы, голые части тела животного, любые пошлые или отталкивающие сцены.\n\n"
-    "Формат ответа: «[[МЕТКА]] Обычное описание, 2-5 предложений». Метка — САМОЕ ПЕРВОЕ в ответе.\n"
-    "Если НИЧЕГО из списка нет — НЕ ставь метку вообще, опиши фото как обычно (2-5 предложений).\n\n"
-    "★ ОПИСАНИЕ ★\n"
-    "Опиши по-русски, живо, 2-5 предложений. Если есть текст (чек, скриншот, номер заказа, сумма) — "
-    "перечисли ключевое дословно. Если видишь чек/подтверждение оплаты — подтверди, что видишь оплату. "
-    "Не выдумывай того, чего не видно."
+    "   [[TRASH]]  — всё мерзкое, вульгарное, непристойное: тужащийся кот, рвота, "
+    "шокирующие позы, голые части тела животного.\n\n"
+    "★ ФОРМАТ ОТВЕТА:\n"
+    "Ровно ОДНА метка в начале, потом обычное описание (2-5 предложений), по-русски, живо.\n"
+    "Возможные метки: [[TEXT_NSFW]], [[ANATOMY_NSFW]], [[NSFW]], [[SHOCK]], [[SCAT]], [[TRASH]].\n"
+    "Если на фото НИЧЕГО из перечисленного нет — НЕ ставь метку, опиши фото как обычно.\n\n"
+    "★ ОПИСАНИЕ:\n"
+    "Опиши по-русски, живо, 2-5 предложений. Если есть текст (чек, скриншот, номер заказа, "
+    "сумма) — перечисли ключевое дословно. Если это чек/подтверждение оплаты — подтверди, "
+    "что видишь оплату. Не выдумывай того, чего не видно."
 )
 
 DEFAULT_PROMPT = (
@@ -169,7 +191,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
 
-DEFAULTS = {"version": 51, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 52, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -296,6 +318,8 @@ _RE_INDECENT = re.compile(
     r"(?:\bбля\w*|\bблят\w*|\bхуй\w*|\bху[йея]\w*|\bпизд\w*|\bпиздец\w*|"
     r"\bеба\w*|\bебал\w*|\bёб\w*|\bёбан\w*|\bебуч\w*|\bвы[её]б\w*|"
     r"\bсук\w*|\bсучар\w*|\bмудак\w*|\bмудил\w*|\bгандон\w*|\bгондон\w*|"
+    r"\bхуесос\w*|\bхуесоск\w*|\bхуесосн\w*|\bпид[оа]р\w*|\bпидор\w*|\bпедик\w*|"
+    r"\bахуе\w*|\bзахуя\w*|\bнахуя\w*|\bпохую\b|\bпохер\b|"
     r"\bдолбо[её]б\w*|\bдебил\w*|\bдебильн\w*|\bидиот\w*|\bкретин\w*|\bпридур\w*|"
     r"\bлох\w*|\bлошар\w*|\bчмо\w*|\bкоз[её]л\w*|\bкозл\w*|\bурод\w*|\bтварь\w*|"
     r"\bмраз\w*|\bгнид\w*|\bшалав\w*|\bшлюх\w*|\bбл[яе]д\w*|\bпроститут\w*|"
@@ -321,7 +345,7 @@ _RE_INDECENT = re.compile(
     re.I)
 
 _RE_FORBIDDEN_PHOTO = re.compile(
-    r"(?:\[\[(?:NSFW|SHOCK|SCAT|TRASH)\]\]|"
+    r"(?:\[\[(?:NSFW|SHOCK|SCAT|TRASH|TEXT_NSFW|ANATOMY_NSFW)\]\]|"
     r"\b18\s*\+|\bпорно\w*|\bэротик\w*|\bнагота\b|\bобнаж[её]нн\w*|"
     r"\bгенитал\w*|\bвагин\w*|\bпенис\w*|\bполов\w*\s+орган\w*|\bинтим\w*|"
     r"\bрасчлен[её]нк\w*|\bтруп\w*|\bмертв[оы]\w*\s+тел\w*|\bкров\w*\s+(?:рекой|повсюду)|"
@@ -331,7 +355,12 @@ _RE_FORBIDDEN_PHOTO = re.compile(
     r"\bобнаж[её]нн\w*\s+человек|\bгол[ыоа]й\s+человек|\bголая\s+(?:женщина|девушка|мужчина|попа)|"
     r"\bпопа\s+крупн\w*|\bпопа\s+близко|\bполов[ыоа]\s+губ\w*|"
     r"\bмоч[аеу]\s+в\s+банк\w*|\bбанк\w*\s+с\s+моч\w*|\bбанк\w*\s+с\s+кал\w*|"
-    r"\bпопа\s+животн\w*|\bголая\s+попа|\bголый\s+зад\w*|\bзадниц\w*\s+крупн\w*)",
+    r"\bпопа\s+животн\w*|\bголая\s+попа|\bголый\s+зад\w*|\bзадниц\w*\s+крупн\w*|"
+    r"|\bнапомина\w*\s+(?:по\s+форме\s+)?(?:женск|мужск|полов|вагин|влагалищ|пенис|член)|"
+    r"\bформе?\s+(?:женск|мужск|полов)|"
+    r"\bпохож\w*\s+на\s+(?:женск|мужск|полов|вагин|пенис|член|генитал)|"
+    r"\bсходств\w*\s+с\s+(?:женск|мужск|полов|вагин|пенис|член|генитал)|"
+    r"\bхуесос\w*|\bхуесоск\w*|\bдолбо[её]б\w*|\bгандон\w*|\bшлюх\w*|\bбляд\w*)",
     re.I)
 
 def _merge(a, b):
@@ -442,6 +471,13 @@ def load_config():
             SETTINGS.setdefault("auto_blacklist_bad_intent", True)
             SETTINGS.setdefault("auto_blacklist_bad_goal", True)
             SETTINGS["version"] = 51
+            save_config()
+        if cv < 52:
+            SETTINGS.setdefault("auto_blacklist_code", True)
+            SETTINGS.setdefault("auto_blacklist_bad_intent", True)
+            SETTINGS.setdefault("auto_blacklist_bad_goal", True)
+            SETTINGS.setdefault("auto_blacklist_forbidden_photo", True)
+            SETTINGS["version"] = 52
             save_config()
     except Exception:
         pass
@@ -903,10 +939,7 @@ def _track_suspicious(c, m, text):
         pass
     with LOCK:
         SPAM_WATCH.pop(chat_key, None)
-    return True
-
-# --- Продолжение следует в ЧАСТИ 2 ---
-def _version_key(value):
+    return True def _version_key(value):
     nums = [int(x) for x in re.findall(r"\d+", str(value or ""))[:4]]
     return tuple((nums + [0, 0, 0, 0])[:4])
 
@@ -2778,7 +2811,6 @@ def ask_ai(m, buyer_text, lot):
     return text
 
 def handle_message(c, m, text):
-    # ★★★ МАКСИМАЛЬНАЯ ЗАЩИТА v4.1.0 ★★★
     if _is_code_request(text):
         _instant_blacklist(c, m, "Просьба написать код / программу", text)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
@@ -2825,7 +2857,7 @@ def handle_message(c, m, text):
             reason="API недоступен", buyer_text=text)
         return
     if _is_forbidden_photo_response(answer, text):
-        _instant_blacklist(c, m, "Запрещённое фото (NSFW/SHOCK/SCAT/TRASH)", answer)
+        _instant_blacklist(c, m, "Запрещённое фото (NSFW/SHOCK/SCAT/TRASH/TEXT/ANATOMY)", answer)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
         return
     if is_offtopic(answer):
@@ -3019,7 +3051,7 @@ def init_telegram(cardinal):
         head += f"💬 Память: <b>{n_chats}</b> чатов / <b>{n_msgs}</b> сообщений\n"
         bl_count = len(get_blacklist())
         head += f"🚫 ЧС: <b>{bl_count}</b>\n"
-        head += f"🚨 МГНОВЕННЫЙ ЧС: мат, код, оффтоп, умысел, джейлбрейк, NSFW-фото\n"
+        head += f"🚨 МГНОВЕННЫЙ ЧС: мат, код, оффтоп, умысел, джейлбрейк, NSFW-фото, мат в тексте фото, анатомия\n"
         head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>"
         return head
 
@@ -3052,24 +3084,6 @@ def init_telegram(cardinal):
         kb.row(B(f"🚫 Чёрный список ({bl_n})", callback_data=f"{CB}:bl"),
                B(f"🚫 Вкл/Выкл {utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}",
                  callback_data=f"{CB}:bl_toggle"))
-        kb.add(B(f"🤖 Авто-блок {utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}",
-                 callback_data=f"{CB}:bl_auto_toggle"))
-        kb.add(B(f"💻 Мгновенный ЧС за код {utils.bool_to_text(SETTINGS.get('auto_blacklist_code', True))}",
-                 callback_data=f"{CB}:bl_code_toggle"))
-        kb.add(B(f"🧠 Мгновенный ЧС за умысел {utils.bool_to_text(SETTINGS.get('auto_blacklist_bad_intent', True))}",
-                 callback_data=f"{CB}:bl_badintent_toggle"))
-        kb.add(B(f"🎯 Мгновенный ЧС за цель {utils.bool_to_text(SETTINGS.get('auto_blacklist_bad_goal', True))}",
-                 callback_data=f"{CB}:bl_badgoal_toggle"))
-        kb.add(B(f"💬 Мгновенный ЧС мат/18+ {utils.bool_to_text(SETTINGS.get('auto_blacklist_indecent', True))}",
-                 callback_data=f"{CB}:bl_indecent_toggle"))
-        kb.add(B(f"🚫 Мгновенный ЧС фото-запрещёнка {utils.bool_to_text(SETTINGS.get('auto_blacklist_forbidden_photo', True))}",
-                 callback_data=f"{CB}:bl_forbidden_photo_toggle"))
-        kb.row(B(f"🗑 Мгновенный ЧС оффтоп {utils.bool_to_text(SETTINGS.get('auto_blacklist_spam', True))}",
-                 callback_data=f"{CB}:bl_spam_toggle"),
-               B(f"📸 ЧС фото-вопрос {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}",
-                 callback_data=f"{CB}:bl_photo_toggle"))
-        kb.add(B(f"📷 ЧС фото×3 {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_send', True))}",
-                 callback_data=f"{CB}:bl_photo_send_toggle"))
         kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"), B("🧪 Тест API", callback_data=f"{CB}:test"))
         kb.add(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"))
         kb.row(B(f"🌍 Язык {utils.bool_to_text(SETTINGS.get('match_language', True))}", callback_data=f"{CB}:lang"),
@@ -3420,7 +3434,7 @@ def init_telegram(cardinal):
         try: show_blacklist(call)
         except Exception: show(call)
 
-    def _mk_toggle(name, key, default=True, label=""):
+    def _mk_toggle(label, key, default=True):
         def fn(call):
             SETTINGS[key] = not bool(SETTINGS.get(key, default))
             save_config()
@@ -3432,15 +3446,15 @@ def init_telegram(cardinal):
             except Exception: show(call)
         return fn
 
-    blacklist_auto_toggle = _mk_toggle("bl_auto", "auto_blacklist_enabled", True, "Авто-блок")
-    blacklist_code_toggle = _mk_toggle("bl_code", "auto_blacklist_code", True, "ЧС код")
-    blacklist_badintent_toggle = _mk_toggle("bl_badintent", "auto_blacklist_bad_intent", True, "ЧС умысел")
-    blacklist_badgoal_toggle = _mk_toggle("bl_badgoal", "auto_blacklist_bad_goal", True, "ЧС цель")
-    blacklist_indecent_toggle = _mk_toggle("bl_indecent", "auto_blacklist_indecent", True, "ЧС мат/18+")
-    blacklist_forbidden_photo_toggle = _mk_toggle("bl_forbidden", "auto_blacklist_forbidden_photo", True, "ЧС запрещёнка")
-    blacklist_spam_toggle = _mk_toggle("bl_spam", "auto_blacklist_spam", True, "ЧС оффтоп")
-    blacklist_photo_toggle = _mk_toggle("bl_photo", "auto_blacklist_photo_ask", True, "ЧС фото-вопрос")
-    blacklist_photo_send_toggle = _mk_toggle("bl_photo_send", "auto_blacklist_photo_send", True, "ЧС фото×3")
+    blacklist_auto_toggle = _mk_toggle("Авто-блок", "auto_blacklist_enabled", True)
+    blacklist_code_toggle = _mk_toggle("ЧС код", "auto_blacklist_code", True)
+    blacklist_badintent_toggle = _mk_toggle("ЧС умысел", "auto_blacklist_bad_intent", True)
+    blacklist_badgoal_toggle = _mk_toggle("ЧС цель", "auto_blacklist_bad_goal", True)
+    blacklist_indecent_toggle = _mk_toggle("ЧС мат/18+", "auto_blacklist_indecent", True)
+    blacklist_forbidden_photo_toggle = _mk_toggle("ЧС запрещёнка", "auto_blacklist_forbidden_photo", True)
+    blacklist_spam_toggle = _mk_toggle("ЧС оффтоп", "auto_blacklist_spam", True)
+    blacklist_photo_toggle = _mk_toggle("ЧС фото-вопрос", "auto_blacklist_photo_ask", True)
+    blacklist_photo_send_toggle = _mk_toggle("ЧС фото×3", "auto_blacklist_photo_send", True)
 
     def test_api(call):
         bot.answer_callback_query(call.id, "Проверяю…")
