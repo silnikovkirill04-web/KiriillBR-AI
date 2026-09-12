@@ -1,1 +1,9 @@
-
+{
+  "schema": 1,
+  "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
+  "version": "3.3.1",
+  "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
+  "sha256": "c366b806aca64b97e6ec5490ca6de931ba59cb8f07e1ac1ec03f4115f51b2900",
+  "notes": "Промпт с эмодзи, сбор промпта в неск. сообщений, авто-ЧС за 2x фото.",
+  "mandatory": false
+}
