@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "3.3.2",
+  "version": "3.3.3",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "8684f996a76abd3985c62a4653ecd7e8b77792d3904ab07919918c9dd5164ec7",
-  "notes": "Авто-ЧС за спам: 5 оффтоп за 30 мин или 3 похожих подряд. Убран авто-ЧС за фото.",
+  "sha256": "84bee25c40608771c35400a1b1b90c3b39f46b23bd286fe032c317ab0b1085a0",
+  "notes": "Авто-ЧС: 5x фото-вопросов за 24ч, 5 оффтопов за 30 мин, 3 похожих подряд.",
   "mandatory": false
 }
