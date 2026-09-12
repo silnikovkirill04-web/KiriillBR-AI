@@ -939,7 +939,8 @@ def _track_suspicious(c, m, text):
         pass
     with LOCK:
         SPAM_WATCH.pop(chat_key, None)
-    return True def _version_key(value):
+    return True
+    def _version_key(value):
     nums = [int(x) for x in re.findall(r"\d+", str(value or ""))[:4]]
     return tuple((nums + [0, 0, 0, 0])[:4])
 
