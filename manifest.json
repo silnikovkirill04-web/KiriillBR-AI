@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "277ebf0ff1b8f682b8e32786dfbf8ae4497174df1967c4c4d070c8c6a7197935",
-  "notes": "Авто-ЧС: 5x фото-вопросов за 24ч, 5 оффтопов за 30 мин, 3 похожих подряд.",
+  "sha256": "4bde6c496e70823a953701558f571a232bfad5ed9d6ac9d855639ca502c8c661",
+  "notes": "МАКСИМУМ ЗАЩИТА: мгновенный ЧС за код, оффтоп, умысел, цель чата, мат, NSFW-фото, джейлбрейк.",
   "mandatory": false
 }
