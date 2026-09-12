@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "3.2.8",
+  "version": "3.2.9",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "4f2fd3d5a06801b0b089f163fc952e07b9c266e8eb02c231804e849219d16589",
-  "notes": "Черный список по никам, авто-блок джейлбрейков, меню ЧС.",
+  "sha256": "e9525947c8f07c2a54c30c1a2e175d71bcf79dfb3126f8b1e7c273f4c010168b",
+  "notes": "Тест обновления до v3.2.9.",
   "mandatory": false
 }
