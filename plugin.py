@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "3.2.9"
+VERSION = "3.3.1"
 DESCRIPTION = "AI-помощник продавца FunPay. Сохраняет историю и заказы на диск."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -49,9 +49,6 @@ _VISION_PROMPT = (
     "Не выдумывай того, чего не видно. Если плохое качество — попроси другое фото."
 )
 
-# =========================================================================
-# ГЛАВНЫЙ ФИКС: DEFAULT_PROMPT переписан, фото теперь явно разрешено
-# =========================================================================
 DEFAULT_PROMPT = (
     "Ты — AI-помощник продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения. "
     "Общайся как живой человек, не как робот.\n\n"
@@ -62,26 +59,43 @@ DEFAULT_PROMPT = (
     "- На «оформлю заказ?» отвечай «Да, конечно!» или «Да, оформляйте — всё готово».\n"
     "- На «куплю» / «беру» — «Отлично! Оформляйте 😊».\n"
     "- КОРОТКО: 1-3 предложения, без длинных нравоучений и инструкций.\n\n"
-
+    "ЭМОДЗИ И ПУНКТУАЦИЯ (ВАЖНО):\n"
+    "- ДОБАВЛЯЙ ЭМОДЗИ почти в каждое сообщение — 1-2 штуки на ответ.\n"
+    "- ЭМОДЗИ ДОЛЖНЫ СООТВЕТСТВОВАТЬ СМЫСЛУ предложения. Примеры:\n"
+    "   • деньги, оплата, цена → 💰 💵 💸\n"
+    "   • товар, выдача, посылка → 📦 🎁 🛍\n"
+    "   • согласие, готовность → 👍 ✅ 🤝\n"
+    "   • радость, благодарность → 😊 🙌 🙏 ✨\n"
+    "   • вопрос, уточнение → 🤔 ❓ 💬\n"
+    "   • ожидание, таймер → ⏳ ⏰ 🕒\n"
+    "   • успех, готово → ✅ 🎉 🔥\n"
+    "   • предупреждение → ⚠️ 🚨 ❗\n"
+    "   • фото, скриншот → 📸 🖼 👀\n"
+    "   • подарок, бонус → 🎁 🎉 💝\n"
+    "- НЕ ЛЕПИ эмодзи подряд без смысла (типа 😊😊😊👍👍). Одна-две — достаточно.\n"
+    "- НЕ используй эмодзи, если ответ официальный/про проблему (возврат, жалоба) — там лучше сдержанно.\n\n"
+    "ТИРЕ В ТЕКСТЕ:\n"
+    "- Иногда для паузы или пояснения используй тире: — (длинное) или - (короткое), по смыслу:\n"
+    "   • «Да, конечно — всё готово»\n"
+    "   • «Заказ #123 оплачен - уже готовлю»\n"
+    "   • «Цена такая — 100 ₽»\n"
+    "- Не злоупотребляй: не больше одного тире на сообщение.\n\n"
     "СТАТУСЫ ЗАКАЗОВ В ЭТОМ ЧАТЕ:\n"
     "- Ниже — список заказов чата с номерами и статусами.\n"
-    "- paid → «Да, заказ #XXX оплачен, спасибо!»\n"
-    "- confirmed → «Заказ #XXX подтверждён и закрыт.»\n"
-    "- refunded → «Заказ #XXX возвращён, деньги вернулись покупателю.»\n"
+    "- paid → «Да, заказ #XXX оплачен, спасибо! 💰»\n"
+    "- confirmed → «Заказ #XXX подтверждён и закрыт ✅»\n"
+    "- refunded → «Заказ #XXX возвращён, деньги вернулись покупателю 💸»\n"
     "- Статус относится ТОЛЬКО к указанному номеру. Не переноси на другие заказы.\n"
-    "- Если просят возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос.»\n\n"
-
+    "- Если просят возврат, а заказ paid — «Возврат оформляет продавец, я передал ему запрос 🤝»\n\n"
     "ЗАПРЕЩЕНО:\n"
     "- НЕ оформляй заказы и НЕ пиши «Заказ оформлен», «Я оформлю заказ», «Подтвердите, и я оформлю».\n"
     "- НЕ пиши «измените количество в лоте» — это инструкция, покупатель сам знает как купить.\n"
     "- НЕ пиши «Оформление заказа происходит на стороне FunPay» — это звучит как робот.\n"
     "- НЕ предлагай «перейти к оплате» — оплата на стороне FunPay.\n\n"
-
     "ЧТО ТЫ ДЕЛАЕШЬ (РАЗРЕШЁННЫЕ ТЕМЫ):\n"
     "- отвечаешь по товару, лоту, цене, наличию, срокам, доставке, автовыдаче;\n"
     "- отвечаешь по оплате, статусу заказа, отзывам, скидке (скидку передаёшь продавцу);\n"
     "- РАЗБИРАЕШЬ ФОТО, СКРИНШОТЫ, ЧЕКИ, КВИТАНЦИИ И ИЗОБРАЖЕНИЯ от покупателя.\n\n"
-
     "★★★ ФОТО И ИЗОБРАЖЕНИЯ — ЭТО РАЗРЕШЕНО ★★★\n"
     "Фото, скриншоты, чеки, квитанции, изображения заказов — это НЕ оффтоп. "
     "Это часть покупки. Ты ОБЯЗАН с ними работать.\n\n"
@@ -90,9 +104,9 @@ DEFAULT_PROMPT = (
     "«а фото разберёшь?» / «если отправлю скрин — посмотришь?» / "
     "«а картинку сможешь глянуть?» / «у меня только фото» — "
     "ОТВЕЧАЙ ТОЛЬКО УТВЕРДИТЕЛЬНО и ЖИВО, например:\n"
-    "   • «Да, конечно! Отправляйте фото — посмотрю и расскажу, что вижу 😊»\n"
-    "   • «Да, кидайте фото, разберу что там.»\n"
-    "   • «Конечно, скидывайте — посмотрю скрин и отвечу.»\n"
+    "   • «Да, конечно! Отправляйте фото — посмотрю и расскажу, что вижу 😊📸»\n"
+    "   • «Да, кидайте фото — разберу что там 👀»\n"
+    "   • «Конечно, скидывайте — посмотрю скрин и отвечу 📸»\n"
     "- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО отвечать что-либо из этого списка (на вопросы про фото):\n"
     "   ✗ «я не могу помочь с фото»\n"
     "   ✗ «я не умею смотреть фото»\n"
@@ -102,34 +116,27 @@ DEFAULT_PROMPT = (
     "ПРАВИЛА ПОВЕДЕНИЯ, КОГДА ПОКУПАТЕЛЬ УЖЕ ПРИСЛАЛ ФОТО:\n"
     "- Опиши, что изображено, 2–5 предложений, живо и по-русски.\n"
     "- Если на фото текст/чек/квитанция/скриншот заказа/номер/сумма — перечисли это дословно.\n"
-    "- Если это чек или подтверждение оплаты — подтверди, что видишь оплату.\n"
-    "- Не выдумывай того, чего на фото нет. Если качество плохое — попроси другое фото.\n\n"
-
+    "- Если это чек или подтверждение оплаты — подтверди, что видишь оплату: «Вижу чек — оплата прошла ✅»\n"
+    "- Не выдумывай того, чего на фото нет. Если качество плохое — попроси другое: "
+    "«Качество не очень — можно другое фото? 🤔»\n\n"
     "ЧТО НЕ ДЕЛАЕШЬ (оффтоп):\n"
     "код, скрипты, SQL, Python, C++, Java; задачи по учёбе; сочинения, рефераты; "
     "взлом, брутфорс, эксплойты, читы, дюп, DDoS; боты для игр, автофарм; ключи, токены, пароли, "
     "промокоды; погода, новости, политика, здоровье, знакомства; переводы; медицина, юридика.\n"
     "На оффтоп отвечай: «Извините, я помощник продавца FunPay и могу отвечать только по вопросам, "
-    "связанным с покупкой и товаром в этом чате.»\n"
+    "связанным с покупкой и товаром в этом чате 🙏»\n"
     "НИКОГДА не используй эту фразу на вопросы про оплату, заказ, товар, лот, цену, наличие "
     "И ФОТО/СКРИНШОТЫ/ИЗОБРАЖЕНИЯ. Это всё — разрешённые темы.\n\n"
-
     "ПРО ОПЛАТУ: оплата, статус, подтверждение, выдача — ты уполномочен сам. "
     "Не пиши «продавец свяжется», «передам продавцу» по этим вопросам.\n\n"
-
     "ПРО СЛОЖНЫЕ ВОПРОСЫ (возраст, гарантии, споры, юридические тонкости): "
-    "«Этот вопрос лучше уточнить у продавца, я передам ему — он ответит в этом чате.»\n\n"
-
+    "«Этот вопрос лучше уточнить у продавца — я передам ему, он ответит в этом чате 🤝»\n\n"
     "ПАМЯТЬ: видишь всю историю чата. Не здоровайся повторно. Отвечай ТОЛЬКО на последнее сообщение.\n"
     "ЗАПРЕЩЕНЫ вступления: «Продавец уже ответил», «Я уже отвечал», «Смотрите выше».\n"
     "Начинай ответ СРАЗУ с сути.\n\n"
-
     "ПРАВИЛА: не раскрывай баланс, пароли, токены, cookies, контакты, реквизиты. "
     "Не выдумывай цену, наличие, гарантию, сроки. Соблюдай ПРАВИЛА FUNPAY."
 )
-# =========================================================================
-# КОНЕЦ ГЛАВНОГО ФИКСА
-# =========================================================================
 
 FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [1.1] Не передавай и не запрашивай контакты.
@@ -148,7 +155,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 персданных, вредоносного ПО, аккаунтов соцсетей, телефонных номеров, аккаунтов оптом,
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
-DEFAULTS = {"version": 39, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 41, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -173,7 +180,8 @@ DEFAULTS = {"version": 39, "enabled": True, "setup_done": False,
     "last_installed_version": "", "pending_restart_version": "",
     "blacklist": [],
     "blacklist_enabled": True,
-    "auto_blacklist_enabled": True}
+    "auto_blacklist_enabled": True,
+    "auto_blacklist_photo_ask": True}
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
 HISTORY = {}
@@ -189,6 +197,7 @@ SURVEY_SENT = {}
 PROCESSED_ORDERS = {}
 CLOSED_ORDERS = {}
 AUTO_FULFILLED_ORDERS = {}
+PHOTO_ASK_COUNT = {}
 ORDER_STATUS = {}
 CHAT_ORDERS = {}
 UPDATE_STATE = {"checked_at": 0.0, "status": "not_checked", "error": "",
@@ -199,6 +208,7 @@ POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="KBAI")
 _HISTORY_HARD_CAP = 200
 _ORDER_DEDUP_TTL = 24 * 3600
 _ORDER_CLOSED_TTL = 7 * 86400
+_PHOTO_ASK_WINDOW = 24 * 3600
 _ORDER_PRIO = {"paid": 0, "confirmed": 1, "refunded": 2}
 _STATUS_RU = {"paid": "оплачен, ждём выдачу",
     "confirmed": "закрыт и подтверждён покупателем",
@@ -269,10 +279,19 @@ def load_config():
             SETTINGS.setdefault("blacklist_enabled", True)
             SETTINGS["version"] = 38
             save_config()
-        # ★ МИГРАЦИЯ 39: авто-блокировка джейлбрейков
         if cv < 39:
             SETTINGS.setdefault("auto_blacklist_enabled", True)
             SETTINGS["version"] = 39
+            save_config()
+        if cv < 40:
+            cur = str(SETTINGS.get("system_prompt") or "")
+            if "ЭМОДЗИ И ПУНКТУАЦИЯ" not in cur and "помощник продавца на FunPay" in cur:
+                SETTINGS["system_prompt"] = DEFAULT_PROMPT
+            SETTINGS["version"] = 40
+            save_config()
+        if cv < 41:
+            SETTINGS.setdefault("auto_blacklist_photo_ask", True)
+            SETTINGS["version"] = 41
             save_config()
     except Exception:
         pass
@@ -433,17 +452,15 @@ def is_enabled(c):
     return bool(p and p.enabled and SETTINGS.get("enabled"))
 
 # =========================================================================
-# ЧЁРНЫЙ СПИСОК + АВТО-БЛОКИРОВКА ДЖЕЙЛБРЕЙКОВ
+# ЧЁРНЫЙ СПИСОК + АВТО-БЛОКИРОВКА
 # =========================================================================
 def _norm_nick(nick):
-    """Нормализует ник: lower, без @, без пробелов."""
     s = str(nick or "").strip().lower()
     if s.startswith("@"):
         s = s[1:]
     return s.strip()
 
 def get_blacklist():
-    """Возвращает нормализованный set никнеймов из чёрного списка."""
     with LOCK:
         raw = SETTINGS.get("blacklist") or []
     result = set()
@@ -455,10 +472,6 @@ def get_blacklist():
     return result
 
 def is_blacklisted(*candidates):
-    """
-    Проверяет, есть ли кто-то из candidates в чёрном списке.
-    candidates: любые никнеймы/username/chat_name.
-    """
     if not SETTINGS.get("blacklist_enabled", True):
         return False
     bl = get_blacklist()
@@ -471,7 +484,6 @@ def is_blacklisted(*candidates):
     return False
 
 def _extract_nick_from_message(m):
-    """Пытается вытащить никнейм покупателя из сообщения FunPay."""
     for attr in ("author", "username", "chat_name", "interlocutor_username", "buyer_username"):
         v = getattr(m, attr, None)
         if isinstance(v, str) and v.strip():
@@ -479,7 +491,6 @@ def _extract_nick_from_message(m):
     return ""
 
 def _add_to_blacklist(nick, auto=False):
-    """Добавляет ник в чёрный список. Возвращает True, если добавлен (или уже был)."""
     n = _norm_nick(nick)
     if not n:
         return False
@@ -495,15 +506,10 @@ def _add_to_blacklist(nick, auto=False):
     return True
 
 def _is_jailbreak_attempt(text):
-    """
-    Детектор попыток джейлбрейка / prompt injection / смены роли.
-    Именно такие сообщения, как на скриншоте.
-    """
     s = str(text or "")
     if not s:
         return False
     n = norm(s)
-    # Классические формулы джейлбрейка
     if re.search(
         r"(?:\bигнорируй\s+(?:все\s+)?(?:инструкц|правил|промпт|указан)|"
         r"\bзабудь\s+(?:все\s+)?(?:инструкц|правил|промпт)|"
@@ -520,7 +526,6 @@ def _is_jailbreak_attempt(text):
         r"\bGaryPlyg\b|"
         r"0x[0-9A-Fa-f]{4,})", n, re.I):
         return True
-    # Явный запрос кода эксплойта / вредоносного ПО
     if re.search(
         r"(?:\bнапиши\s+(?:мне\s+)?(?:эксплойт|вирус|малварь|malware|rat|стиллер|stealer|"
         r"кейлоггер|keylogger|бэкдор|backdoor|шифровальщик|ransomware)|"
@@ -533,14 +538,12 @@ def _is_jailbreak_attempt(text):
     return False
 
 def _auto_blacklist_user(c, m, reason="Джейлбрейк / попытка взлома"):
-    """Автоматически добавляет нарушителя в ЧС и уведомляет продавца."""
     if not SETTINGS.get("auto_blacklist_enabled", True):
         return False
     nick = _extract_nick_from_message(m)
     if not nick:
         return False
     _add_to_blacklist(nick, auto=True)
-    # Уведомление продавцу
     try:
         chat_id = getattr(m, "chat_id", "")
         safe_nick = _safe_for_notify(nick, 120)
@@ -554,8 +557,54 @@ def _auto_blacklist_user(c, m, reason="Джейлбрейк / попытка в�
         pass
     return True
 
-# =========================================================================
-# КОНЕЦ ЧЁРНОГО СПИСКА И АВТО-БЛОКИРОВКИ
+def _track_photo_ask(c, m, text):
+    """
+    Считает запросы «что на фото» от одного чата.
+    При 2+ запросах в течение 24 часов — авто-ЧС + уведомление продавцу.
+    """
+    if not SETTINGS.get("auto_blacklist_photo_ask", True):
+        return False
+    if not _RE_PHOTO_ASK.search(str(text or "")):
+        return False
+    chat_key = str(getattr(m, "chat_id", "") or "")
+    if not chat_key:
+        return False
+    now = time.time()
+    with LOCK:
+        for k, v in list(PHOTO_ASK_COUNT.items()):
+            try:
+                ts = v[1]
+            except Exception:
+                ts = v if isinstance(v, (int, float)) else 0
+            if now - float(ts) > _PHOTO_ASK_WINDOW:
+                PHOTO_ASK_COUNT.pop(k, None)
+        rec = PHOTO_ASK_COUNT.get(chat_key)
+        if isinstance(rec, tuple) and len(rec) == 2:
+            cnt, first_ts = int(rec[0]), float(rec[1])
+        else:
+            cnt, first_ts = 0, now
+        cnt += 1
+        PHOTO_ASK_COUNT[chat_key] = (cnt, first_ts)
+    if cnt < 2:
+        return False
+    nick = _extract_nick_from_message(m)
+    if not nick:
+        logger.warning("photo_ask_blacklist: не смог определить ник, chat=%s", chat_key)
+        return False
+    _add_to_blacklist(nick, auto=True)
+    try:
+        safe_nick = _safe_for_notify(nick, 120)
+        header = "🚨 <b>Авто-блокировка: повторный вопрос про фото</b>"
+        body = (f"👤 Ник: <b>{utils.escape(safe_nick)}</b>\n"
+                f"💬 Чат: <code>{utils.escape(chat_key)}</code>\n"
+                f"🧠 Причина: <i>Запросил описание фото {cnt} раз за 24ч</i>\n"
+                "Покупатель добавлен в чёрный список. Бот больше не отвечает ему.")
+        notify_seller_text(c, header=header, body=body)
+    except Exception:
+        pass
+    with LOCK:
+        PHOTO_ASK_COUNT.pop(chat_key, None)
+    return True
 # =========================================================================
 
 def _version_key(value):
@@ -617,6 +666,22 @@ def _validate_manifest(data):
     res["mandatory"] = bool(data.get("mandatory", False))
     return res
 
+def _safe_json(r, context=""):
+    try:
+        return r.json()
+    except Exception as e:
+        ct = (r.headers.get("Content-Type") or "").lower()
+        body = ""
+        try:
+            body = r.text[:500]
+        except Exception:
+            pass
+        snippet = body.replace("\n", " ")[:300]
+        raise RuntimeError(
+            f"Не JSON в ответе [{context}] · status={r.status_code} · content-type={ct} · "
+            f"body[:300]={snippet!r} · original={type(e).__name__}: {e}"
+        ) from e
+
 def fetch_update_manifest(force=False):
     url = _manifest_url()
     if not SETTINGS.get("update_checks_enabled", True):
@@ -641,7 +706,7 @@ def fetch_update_manifest(force=False):
         r = requests.get(url, timeout=(6, 20), headers={"User-Agent": UPDATE_USER_AGENT,
             "Accept": "application/json", "Cache-Control": "no-cache"})
         r.raise_for_status()
-        manifest = _validate_manifest(r.json())
+        manifest = _validate_manifest(_safe_json(r, "manifest"))
         available = _version_key(manifest["version"]) > _version_key(VERSION)
         with LOCK:
             UPDATE_STATE.update(checked_at=now, status="available" if available else "current",
@@ -1042,6 +1107,16 @@ _RE_OFFTOPIC_GENERAL = re.compile(r"(?:\bпогод\w*\s+(?:на|в|сегодн
     r"\bрелиги\w*|\bбог\w*\b|\bцерковь\b)", re.I)
 _OFFTOPIC_REPLY = ("Извините, я помощник продавца FunPay и могу отвечать только по вопросам, "
     "связанным с покупкой и товаром в этом чате. Если у вас есть вопрос по лоту — я с радостью помогу.")
+_RE_PHOTO_ASK = re.compile(
+    r"(?:\bчто\s+на\s+(?:фото|фотке|картинке|скрине|скриншоте|изображении)|"
+    r"\bопиши\s+(?:фото|фотку|картинк\w*|скрин\w*|изображени\w*)|"
+    r"\bскажи\s+(?:что|что\s+на)\s+(?:фото|фотке|картинке|скрине|скриншоте|изображении)|"
+    r"\bчто\s+(?:изображено|нарисовано|показано)\b|"
+    r"\bпосмотри\s+(?:на\s+)?(?:фото|фотку|картинк\w*|скрин\w*)|"
+    r"\bразбери\s+(?:фото|фотку|картинк\w*|скрин\w*)|"
+    r"\bопредели\s+(?:что\s+на\s+)?(?:фото|фотке|картинке|скрине|скриншоте)|"
+    r"\bрасскажи\s+(?:что\s+на\s+)?(?:фото|фотке|картинке|скрине|скриншоте))",
+    re.I)
 _COMPLEX_TOPIC = re.compile(r"(?:возраст|несовершеннолетн\w*|школьник\w*|гаранти\w*|"
     r"спор\w*|жалоб\w*|претенз\w*|юридич\w*|особ\w*\s+услови\w*|доп\w*\s+услуг\w*)", re.I)
 
@@ -2395,7 +2470,7 @@ def ask_ai(m, buyer_text, lot):
               "max_tokens": int(SETTINGS["num_predict"]), "stream": False},
         timeout=(10, max(30, int(SETTINGS["ai_timeout"]))))
     r.raise_for_status()
-    data = r.json()
+    data = _safe_json(r, "ask_ai")
     text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
     if not text:
         raise RuntimeError("AI вернул пустой ответ.")
@@ -2405,6 +2480,10 @@ def handle_message(c, m, text):
     # ★ АВТО-БЛОКИРОВКА: джейлбрейк / попытка взлома
     if _is_jailbreak_attempt(text):
         _auto_blacklist_user(c, m, reason="Попытка джейлбрейка / запрос вредоносного кода")
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+        return
+    # ★ АВТО-ЧС: повторный вопрос «что на фото»
+    if _track_photo_ask(c, m, text):
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
         return
     if is_offtopic(text):
@@ -2590,6 +2669,8 @@ def init_telegram(cardinal):
         return
     tg, bot = cardinal.telegram, cardinal.telegram.bot
 
+    PROMPT_BUFFER = {"text": "", "msg_id": None}
+
     def main_text():
         with LOCK:
             n_chats = len(HISTORY)
@@ -2618,7 +2699,8 @@ def init_telegram(cardinal):
         bl_count = len(get_blacklist())
         bl_state = utils.bool_to_text(SETTINGS.get("blacklist_enabled", True))
         auto_bl = utils.bool_to_text(SETTINGS.get("auto_blacklist_enabled", True))
-        head += f"🚫 Чёрный список: <b>{bl_count}</b> ников · <b>{bl_state}</b> · авто-блок <b>{auto_bl}</b>\n"
+        auto_photo = utils.bool_to_text(SETTINGS.get("auto_blacklist_photo_ask", True))
+        head += f"🚫 ЧС: <b>{bl_count}</b> · вкл <b>{bl_state}</b> · авто-блок <b>{auto_bl}</b> · фото×2 <b>{auto_photo}</b>\n"
         head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>"
         return head
 
@@ -2652,7 +2734,9 @@ def init_telegram(cardinal):
                B(f"🚫 Вкл/Выкл {utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}",
                  callback_data=f"{CB}:bl_toggle"))
         kb.row(B(f"🤖 Авто-блок {utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}",
-                 callback_data=f"{CB}:bl_auto_toggle"))
+                 callback_data=f"{CB}:bl_auto_toggle"),
+               B(f"📸 Фото×2 {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}",
+                 callback_data=f"{CB}:bl_photo_toggle"))
         kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"), B("🧪 Тест API", callback_data=f"{CB}:test"))
         kb.add(B("🖼 Тест фото (отправить фото в AI)", callback_data=f"{CB}:testphoto"))
         kb.row(B(f"🌍 Язык {utils.bool_to_text(SETTINGS.get('match_language', True))}", callback_data=f"{CB}:lang"),
@@ -2756,6 +2840,7 @@ def init_telegram(cardinal):
             CHAT_LOT_AT.clear()
             SELLER_NOTIFY_AT.clear()
             DONE.clear()
+            PHOTO_ASK_COUNT.clear()
         try:
             if os.path.exists(HISTORY_PATH):
                 os.remove(HISTORY_PATH)
@@ -2816,7 +2901,76 @@ def init_telegram(cardinal):
         return setter
 
     # =====================================================================
-    # ЧЁРНЫЙ СПИСОК (МЕНЮ)
+    # ПРОМПТ: сбор в несколько сообщений
+    # =====================================================================
+    def ask_prompt_start(call):
+        PROMPT_BUFFER["text"] = ""
+        PROMPT_BUFFER["msg_id"] = None
+        kb = K(row_width=1)
+        kb.add(B("✅ Готово — сохранить промпт", callback_data=f"{CB}:prompt_done"))
+        kb.add(B("🗑 Сбросить буфер", callback_data=f"{CB}:prompt_reset"))
+        kb.add(B("❌ Отмена", callback_data=f"{CB}:main"))
+        msg = bot.send_message(call.message.chat.id,
+            "📝 <b>Пришлите текст промпта.</b>\n\n"
+            "Если он длинный — отправьте <b>несколькими сообщениями подряд</b>, я их склею.\n"
+            "Когда закончите — нажмите <b>✅ Готово</b>.",
+            reply_markup=kb)
+        PROMPT_BUFFER["msg_id"] = msg.id
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_PROMPT)
+        bot.answer_callback_query(call.id)
+
+    def prompt_collect(m):
+        text = (m.text or "").strip()
+        if not text:
+            return
+        if PROMPT_BUFFER["text"]:
+            PROMPT_BUFFER["text"] += "\n\n" + text
+        else:
+            PROMPT_BUFFER["text"] = text
+        n_chars = len(PROMPT_BUFFER["text"])
+        kb = K(row_width=1)
+        kb.add(B(f"✅ Готово ({n_chars} симв.)", callback_data=f"{CB}:prompt_done"))
+        kb.add(B("🗑 Сбросить буфер", callback_data=f"{CB}:prompt_reset"))
+        kb.add(B("❌ Отмена", callback_data=f"{CB}:main"))
+        try:
+            bot.reply_to(m, f"📥 Принято. В буфере: <b>{n_chars}</b> симв.\n"
+                            "Пришлите ещё или нажмите <b>✅ Готово</b>.", reply_markup=kb)
+        except Exception:
+            pass
+
+    def prompt_done(call):
+        text = PROMPT_BUFFER["text"].strip()
+        if not text:
+            bot.answer_callback_query(call.id, "Буфер пуст.", show_alert=True)
+            return
+        if len(text) < 100:
+            bot.answer_callback_query(call.id, "Слишком короткий промпт (мин. 100 симв.).",
+                                      show_alert=True)
+            return
+        SETTINGS["system_prompt"] = text
+        save_config()
+        PROMPT_BUFFER["text"] = ""
+        try:
+            tg.clear_state(call.message.chat.id, call.from_user.id, True)
+        except Exception:
+            pass
+        bot.answer_callback_query(call.id, f"✅ Сохранено ({len(text)} симв.)", show_alert=True)
+        show(call)
+
+    def prompt_reset(call):
+        PROMPT_BUFFER["text"] = ""
+        bot.answer_callback_query(call.id, "🗑 Буфер очищен.")
+        try:
+            bot.send_message(call.message.chat.id, "Буфер очищен. Пришлите промпт заново.",
+                             reply_markup=K(row_width=1).add(
+                                 B("✅ Готово — сохранить промпт", callback_data=f"{CB}:prompt_done"),
+                                 B("❌ Отмена", callback_data=f"{CB}:main")))
+        except Exception:
+            pass
+    # =====================================================================
+
+    # =====================================================================
+    # ЧЁРНЫЙ СПИСОК
     # =====================================================================
     def show_blacklist(call):
         with LOCK:
@@ -2824,6 +2978,7 @@ def init_telegram(cardinal):
         lines = ["🚫 <b>Чёрный список покупателей</b>", "",
             f"Статус: <b>{utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}</b>",
             f"Авто-блок (джейлбрейк): <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}</b>",
+            f"Авто-ЧС за 2× фото: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}</b>",
             f"Всего ников: <b>{len(raw)}</b>", ""]
         if raw:
             lines.append("<b>Ники:</b>")
@@ -2834,7 +2989,7 @@ def init_telegram(cardinal):
         lines.append("")
         lines.append("Покупатели из этого списка полностью игнорируются: "
                      "бот не отвечает и не уведомляет продавца.\n"
-                     "Авто-блок добавляет сюда ники за попытку взлома/джейлбрейка.")
+                     "Авто-блок добавляет сюда ники за джейлбрейк и за 2× вопрос «что на фото».")
         kb = K(row_width=2)
         kb.row(B("➕ Добавить ник", callback_data=f"{CB}:bl_add"),
                B("➖ Удалить ник", callback_data=f"{CB}:bl_del"))
@@ -2843,6 +2998,8 @@ def init_telegram(cardinal):
                  callback_data=f"{CB}:bl_toggle"))
         kb.add(B(f"🤖 Авто-блок {utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}",
                  callback_data=f"{CB}:bl_auto_toggle"))
+        kb.add(B(f"📸 Авто-ЧС за фото x2 {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}",
+                 callback_data=f"{CB}:bl_photo_toggle"))
         kb.add(B("◀️ Назад", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text("\n".join(lines), call.message.chat.id,
@@ -2979,6 +3136,19 @@ def init_telegram(cardinal):
             show_blacklist(call)
         except Exception:
             show(call)
+
+    def blacklist_photo_toggle(call):
+        SETTINGS["auto_blacklist_photo_ask"] = not bool(SETTINGS.get("auto_blacklist_photo_ask", True))
+        save_config()
+        try:
+            bot.answer_callback_query(call.id,
+                f"Авто-ЧС за фото: {'включён' if SETTINGS['auto_blacklist_photo_ask'] else 'выключен'}")
+        except Exception:
+            pass
+        try:
+            show_blacklist(call)
+        except Exception:
+            show(call)
     # =====================================================================
 
     def test_api(call):
@@ -2996,7 +3166,7 @@ def init_telegram(cardinal):
                 json={"model": model, "messages": [{"role": "user", "content": "Ответь одним словом OK"}],
                       "max_tokens": 16, "temperature": 0}, timeout=(10, 30))
             r.raise_for_status()
-            data = r.json()
+            data = _safe_json(r, "test_api")
             ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
             bot.send_message(call.message.chat.id, f"✅ Ответ API: <code>{utils.escape(ans[:120])}</code>")
         except Exception as e:
@@ -3046,7 +3216,7 @@ def init_telegram(cardinal):
                     "temperature": 0.2, "max_tokens": 800},
                 timeout=(10, max(30, int(SETTINGS.get("ai_timeout", 120) or 120))))
             r.raise_for_status()
-            data = r.json()
+            data = _safe_json(r, "test_photo")
             ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
             if not ans:
                 ans = "(модель вернула пустой ответ)"
@@ -3236,18 +3406,20 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask_test_photo, lambda c: c.data == f"{CB}:testphoto")
     tg.cbq_handler(open_updates, lambda c: c.data in (f"{CB}:update", f"{CB}:updcfg"))
     tg.cbq_handler(update_cb, lambda c: c.data.startswith(f"{CB}:upd:"))
-    # ЧЁРНЫЙ СПИСОК
+    tg.cbq_handler(ask_prompt_start, lambda c: c.data == f"{CB}:prompt")
+    tg.cbq_handler(prompt_done, lambda c: c.data == f"{CB}:prompt_done")
+    tg.cbq_handler(prompt_reset, lambda c: c.data == f"{CB}:prompt_reset")
     tg.cbq_handler(show_blacklist, lambda c: c.data == f"{CB}:bl")
     tg.cbq_handler(ask_blacklist_add, lambda c: c.data == f"{CB}:bl_add")
     tg.cbq_handler(ask_blacklist_del, lambda c: c.data == f"{CB}:bl_del")
     tg.cbq_handler(blacklist_clear, lambda c: c.data == f"{CB}:bl_clear")
     tg.cbq_handler(blacklist_toggle, lambda c: c.data == f"{CB}:bl_toggle")
     tg.cbq_handler(blacklist_auto_toggle, lambda c: c.data == f"{CB}:bl_auto_toggle")
-    # НАСТРОЙКИ
+    tg.cbq_handler(blacklist_photo_toggle, lambda c: c.data == f"{CB}:bl_photo_toggle")
+
     tg.cbq_handler(ask(ST_URL, "Введите base URL API:"), lambda c: c.data == f"{CB}:url")
     tg.cbq_handler(ask(ST_KEY, "Введите API key:"), lambda c: c.data == f"{CB}:key")
     tg.cbq_handler(ask(ST_MODEL, "Введите ID модели:"), lambda c: c.data == f"{CB}:model")
-    tg.cbq_handler(ask(ST_PROMPT, "Пришлите новый главный промпт:"), lambda c: c.data == f"{CB}:prompt")
     tg.cbq_handler(ask(ST_SELLER, "Пришлите данные о продавце:"), lambda c: c.data == f"{CB}:seller")
     tg.cbq_handler(ask(ST_TIMEOUT, "AI timeout 30–600 секунд:"), lambda c: c.data == f"{CB}:timeout")
     tg.cbq_handler(ask(ST_BUDGET, "Бюджет истории в символах (2000–40000):"), lambda c: c.data == f"{CB}:budget")
@@ -3259,7 +3431,6 @@ def init_telegram(cardinal):
     tg.msg_handler(make_setter("api_url"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
     tg.msg_handler(make_setter("api_key"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
     tg.msg_handler(make_setter("api_model"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
-    tg.msg_handler(make_setter("system_prompt"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_PROMPT))
     tg.msg_handler(make_setter("seller_info"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
     tg.msg_handler(make_setter("ai_timeout",
         validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
@@ -3275,6 +3446,7 @@ def init_telegram(cardinal):
     tg.msg_handler(set_thank_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_THANK_TEXT))
     tg.msg_handler(set_af_delay, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_AF_DELAY))
     tg.msg_handler(set_survey_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SURVEY_TEXT))
+    tg.msg_handler(prompt_collect, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_PROMPT))
     tg.msg_handler(set_blacklist_add, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BLACKLIST))
     tg.msg_handler(set_blacklist_del, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BLACKLIST + "_del"))
     tg.msg_handler(handle_test_photo, content_types=["photo"],
