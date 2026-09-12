@@ -1,9 +1,13 @@
-{
-  "schema": 1,
-  "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "3.2.4",
-  "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "590754eb9f260697b99734b643e20cea792142cfa6e8869a2a9689d09ac2c7a1",
-  "notes": "История чатов сохраняется на диск. Живой стиль общения — убраны роботизированные фразы. Загрузка последних 10 заказов через FunPayAPI при старте.",
-  "mandatory": false
-}
+python - <<'EOF'
+import json
+sha = "f9873820b6765d0d78950812c8cb4331c3aa9bf21f244f72b55ffa06a8dfef30"
+p = "manifest.json"
+m = json.load(open(p, encoding="utf-8"))
+m["version"] = "3.2.7"
+m["sha256"] = sha
+m["notes"] = "Чёрный список по никам, авто-блок джейлбрейков, меню ЧС."
+json.dump(m, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+print("OK")
+print("version:", m["version"])
+print("sha256 :", m["sha256"])
+EOF
