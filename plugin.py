@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "3.2.8"
+VERSION = "3.2.9"
 DESCRIPTION = "AI-помощник продавца FunPay. Сохраняет историю и заказы на диск."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
