@@ -3528,7 +3528,8 @@ def on_last_chat(c, e):
             if (text or has_image) and _mark(getattr(m, "id", f"legacy:{ch.id}")):
                 _enqueue(c, m, text)
         except Exception: logger.exception("legacy handler")
-    POOL.submit(job) def init_telegram(cardinal):
+    POOL.submit(job)
+    def init_telegram(cardinal):
     load_config()
     if not cardinal.telegram: return
     tg, bot = cardinal.telegram, cardinal.telegram.bot
