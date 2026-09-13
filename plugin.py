@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "5.2.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Точный vision лотов, web-поиск, ЧС+WL."
+VERSION = "5.3.0"
+DESCRIPTION = "AI-помощник продавца FunPay. Vision лотов одним запросом, web-поиск, ЧС+WL."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -67,8 +67,8 @@ _VISION_PROMPT = (
 )
 
 _VISION_LOT_PROMPT = (
-    "Ты — OCR-ассистент. На изображении — скриншот из лота FunPay (игровой аккаунт/товар).\n\n"
-    "ТВОЯ ЗАДАЧА: извлечь ВСЕ видимые ФАКТЫ о товаре. ОПИСЫВАЙ ВСЁ, ЧТО ВИДИШЬ.\n\n"
+    "Ты — OCR-ассистент. На изображениях — скриншоты из лота FunPay (игровой аккаунт/товар).\n\n"
+    "ТВОЯ ЗАДАЧА: извлечь ВСЕ видимые ФАКТЫ о товаре. Смотри ВСЕ картинки вместе.\n\n"
     "★★★ ГЛАВНОЕ ★★★\n"
     "- НИКОГДА не пиши «не игровой скрин», «не могу распознать», «не удалось».\n"
     "- Если это меню игры или интерфейс — ОПИШИ что за игра и что видно (уровень, ник, валюта).\n"
@@ -166,7 +166,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
 
-DEFAULTS = {"version": 62, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 63, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -347,7 +347,6 @@ _RE_AI_REFUSAL_PHOTO = re.compile(
     r"sorry,?\s+i\s+(?:can'?t|cannot|won'?t)|"
     r"inappropriate\s+content)", re.I)
 
-# Реальная "запрещёнка" в ответе AI (метка или ключевые слова NSFW)
 _RE_REAL_NSFW = re.compile(
     r"\[\[(?:NSFW|SHOCK|SCAT|TRASH|TEXT_NSFW|ANATOMY_NSFW)\]\]|"
     r"\b18\s*\+|\bпорно\w*|\bпорн\w*|\bобнаж[её]нн\w*|\bгенитал\w*|\bвагин\w*|"
@@ -385,7 +384,6 @@ _RE_LOT_SCREEN_ASK = re.compile(
 _RE_SEARCH_MARKER = re.compile(r"\[\[\s*SEARCH\s*:\s*(.+?)\s*\]\]", re.I | re.DOTALL)
 _IMG_EXT_RE = re.compile(r"https?://[^\s\"'<>\\]+\.(?:jpe?g|png|webp|gif|bmp)", re.I)
 
-# FunPay UI мусор: аватарки, иконки, emoji, logo, static, sprite, flags, placeholder
 _FUNPAY_UI_IMG = re.compile(
     r"(?:"
     r"/user/avatar|/avatars?/|avatar[_.\-]|"
@@ -401,13 +399,11 @@ _FUNPAY_UI_IMG = re.compile(
     r")", re.I
 )
 
-# Иконки игр каталога FunPay: /s/file/xx/yy/<game_slug>.il<hash>.<ext>
 _FUNPAY_GAME_ICON = re.compile(
     r"/s/file/[a-z0-9]{1,4}/[a-z0-9]{1,4}/[a-z0-9_\-]+\.il[0-9a-z]+\.(?:jpe?g|png|webp|gif|bmp)",
     re.I
 )
 
-# Скрины лотов FunPay: /s/offer/xx/yy/<random>.<ext>
 _FUNPAY_LOT_OFFER = re.compile(
     r"/s/offer/[a-z0-9]{1,4}/[a-z0-9]{1,4}/[a-z0-9_\-]+\.(?:jpe?g|png|webp|gif|bmp)",
     re.I
@@ -446,7 +442,7 @@ def load_config():
         return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
@@ -454,10 +450,10 @@ def load_config():
                         SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 62:
+        if cv < 63:
             SETTINGS.setdefault("lot_image_min_bytes", 5000)
             SETTINGS.setdefault("lot_image_validate_http", True)
-            SETTINGS["version"] = 62
+            SETTINGS["version"] = 63
             save_config()
     except Exception:
         pass
@@ -2128,7 +2124,6 @@ def _dedupe_image_variants(urls: list) -> list:
     return result
 
 def _is_lot_image(url: str) -> bool:
-    """True если URL похож на картинку лота (не UI-мусор, не иконка каталога)."""
     u = str(url or "").strip()
     if not u: return False
     if _FUNPAY_UI_IMG.search(u): return False
@@ -2136,7 +2131,6 @@ def _is_lot_image(url: str) -> bool:
     return True
 
 def _sort_by_priority(urls: list) -> list:
-    """Официальные upload лотов (/s/offer/) — вперёд, остальные — в конец."""
     def key(u):
         low = str(u).lower()
         if "/s/offer/" in low: return 0
@@ -2325,78 +2319,57 @@ def _lot_images_deep(lot, lot_fields_obj=None, lot_dict=None) -> list:
     return []
 
 def _vision_extract_lot_details(image_urls: list) -> str:
-    if not image_urls or not SETTINGS.get("lot_vision_extract", True): return ""
+    """Один запрос, все картинки сразу — как в v5.0.0, где vision работал корректно."""
+    if not image_urls or not SETTINGS.get("lot_vision_extract", True):
+        return ""
     base = str(SETTINGS.get("api_url") or "").rstrip("/")
     key = str(SETTINGS.get("api_key") or "").strip()
-    if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
+    if key.lower().startswith("env:"):
+        key = os.environ.get(key[4:].strip(), "")
     model = str(SETTINGS.get("api_model") or "").strip()
-    if not base or not key or not model: return ""
+    if not base or not key or not model:
+        return ""
 
-    pairs = []
-    for u in image_urls[:5]:
+    data_urls = []
+    for u in image_urls[:3]:
         try:
             du = _extract_url_as_data_url(u)
-            if du: pairs.append((u, du))
-        except Exception: continue
-    if not pairs:
+            if du:
+                data_urls.append(du)
+        except Exception:
+            continue
+    if not data_urls:
         logger.debug("vision_extract: ни одна картинка не загрузилась")
         return ""
 
-    def _call_vision(content_items):
-        try:
-            r = requests.post(
-                base + "/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": model, "messages": [{"role": "user", "content": content_items}],
-                      "temperature": 0.1, "max_tokens": 600, "stream": False},
-                timeout=(15, max(30, int(SETTINGS.get("ai_timeout", 120)))))
-            r.raise_for_status()
-            data = _safe_json(r, "lot_vision")
-            return str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-        except Exception as e:
-            logger.debug("vision call failed: %s", e)
+    content = [{"type": "text", "text": _VISION_LOT_PROMPT}]
+    for du in data_urls:
+        content.append({"type": "image_url", "image_url": {"url": du}})
+
+    try:
+        r = requests.post(
+            base + "/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": model, "messages": [{"role": "user", "content": content}],
+                  "temperature": 0.0, "max_tokens": 600, "stream": False},
+            timeout=(15, max(30, int(SETTINGS.get("ai_timeout", 120)))))
+        r.raise_for_status()
+        data = _safe_json(r, "lot_vision")
+        text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        if not text:
             return ""
-
-    def _is_garbage(text):
-        if not text: return True
         low = text.lower()
-        if re.search(r"(?:уровен|level|игр|game|standoff|steam|cs|roblox|gold|"
-                     r"золот|калибров|ник|ранг|\d{1,3}\b)", low):
-            return False
-        if any(x in low for x in ("не игровой скрин", "не могу", "не удалось",
-                                   "не является", "не вижу", "нет данных")):
-            return True
-        return False
-
-    collected = []
-    for idx, (_url, du) in enumerate(pairs, 1):
-        content = [
-            {"type": "text", "text": _VISION_LOT_PROMPT},
-            {"type": "image_url", "image_url": {"url": du}},
-        ]
-        ans = _call_vision(content)
-        if _is_garbage(ans):
-            logger.debug("vision_extract: картинка #%d — пусто/мусор", idx)
-            continue
-        collected.append(f"[Картинка {idx}]\n{ans.strip()}")
-        logger.info("vision_extract: картинка #%d — факты (%d симв.)", idx, len(ans))
-
-    if collected:
-        joined = "\n\n".join(collected)[:1600]
-        logger.info("vision_extract: собрано фактов с %d картинок", len(collected))
-        return joined
-
-    logger.debug("vision_extract: перебор по одной не дал — пробую всех вместе")
-    content2 = [{"type": "text", "text": _VISION_LOT_PROMPT +
-                 "\n\nВАЖНО: на картинках точно есть факты об аккаунте. "
-                 "Опиши ВСЁ, что видно хотя бы на одной из них. Не отказывайся."}]
-    for _url, du in pairs[:3]:
-        content2.append({"type": "image_url", "image_url": {"url": du}})
-    ans2 = _call_vision(content2)
-    if _is_garbage(ans2):
-        logger.warning("vision_extract: даже групповой запрос дал пусто. Raw: %r", (ans2 or "")[:300])
+        if ("не игровой скрин" in low or "не могу" in low) \
+                and not re.search(r"(?:уровен|level|игр|game|standoff|steam|cs|roblox|"
+                                   r"gold|золот|калибров|ник|ранг|\d{1,3}\b)", low):
+            logger.warning("vision_extract: AI отказался. Raw: %r", text[:300])
+            return ""
+        logger.info("vision_extract: получено фактов (%d симв., %d картинок)",
+                    len(text), len(data_urls))
+        return text[:1600]
+    except Exception as e:
+        logger.debug("vision_extract_lot_details failed: %s", e)
         return ""
-    return ans2[:1600]
 
 def _web_search_lite(query: str, max_results: int = 5) -> list:
     try:
@@ -2974,6 +2947,39 @@ def ask_ai(m, buyer_text, lot):
     lang_hint = language_hint(buyer_text)
     tone_hint_text = tone_hint(buyer_text)
 
+    # ★ ЛЕНИВОЕ ИЗВЛЕЧЕНИЕ VISION: если у лота есть картинки, но vision-фактов ещё нет —
+    # извлекаем их прямо сейчас, чтобы AI использовал инфо со скринов при ответе.
+    if (lot and isinstance(lot, dict) and lot.get("id")
+            and SETTINGS.get("lot_vision_extract", True)):
+        lid = str(lot.get("id"))
+        with LOCK:
+            has_vision = bool(LOT_VISION.get(lid))
+        if not has_vision:
+            imgs_for_vision = list(lot.get("image_urls") or [])
+            if not imgs_for_vision:
+                with LOCK:
+                    cached_lot = LOTS.get(lid) or {}
+                    imgs_for_vision = list(cached_lot.get("image_urls") or [])
+            if not imgs_for_vision:
+                try:
+                    imgs_for_vision = _lot_images_from_html(lid)
+                    if imgs_for_vision:
+                        with LOCK:
+                            LOTS.setdefault(lid, {})["image_urls"] = imgs_for_vision[:12]
+                except Exception:
+                    imgs_for_vision = []
+            if imgs_for_vision:
+                try:
+                    details = _vision_extract_lot_details(imgs_for_vision)
+                    if details:
+                        with LOCK:
+                            LOT_VISION[lid] = details
+                        _save_lot_vision()
+                        logger.info("lazy vision: лот %s — факты получены (%d симв.)",
+                                    lid, len(details))
+                except Exception as e:
+                    logger.debug("lazy vision_extract failed lid=%s: %s", lid, e)
+
     image_data_url = _extract_message_image(m)
     lot_image_urls = []
     if (SETTINGS.get("lot_images_vision", True) and lot and isinstance(lot, dict)
@@ -3081,13 +3087,11 @@ def handle_message(c, m, text):
         _say(c, m, str(SETTINGS["unknown_reply"]), notify=True,
             notify_header="🆘 <b>AI-провайдер не ответил</b>",
             reason="API недоступен", buyer_text=text); return
-    # Проверка на NSFW / отказ AI от описания
     real_nsfw = bool(_RE_REAL_NSFW.search(str(answer or "")))
     if real_nsfw:
         if not wl: _instant_blacklist(c, m, "Запрещённое фото (NSFW)", answer)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
     if _RE_AI_REFUSAL_PHOTO.search(str(answer or "")) and _RE_LOT_SCREEN_ASK.search(str(text or "")):
-        # AI отказался описывать скрин лота → отдаём vision-факты или уведомляем продавца
         if lot and isinstance(lot, dict) and lot.get("id"):
             with LOCK: facts = LOT_VISION.get(str(lot.get("id")), "")
             if facts:
@@ -3383,7 +3387,8 @@ def init_telegram(cardinal):
             f"🖼 Мин. размер картинки: <b>{SETTINGS.get('lot_image_min_bytes', 5000)}</b> байт · "
             f"HEAD-проверка: <b>{utils.bool_to_text(SETTINGS.get('lot_image_validate_http', True))}</b>\n"
             f"🚫 Иконки игр каталога (/s/file/) отсеиваются автоматически.\n"
-            f"✅ Скрины лотов (/s/offer/) в приоритете для vision.")
+            f"✅ Скрины лотов (/s/offer/) в приоритете для vision.\n"
+            f"⚡ Ленивое извлечение vision при первом вопросе по лоту.")
         kb = K(row_width=2)
         kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
                B("👁 Переоценить vision", callback_data=f"{CB}:vision_refresh"))
@@ -3943,7 +3948,13 @@ def init_telegram(cardinal):
         def job():
             try: cardinal.telegram.send_notification("🆘 <b>Тестовое уведомление</b>")
             except Exception: pass
+        threading.Thread def notify_test(call):
+        bot.answer_callback_query(call.id, "Отправляю…")
+        def job():
+            try: cardinal.telegram.send_notification("🆘 <b>Тестовое уведомление</b>")
+            except Exception: pass
         threading.Thread(target=job, daemon=True).start()
+
     def refresh_lots(call):
         bot.answer_callback_query(call.id, "Запущено…")
         msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую…")
