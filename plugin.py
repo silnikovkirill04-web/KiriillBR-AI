@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "7.5.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Vision, web-поиск, ЧС+WL, чистая выдача ответов."
+VERSION = "8.0.2"
+DESCRIPTION = "AI-помощник продавца FunPay. Vision, web-поиск, ЧС+WL, анти-leet, HTML-safe."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -55,6 +55,16 @@ _WEB_SEARCH_TIMEOUT = (6, 15)
 _WEB_SEARCH_MAX_BYTES = 512 * 1024
 _HTTP_UA = "Mozilla/5.0 (compatible; KiriillBRAI/1.0)"
 
+_LEET_MAP = str.maketrans({
+    "0": "о", "1": "и", "3": "е", "4": "ч", "6": "б", "7": "т", "8": "в", "9": "я",
+    "@": "а", "$": "с", "¥": "у", "!": "i",
+})
+_LEET_SEP = re.compile(r"(?<=[а-яёa-z])[\s._\-*·•+|/\\]{1,3}(?=[а-яёa-z])", re.I | re.UNICODE)
+
+_RE_HTML_TAG = re.compile(r"</?([a-zA-Z][a-zA-Z0-9]*)(?:\s[^<>]{0,200})?/?>")
+_HTML_SAFE_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "br", "em", "strong", "tg-spoiler", "blockquote"}
+_HTML_SELF_CLOSING = {"br", "hr", "img"}
+
 _VISION_PROMPT = (
     "Ты — строгий модератор контента и AI-заместитель продавца FunPay. Покупатель прислал фото.\n\n"
     "ТЕБЕ ЗАПРЕЩЕНО ОТКАЗЫВАТЬСЯ ОПИСЫВАТЬ ФОТО.\n\n"
@@ -65,96 +75,55 @@ _VISION_PROMPT = (
 )
 
 _VISION_LOT_PROMPT = (
-    "Ты — экспертный OCR-аналитик игровых лотов FunPay. Твоя задача — СКРУПУЛЁЗНО извлечь ВСЁ, "
-    "что видно на скринах, и структурировать в понимание: что за игра, что за предмет, сколько.\n\n"
-    "ЗАПОЛНИ КАЖДЫЙ пункт шаблона. Если факта нет — пиши «не указано», НЕ пропускай строку.\n\n"
-    "=== ШАБЛОН ОТВЕТА ===\n"
-    "🎮 ИГРА:\n"
-    "  • Название игры: ...\n"
-    "  • Платформа: (Steam / Roblox / Standoff 2 / CS2 / Telegram / VK / другое)\n"
-    "  • Жанр: (шутер / RPG / симулятор / соцсеть / другое)\n"
-    "  • Регион сервера: (RU / EU / US / глобальный / не указано)\n\n"
-    "👤 ПЕРСОНАЖ / АККАУНТ:\n"
-    "  • Никнейм: ...\n"
-    "  • ID/тег: ...\n"
-    "  • Уровень: ...\n"
-    "  • Ранг/звание/дивизион: ...\n"
-    "  • Часов в игре: ...\n"
-    "  • Дата регистрации: ...\n"
-    "  • Статус (VAC/бан/чистый): ...\n\n"
-    "💰 ВАЛЮТА И РЕСУРСЫ:\n"
-    "  • Игровая валюта (название + сумма): ...\n"
-    "  • Премиум-валюта (гемы/кристаллы/рубины): ...\n"
-    "  • Прочие ресурсы: ...\n\n"
-    "🎁 ПРЕДМЕТЫ / ИНВЕНТАРЬ:\n"
-    "  • Скины (перечисли ПО ИМЕНИ + количество каждого, формат «Название ×N»): ...\n"
-    "  • Оружие: ...\n"
-    "  • Транспорт: ...\n"
-    "  • Одежда/аксессуары: ...\n"
-    "  • Питомцы/маунты: ...\n"
-    "  • Прочие предметы: ...\n\n"
-    "🎟 БУСТЫ / ПОДПИСКИ / БОНУСЫ:\n"
-    "  • Battle Pass / сезонный пропуск: ...\n"
-    "  • Premium / VIP: ...\n"
-    "  • Бусты и ускорители: ...\n\n"
-    "📦 КОЛИЧЕСТВО И НАЛИЧИЕ:\n"
-    "  • Всего предметов на скрине: <число>\n"
-    "  • Указано ли количество в наличии: (да/нет)\n"
-    "  • Есть ли стеки (x2, x5, x10): (да/нет, какие)\n\n"
-    "⭐ ПРИМЕЧАТЕЛЬНОЕ:\n"
-    "  • Редкие/уникальные предметы: ...\n"
-    "  • Достижения/награды: ...\n"
-    "  • Прочие важные детали: ...\n"
-    "=== КОНЕЦ ШАБЛОНА ===\n\n"
-    "ПРАВИЛА:\n"
-    "1. Читай ВСЕ числа, иконки, названия предметов на скрине.\n"
-    "2. Для каждого предмета указывай: НАЗВАНИЕ + КОЛИЧЕСТВО (формат «Название ×N»).\n"
-    "3. Если видишь иконку игры, но не знаешь название — опиши (например, «шутер с оружием»).\n"
-    "4. НЕ выдумывай. Если не видно — «не указано».\n"
-    "5. Только структурированный ответ по шаблону, без вступлений.\n"
-    "6. Если на скрине не игра (чек, переписка, документ) — ответь «не игровой скрин»."
+    "Ты — экспертный OCR-аналитик игровых лотов FunPay. Извлеки ВСЁ что видно и структурируй.\n\n"
+    "ЗАПОЛНИ КАЖДЫЙ пункт шаблона. Если факта нет — пиши «не указано».\n\n"
+    "=== ШАБЛОН ===\n"
+    "🎮 ИГРА:\n  • Название игры: ...\n  • Платформа: ...\n  • Жанр: ...\n  • Регион: ...\n\n"
+    "👤 ПЕРСОНАЖ:\n  • Никнейм: ...\n  • ID/тег: ...\n  • Уровень: ...\n  • Ранг: ...\n"
+    "  • Часов: ...\n  • Дата регистрации: ...\n  • Статус (VAC/бан): ...\n\n"
+    "💰 ВАЛЮТА:\n  • Игровая: ...\n  • Премиум: ...\n\n"
+    "🎁 ПРЕДМЕТЫ:\n  • Скины (формат «Название ×N»): ...\n  • Оружие: ...\n  • Транспорт: ...\n"
+    "  • Одежда: ...\n  • Питомцы: ...\n  • Прочие: ...\n\n"
+    "🎟 БУСТЫ: Battle Pass / Premium / VIP / бусты\n\n"
+    "📦 КОЛИЧЕСТВО: всего предметов, стеки (x2/x5)\n\n"
+    "⭐ ПРИМЕЧАТЕЛЬНОЕ: редкие, достижения, детали\n"
+    "=== КОНЕЦ ===\n\n"
+    "ПРАВИЛА: 1) Читай все числа и названия. 2) Для предмета: НАЗВАНИЕ ×N. "
+    "3) Не выдумывай. 4) Только шаблон. 5) Не игра — «не игровой скрин»."
 )
 
 DEFAULT_PROMPT = (
     "Ты — AI-помощник продавца на FunPay. Отвечай кратко, по-русски, 1-3 предложения.\n\n"
-    "СТИЛЬ:\n"
-    "- Пиши живо, как обычный продавец в чате.\n"
-    "- НЕ используй формулу «Чтобы купить 1 шт., оформите заказ на FunPay».\n"
+    "СТИЛЬ:\n- Пиши живо, как обычный продавец в чате.\n"
+    "- НЕ используй «Чтобы купить 1 шт., оформите заказ на FunPay».\n"
     "- На «я возьму 1 штуку» отвечай «Да, оформляйте 👍».\n"
-    "- На «куплю» / «беру» — «Отлично! Оформляйте 😊».\n"
-    "- КОРОТКО: 1-3 предложения без длинных нравоучений.\n\n"
-    "ЗАПРЕЩЁННЫЕ ФРАЗЫ:\n"
-    "- «я помогу», «мы поможем», «постараюсь помочь», «мы решим»;\n"
+    "- На «куплю»/«беру» — «Отлично! Оформляйте 😊».\n"
+    "- КОРОТКО: 1-3 предложения.\n\n"
+    "ЗАПРЕЩЁННЫЕ ФРАЗЫ:\n- «я помогу», «мы поможем», «постараюсь помочь»;\n"
     "- «продавец свяжется», «продавец подключится», «продавец ответит»;\n"
-    "- «я передам продавцу», «передам ваш запрос», «сообщу продавцу»;\n"
-    "- «уточню у продавца», «свяжусь с продавцом», «позову продавца».\n\n"
-    "ЭМОДЗИ: 1-2 на сообщение по смыслу (💰 📦 ✅ 🤝 😊 ⚠️).\n\n"
-    "СТАТУСЫ ЗАКАЗОВ:\n"
-    "- paid → «Да, заказ #XXX оплачен, спасибо! 💰»\n"
+    "- «я передам продавцу», «передам ваш запрос»;\n- «уточню у продавца», «свяжусь с продавцом».\n\n"
+    "ЭМОДЗИ: 1-2 по смыслу (💰 📦 ✅ 🤝 😊 ⚠️).\n\n"
+    "СТАТУСЫ:\n- paid → «Да, заказ #XXX оплачен, спасибо! 💰»\n"
     "- confirmed → «Заказ #XXX подтверждён и закрыт ✅»\n"
-    "- refunded → «Заказ #XXX возвращён, деньги вернулись покупателю 💸»\n\n"
-    "ЗАПРЕЩЕНО:\n"
-    "- НЕ оформляй заказы. НЕ пиши «Заказ оформлен», «Я оформлю заказ».\n"
+    "- refunded → «Заказ #XXX возвращён 💸»\n\n"
+    "ЗАПРЕЩЕНО:\n- НЕ оформляй заказы. НЕ пиши «Заказ оформлен».\n"
     "- НЕ пиши «измените количество в лоте».\n"
     "- НЕ пиши «Оформление заказа происходит на стороне FunPay».\n"
     "- НЕ предлагай «перейти к оплате».\n\n"
-    "ЧТО ДЕЛАЕШЬ:\n"
-    "- отвечаешь по товару, лоту, цене, наличию, срокам, доставке, автовыдаче;\n"
-    "- отвечаешь по оплате, статусу, отзывам, скидке;\n"
-    "- РАЗБИРАЕШЬ ФОТО, СКРИНШОТЫ, ЧЕКИ.\n\n"
-    "ФОТО РАЗРЕШЕНО:\n"
-    "- «А если я скину фото — скажете что на нём?» — «Да, конечно! Отправляйте — посмотрю 📸»\n"
-    "- ЗАПРЕЩЕНО: «не могу помочь с фото», «не умею смотреть фото», «отправляйте текстом».\n\n"
+    "ЧТО ДЕЛАЕШЬ:\n- отвечаешь по товару, лоту, цене, наличию, срокам, доставке, автовыдаче;\n"
+    "- отвечаешь по оплате, статусу, отзывам, скидке;\n- РАЗБИРАЕШЬ ФОТО, СКРИНШОТЫ, ЧЕКИ.\n\n"
+    "ФОТО:\n- «А если я скину фото — скажете что на нём?» — «Да, конечно! Отправляйте 📸»\n"
+    "- ЗАПРЕЩЕНО: «не могу помочь с фото», «не умею смотреть фото».\n\n"
     "ПОИСК В ОТКРЫТЫХ ИСТОЧНИКАХ:\n"
-    "Если покупатель спрашивает что-то о САМОЙ ИГРЕ / ПЛАТФОРМЕ / ПРАВИЛАХ, чего нет в "
-    "ТЕКУЩИЙ ТОВАР / ИНСТРУКЦИЯ / ПОДКЛЮЧЁННЫЕ ТОВАРЫ, поставь В КОНЦЕ ответа маркер:\n"
-    "[[SEARCH: короткий поисковый запрос]]\n\n"
-    "ПАМЯТЬ: видишь всю историю чата. Не здоровайся повторно.\n"
+    "Если покупатель спрашивает о САМОЙ ИГРЕ/ПЛАТФОРМЕ/ПРАВИЛАХ, чего нет в "
+    "ТЕКУЩИЙ ТОВАР/ИНСТРУКЦИЯ/ПОДКЛЮЧЁННЫЕ ТОВАРЫ, поставь В КОНЦЕ маркер:\n"
+    "[[SEARCH: короткий запрос]]\n\n"
+    "ПАМЯТЬ: видишь всю историю. Не здоровайся повторно.\n"
     "ПРАВИЛА: не раскрывай баланс, пароли, токены, cookies, контакты, реквизиты."
 )
 
 BUYER_ROLE_PROMPT = (
-    "Ты — AI-помощник ПОКУПАТЕЛЯ на FunPay. Владелец бота — ПОКУПАТЕЛЬ, собеседник — ПРОДАВЕЦ.\n\n"
+    "Ты — AI-помощник ПОКУПАТЕЛЯ на FunPay. Владелец — ПОКУПАТЕЛЬ, собеседник — ПРОДАВЕЦ.\n\n"
     "ТЫ НЕ продавец. НИКОГДА не говори от имени продавца.\n"
     "НЕ подтверждаешь оплату, НЕ обещаешь выдачу, НЕ выдаёшь товар.\n"
     "Помогаешь формулировать вопросы продавцу.\n\n"
@@ -170,14 +139,14 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [1.9] Не рекламируй сторонние ресурсы.
 [1.10] Не мошенничай.
 [1.11] Не помогай с обменом денег, кардингом.
-[1.12] Не давай ссылки на файлообменники без необходимости.
+[1.12] Не давай ссылки на файлообменники.
 [2.1.1] НИКОГДА не соглашайся передать товар без оплаты через FunPay.
 [2.1.2] Не проси подтвердить заказ до выполнения.
 [2.1.4] На разрешённые вопросы отвечай по существу.
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 65, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 67, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -190,8 +159,8 @@ DEFAULTS = {"version": 65, "enabled": True, "setup_done": False,
     "confidence_notify": True, "match_language": True,
     "neutral_on_anger": True, "no_unconfirmed_promises": True,
     "post_order_survey": True,
-    "post_order_survey_text": ("Спасибо за заказ! 🙌 Подскажите, как в целом прошёл наш диалог? "
-        "Оцените от 1 до 10 и коротко объясните — что понравилось, что можно улучшить."),
+    "post_order_survey_text": ("Спасибо за заказ! 🙌 Оцените от 1 до 10, "
+        "как прошёл диалог — что понравилось, что улучшить."),
     "auto_thank_after_payment": True,
     "auto_thank_text": "Спасибо за оплату! 🙌 Сейчас подготовлю и выдам ваш товар.",
     "auto_fulfill_paid_orders": False, "auto_fulfill_delay_sec": 3,
@@ -219,6 +188,10 @@ DEFAULTS = {"version": 65, "enabled": True, "setup_done": False,
     "lot_vision_retry": True, "lot_vision_verbose": True,
     "lot_vision_max_tokens": 1400, "lot_vision_strict_parse": True,
     "lot_vision_explain_errors": True, "strip_safety_junk": True,
+    "history_max_messages": 40, "history_msg_char_cap": 1500,
+    "history_compress_old": True, "deleet_enabled": True,
+    "sanitize_html_output": True, "balance_html_output": True,
+    "deleet_pure_normalize": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -265,11 +238,32 @@ _STATUS_RU = {"paid": "оплачен, ждём выдачу",
     "refunded": "деньги возвращены покупателю"}
 
 _RE_SAFETY_JUNK = re.compile(
-    r"^\s*(?:user\s+safety|response\s+safety|safety\s+check|safety|"
-    r"content\s+policy|content\s+moderation|moderation|policy\s+check|"
+    r"(?:"
+    r"[\[\(\{\*]*\s*"
+    r"(?:user\s+safety|response\s+safety|safety\s+check|safety|"
+    r"content\s+policy|content\s+moderation|content\s+warning|"
+    r"moderation|policy\s+check|rating|suitability|"
     r"harmful\s+content|safe\s+content|violation|flagged|"
-    r"user\s+safety\s*:|response\s+safety\s*:)"
-    r"[\s:：\-]+(?:safe|unsafe|ok|flagged|blocked|clean|none|yes|no|passed|failed|true|false)"
+    r"appropriateness|compliance)"
+    r"\s*[:：\-—=]\s*"
+    r"(?:safe|unsafe|ok|flagged|blocked|clean|none|yes|no|passed|failed|true|false|"
+    r"appropriate|inappropriate|g|pg|pg-13|r|nc-17|pass|fail)"
+    r"[\]\)\}\*]*"
+    r"|"
+    r"[\[\(\{\*]*\s*"
+    r"(?:проверка\s+безопасности|безопасность|модерация|"
+    r"проверка\s+контента|контент[\s\-]?политика|"
+    r"фильтр\s+контента|фильтрация|цензура|рейтинг|соответствие)"
+    r"\s*[:：\-—=]\s*"
+    r"(?:пройден\w*|ok|ок|чисто|безопасно|проверено|не\s+пройден\w*|"
+    r"заблокирован\w*|нарушен\w*|да|нет|true|false)"
+    r"[\]\)\}\*]*"
+    r"|"
+    r"^\s*(?:i\s+cannot\s+(?:fulfill|comply|assist)|"
+    r"i'?m\s+unable\s+to\s+(?:respond|help|assist)|"
+    r"this\s+request\s+violates)"
+    r"[^\n]*\n?"
+    r")"
     r"[^\n]*\n?",
     re.I | re.MULTILINE
 )
@@ -372,11 +366,9 @@ _RE_AI_REFUSAL_PHOTO = re.compile(
     r"не\s+в\s+состоянии\s+(?:описать|проанализировать|помочь|обработать)|"
     r"не\s+буду\s+(?:описывать|комментировать|анализировать)|"
     r"отказываюсь\s+(?:описывать|анализировать|комментировать)|"
-    r"извините,?\s+я\s+не\s+могу|"
-    r"недопустим\w*\s+контент|"
+    r"извините,?\s+я\s+не\s+могу|недопустим\w*\s+контент|"
     r"не\s+соответствует\s+(?:правил|политик|требовани|норм\w*)|"
-    r"нарушает\s+(?:правил|политик|норм|требовани)|"
-    r"описание\s+недоступно|"
+    r"нарушает\s+(?:правил|политик|норм|требовани)|описание\s+недоступно|"
     r"я\s+не\s+(?:могу|умею)\s+(?:работать|обрабатывать|анализировать|смотреть|видеть)\s+"
     r"(?:фото|изображени|картинк|это|такие)|"
     r"не\s+могу\s+(?:помочь|ответить)\s+(?:с|по)\s+(?:описанием|анализом|фото|изображением)|"
@@ -385,8 +377,7 @@ _RE_AI_REFUSAL_PHOTO = re.compile(
     r"cannot\s+(?:help|describe|analyze|process|assist)|"
     r"unable\s+to\s+(?:describe|analyze|process|help)|"
     r"i\s+can'?t\s+(?:help|describe|analyze|process|assist)|"
-    r"i'?m\s+(?:unable|not\s+able)|"
-    r"sorry,?\s+i\s+(?:can'?t|cannot|won'?t)|"
+    r"i'?m\s+(?:unable|not\s+able)|sorry,?\s+i\s+(?:can'?t|cannot|won'?t)|"
     r"inappropriate\s+content)", re.I)
 
 _RE_CALL_SELLER = re.compile(
@@ -455,16 +446,16 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 65:
-            SETTINGS.setdefault("strip_safety_junk", True)
-            SETTINGS["version"] = 65
+        if cv < 67:
+            SETTINGS.setdefault("deleet_pure_normalize", True)
+            SETTINGS["version"] = 67
             save_config()
     except Exception: pass
 
@@ -625,6 +616,67 @@ def _norm_nick(nick):
     s = str(nick or "").strip().lower()
     if s.startswith("@"): s = s[1:]
     return s.strip()
+
+def pure_normalize(text: str) -> str:
+    """Жёсткая нормализация: убирает ВСЁ кроме букв (после leet-замены)."""
+    if not text: return ""
+    s = str(text).lower().replace("ё", "е")
+    s = s.translate(_LEET_MAP)
+    return re.sub(r"[^а-яa-z]", "", s)
+
+def deleet(text):
+    if not SETTINGS.get("deleet_enabled", True):
+        return str(text or "")
+    s = str(text or "").lower().replace("ё", "е")
+    s = _LEET_SEP.sub("", s)
+    s = s.translate(_LEET_MAP)
+    s = _LEET_SEP.sub("", s)
+    return s
+
+def _has_leet_match(compiled_re, text):
+    if not text: return False
+    s = str(text)
+    if compiled_re.search(s): return True
+    n = norm(s)
+    if n and n != s and compiled_re.search(n): return True
+    d = deleet(s)
+    if d and d != s and compiled_re.search(d): return True
+    if SETTINGS.get("deleet_pure_normalize", True):
+        pn = pure_normalize(s)
+        if pn and pn != s and pn != d and compiled_re.search(pn):
+            return True
+    return False
+
+def sanitize_html(text):
+    if not text: return text
+    if not SETTINGS.get("sanitize_html_output", True): return text
+    def _repl(m):
+        tag = (m.group(1) or "").lower()
+        if tag in _HTML_SAFE_TAGS: return m.group(0)
+        return ""
+    return _RE_HTML_TAG.sub(_repl, text)
+
+def balance_html(text):
+    if not text: return text
+    if not SETTINGS.get("balance_html_output", True): return text
+    stack = []
+    for m in _RE_HTML_TAG.finditer(text):
+        full = m.group(0)
+        tag = (m.group(1) or "").lower()
+        if tag in _HTML_SELF_CLOSING or full.endswith("/>"): continue
+        if full.startswith("</"):
+            if stack and stack[-1] == tag: stack.pop()
+        else:
+            stack.append(tag)
+    if stack:
+        text = text + "".join(f"</{t}>" for t in reversed(stack))
+    return text
+
+def _finalize_outgoing(text):
+    if not text: return text
+    result = sanitize_html(str(text))
+    result = balance_html(result)
+    return result
 
 def get_blacklist():
     with LOCK: raw = SETTINGS.get("blacklist") or []
@@ -797,27 +849,32 @@ def _message_has_photo(m):
 def _is_indecent_message(text):
     if not SETTINGS.get("auto_blacklist_indecent", True): return False
     s = str(text or "")
-    return bool(_RE_INDECENT.search(s)) if s else False
+    if not s: return False
+    return _has_leet_match(_RE_INDECENT, s)
 
 def _is_forbidden_photo_response(ai_answer, buyer_text=""):
     if not SETTINGS.get("auto_blacklist_forbidden_photo", True): return False
     blob = f"{ai_answer or ''}\n{buyer_text or ''}"
     if not blob.strip(): return False
     if _RE_FORBIDDEN_PHOTO.search(blob): return True
+    if _RE_FORBIDDEN_PHOTO.search(deleet(blob)): return True
     if ai_answer and _RE_AI_REFUSAL_PHOTO.search(str(ai_answer)): return True
     return False
 
 def _is_code_request(text):
     if not SETTINGS.get("auto_blacklist_code", True): return False
     s = str(text or "")
-    return bool(_RE_CODE_REQUEST.search(s)) if s else False
+    if not s: return False
+    return _has_leet_match(_RE_CODE_REQUEST, s)
 
 def _is_bad_intent(text):
     if not SETTINGS.get("auto_blacklist_bad_intent", True): return False
     s = str(text or "")
     if not s: return False
     if _RE_BAD_INTENT.search(s): return True
-    return bool(_RE_BAD_INTENT.search(norm(s)))
+    if _RE_BAD_INTENT.search(norm(s)): return True
+    if _has_leet_match(_RE_BAD_INTENT, s): return True
+    return False
 
 def _is_chat_goal_bad(chat_id):
     if not SETTINGS.get("auto_blacklist_bad_goal", True): return False
@@ -830,7 +887,13 @@ def _is_chat_goal_bad(chat_id):
         if item.get("role") != "user": continue
         t = str(item.get("content") or "")
         if not t: continue
-        if _RE_CHAT_GOAL_BAD.search(t) or _RE_BAD_INTENT.search(t) or _RE_CODE_REQUEST.search(t):
+        if (_RE_CHAT_GOAL_BAD.search(t) or _RE_BAD_INTENT.search(t) or _RE_CODE_REQUEST.search(t)
+                or _RE_CHAT_GOAL_BAD.search(deleet(t))
+                or _RE_BAD_INTENT.search(deleet(t))
+                or _RE_CODE_REQUEST.search(deleet(t))
+                or _RE_CHAT_GOAL_BAD.search(pure_normalize(t))
+                or _RE_BAD_INTENT.search(pure_normalize(t))
+                or _RE_CODE_REQUEST.search(pure_normalize(t))):
             bad += 1
     return bad >= 2
 
@@ -838,7 +901,9 @@ def _is_jailbreak_attempt(text):
     s = str(text or "")
     if not s: return False
     n = norm(s)
-    if re.search(
+    d = deleet(s)
+    pn = pure_normalize(s)
+    pattern = (
         r"(?:\bигнорируй\s+(?:все\s+)?(?:инструкц|правил|промпт|указан)|"
         r"\bзабудь\s+(?:все\s+)?(?:инструкц|правил|промпт)|"
         r"\bsystem\s*prompt\b|\bsysprompt\b|"
@@ -848,8 +913,10 @@ def _is_jailbreak_attempt(text):
         r"\bdeveloper\s+mode\b|\bрежим\s+разработчика\b|"
         r"\bjailbreak\b|\bdan\s+mode\b|"
         r"\bбез\s+ограничени\w*\b|\bобойти\s+(?:правил|защит|фильтр)|"
-        r"\bSTATUS_EXECUTION_LEVEL|\bGaryPlyg\b|0x[0-9A-Fa-f]{4,})", n, re.I):
-        return True
+        r"\bSTATUS_EXECUTION_LEVEL|\bGaryPlyg\b|0x[0-9A-Fa-f]{4,})")
+    if re.search(pattern, n, re.I): return True
+    if d and d != s and re.search(pattern, d, re.I): return True
+    if pn and pn != s and pn != d and re.search(pattern, pn, re.I): return True
     return False
 
 def _instant_blacklist(c, m, reason, extra=""):
@@ -1385,9 +1452,11 @@ def is_offtopic(text):
     s = str(text or "").strip()
     if not s: return False
     if _RE_PURCHASE_TOPIC.search(s): return False
+    d = deleet(s)
+    pn = pure_normalize(s)
     for rx in (_RE_OFFTOPIC_CODE, _RE_OFFTOPIC_HACK, _RE_OFFTOPIC_HOMEWORK,
                _RE_OFFTOPIC_KEYS, _RE_OFFTOPIC_GENERAL):
-        if rx.search(s): return True
+        if rx.search(s) or rx.search(d) or rx.search(pn): return True
     return False
 
 def is_complex(text):
@@ -1457,9 +1526,12 @@ def _strip_fake_order_action(text):
 def _clean_ai_answer(text):
     result = str(text or "")
     if SETTINGS.get("strip_safety_junk", True):
-        for _ in range(8):
-            new = _RE_SAFETY_JUNK.sub("", result).strip()
-            if new == result: break
+        for _ in range(10):
+            try:
+                new = _RE_SAFETY_JUNK.sub("", result).strip()
+            except Exception:
+                break
+            if new == result or not new: break
             result = new
     for pat in _FORBIDDEN_AI_PHRASES:
         result = pat.sub("скидка на усмотрение продавца", result)
@@ -1528,12 +1600,19 @@ _RE_POLICY_NO_PREPAY = re.compile(r"(?:давай|давайте|можно|хо
 def classify_policy_violation(text):
     scan = str(text or "")
     n = norm(scan)
+    d = deleet(scan)
+    pn = pure_normalize(scan)
     if not n: return ""
     if _RE_CONTACT.search(n) and _RE_CONTACT_ASK.search(n) and not _RE_CONTACT_PRODUCT.search(n):
         return "contacts"
-    if _RE_POLICY_OFF_PLATFORM.search(n) or _RE_POLICY_NO_PREPAY.search(n): return "off_platform"
-    if _RE_POLICY_ACCOUNT_TRADE.search(n): return "funpay_rules"
-    if _RE_POLICY_PROHIBITED.search(n): return "funpay_rules"
+    if (_RE_POLICY_OFF_PLATFORM.search(n) or _RE_POLICY_NO_PREPAY.search(n)
+            or _RE_POLICY_OFF_PLATFORM.search(d) or _RE_POLICY_NO_PREPAY.search(d)
+            or _RE_POLICY_OFF_PLATFORM.search(pn) or _RE_POLICY_NO_PREPAY.search(pn)):
+        return "off_platform"
+    if (_RE_POLICY_ACCOUNT_TRADE.search(n) or _RE_POLICY_ACCOUNT_TRADE.search(d)
+            or _RE_POLICY_ACCOUNT_TRADE.search(pn)): return "funpay_rules"
+    if (_RE_POLICY_PROHIBITED.search(n) or _RE_POLICY_PROHIBITED.search(d)
+            or _RE_POLICY_PROHIBITED.search(pn)): return "funpay_rules"
     if _RE_SECRET.search(scan): return "account_security"
     return ""
 
@@ -1800,7 +1879,7 @@ def _send_auto_thank(c, chat_id, chat_name, order_id):
     def _job():
         try:
             time.sleep(1.5)
-            c.send_message(chat_id, text, chat_name or "покупатель", watermark=False)
+            c.send_message(chat_id, _finalize_outgoing(text), chat_name or "покупатель", watermark=False)
             add_history(chat_id, "assistant", text)
         except Exception: pass
     POOL.submit(_job)
@@ -1846,7 +1925,7 @@ def _fulfill_paid_order(c, order):
             def _job():
                 try:
                     time.sleep(delay)
-                    c.send_message(chat_id, payment_msg, buyer_name, watermark=False)
+                    c.send_message(chat_id, _finalize_outgoing(payment_msg), buyer_name, watermark=False)
                     add_history(chat_id, "assistant", payment_msg)
                 except Exception: pass
             POOL.submit(_job)
@@ -1858,12 +1937,13 @@ def _fulfill_paid_order(c, order):
             return
         except Exception: pass
     _register_manual_fulfill(order_id, chat_id, buyer_name, title)
-    if SETTINGS.get("manual_fulfill_notify", True) and SETTINGS.get("auto_fulfill_notify_seller", True):
+    # Уведомление о ручной выдаче уходит ВСЕГДА при включённом auto_fulfill_notify_seller.
+    if SETTINGS.get("auto_fulfill_notify_seller", True):
         notify_seller_text(c, header="⚠️ <b>ОПЛАЧЕН ЗАКАЗ — РУЧНАЯ ВЫДАЧА</b>",
             body=(f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
                   f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>\n"
                   f"🎁 Лот: <b>{utils.escape(title)}</b>\n"
-                  f"🚨 <b>payment_msg у лота отсутствует!</b>"))
+                  f"🚨 <b>payment_msg у лота отсутствует. Выдайте вручную!</b>"))
 
 def _handle_new_paid_order(c, order):
     if order is None: return
@@ -1990,7 +2070,7 @@ def send_post_order_survey(c, chat_id, chat_name):
     survey = str(SETTINGS.get("post_order_survey_text") or "").strip()
     if not survey: return False
     try:
-        c.send_message(chat_id, survey, chat_name, watermark=False)
+        c.send_message(chat_id, _finalize_outgoing(survey), chat_name, watermark=False)
         add_history(chat_id, "assistant", survey)
         return True
     except Exception: return False
@@ -2391,7 +2471,6 @@ def _vision_extract_lot_details(image_urls):
                 "Ниже — OCR-анализ нескольких скринов ОДНОГО лота FunPay. "
                 "Объедини всё в ОДИН отчёт по тому же шаблону (эмодзи-заголовки сохрани). "
                 "Если предметы повторяются — суммируй количества. НЕ теряй ни одной цифры. "
-                "Если в блоке предмет указан с количеством «×N» — сохрани его. "
                 "Отвечай ТОЛЬКО шаблоном, без вступлений.\n\n" + merged)
             r = requests.post(base + "/chat/completions",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -2418,32 +2497,24 @@ def _explain_http_error(status_code, body_snippet=""):
     body = str(body_snippet or "").lower()
     if status_code == 402:
         return ("💳 <b>Закончились средства на API-провайдере (HTTP 402).</b>\n\n"
-                "Что делать:\n"
-                "• Пополни баланс на openrouter.ai/credits, ИЛИ\n"
+                "Что делать:\n• Пополни баланс на openrouter.ai/credits, ИЛИ\n"
                 "• Смени модель на бесплатную с суффиксом <code>:free</code>\n"
-                "  например <code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n\n"
-                "Всё остальное в плагине работает — проблема только в балансе.")
+                "  например <code>google/gemini-2.0-flash-lite-preview-02-05:free</code>")
     if status_code == 401:
-        return ("🔑 <b>Неверный API-ключ (HTTP 401).</b>\n\nПроверь ключ: 🌐 API → 🔑 Key")
+        return "🔑 <b>Неверный API-ключ (HTTP 401).</b>\n\nПроверь ключ: 🌐 API → 🔑 Key"
     if status_code == 429:
-        return ("⏱ <b>Превышен лимит запросов (HTTP 429).</b>\n\n"
-                "Подожди минуту или возьми модель с большим лимитом.")
+        return "⏱ <b>Превышен лимит запросов (HTTP 429).</b>\n\nПодожди минуту."
     if status_code == 400 and ("vision" in body or "image" in body or "multimodal" in body):
         return ("🖼 <b>Модель не поддерживает vision (HTTP 400).</b>\n\n"
-                "Возьми vision-модель: gpt-4o-mini, gemini-2.0-flash,\n"
-                "claude-3.5-sonnet или любую с приставкой -vision / -vl.")
-    if status_code == 403:
-        return "🚫 <b>Доступ запрещён (HTTP 403).</b>\n\nПроверь что ключ имеет право на эту модель."
+                "Возьми vision-модель: gpt-4o-mini, gemini-2.0-flash, claude-3.5-sonnet.")
+    if status_code == 403: return "🚫 <b>Доступ запрещён (HTTP 403).</b>"
     if status_code == 404:
-        return ("❓ <b>Модель не найдена на API-провайдере (HTTP 404).</b>\n\n"
-                "Скорее всего модель удалена. Актуальный список:\n"
-                "openrouter.ai/models → фильтр Modality: Text + Image → Text\n\n"
-                "Или попробуй:\n"
-                "• <code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n"
+        return ("❓ <b>Модель не найдена (HTTP 404).</b>\n\n"
+                "Список: openrouter.ai/models → Modality: Text+Image → Text.\n\n"
+                "Попробуй:\n• <code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n"
                 "• <code>qwen/qwen2.5-vl-72b-instruct:free</code>\n"
                 "• <code>openai/gpt-4o-mini</code>")
-    if status_code >= 500:
-        return f"🔧 <b>Сервер провайдера упал (HTTP {status_code}).</b>\n\nПопробуй позже."
+    if status_code >= 500: return f"🔧 <b>Сервер провайдера упал (HTTP {status_code}).</b>"
     return f"❌ Ошибка API: HTTP {status_code}"
 
 def _vision_debug_for_lot(lot_id):
@@ -2458,8 +2529,7 @@ def _vision_debug_for_lot(lot_id):
     if rec:
         imgs = rec.get("image_urls") or []
         lines.append(f"🖼️ Картинок в LOT: <b>{len(imgs)}</b>")
-        for u in imgs[:3]:
-            lines.append(f"   · <code>{utils.escape(u[:110])}</code>")
+        for u in imgs[:3]: lines.append(f"   · <code>{utils.escape(u[:110])}</code>")
     lines.append(f"👁️ Vision-фактов в кэше: <b>{'да' if has_vision else 'нет'}</b>")
     if cached:
         lines.append(f"📏 Объём фактов: <b>{len(cached)}</b> симв.")
@@ -2477,9 +2547,7 @@ def _vision_debug_for_lot(lot_id):
             if m: http_codes.append(int(m.group(1)))
         if http_codes and SETTINGS.get("lot_vision_explain_errors", True):
             dominant = max(set(http_codes), key=http_codes.count)
-            lines.append("")
-            lines.append(_explain_http_error(dominant))
-            lines.append("")
+            lines.append(""); lines.append(_explain_http_error(dominant)); lines.append("")
         if last_debug.get("error"):
             err_text = str(last_debug["error"])
             if not http_codes:
@@ -2515,10 +2583,9 @@ def _vision_probe_api():
         ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
         if not ans:
             return ("❌ Модель вернула пустой ответ на картинку.\n\n"
-                    "Скорее всего модель НЕ vision-совместимая. Возьми:\n"
+                    "Скорее всего модель НЕ vision. Возьми:\n"
                     "<code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n"
-                    "<code>openai/gpt-4o-mini</code>\n"
-                    "<code>qwen/qwen2.5-vl-72b-instruct:free</code>")
+                    "<code>openai/gpt-4o-mini</code>")
         return f"✅ Модель ответила на картинку:\n\n<code>{utils.escape(ans[:300])}</code>"
     except Exception as e:
         return f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}"
@@ -2532,7 +2599,7 @@ def _classify_game(lot, vision_text=""):
         ("standoff 2", ["standoff", "стендофф", "стендоф", "so2"]),
         ("cs2", ["cs2", "counter-strike", "кс2", "ксго", "csgo"]),
         ("cs 1.6", ["cs 1.6", "кс 1.6", "counter-strike 1.6"]),
-        ("valorant", ["valorant", "валорант", "valorant points"]),
+        ("valorant", ["valorant", "валорант"]),
         ("dota 2", ["dota", "дота", "дотка"]),
         ("roblox", ["roblox", "роблокс", "robux", "робукс"]),
         ("minecraft", ["minecraft", "майнкрафт", "майнкра"]),
@@ -2541,26 +2608,26 @@ def _classify_game(lot, vision_text=""):
         ("pubg", ["pubg", "пабг"]),
         ("brawl stars", ["brawl stars", "бравл"]),
         ("genshin impact", ["genshin", "геншин"]),
-        ("mobile legends", ["mobile legends", "мобайл легендс", "mlbb"]),
+        ("mobile legends", ["mobile legends", "mlbb"]),
         ("free fire", ["free fire", "фри фаер"]),
         ("wot / wot blitz", ["world of tanks", "wot", "wotb", "танки"]),
         ("warthunder", ["war thunder", "вартандер"]),
         ("apex legends", ["apex legends", "апекс"]),
         ("rust", ["rust", "раст "]),
-        ("rainbow six", ["rainbow six", "рэйнбоу сикс", "r6s"]),
+        ("rainbow six", ["rainbow six", "r6s"]),
         ("overwatch 2", ["overwatch", "овервоч"]),
         ("clash of clans", ["clash of clans", "клеш"]),
         ("clash royale", ["clash royale", "клеш рояль"]),
-        ("telegram", ["telegram", "телеграм", "tg premium", "тг премиум"]),
+        ("telegram", ["telegram", "телеграм", "tg premium"]),
         ("discord", ["discord", "дискорд", "nitro", "нитро"]),
-        ("steam", ["steam", "стим", "steam account"]),
+        ("steam", ["steam", "стим"]),
         ("epic games", ["epic games", "эпик геймс"]),
-        ("origin / ea", ["origin", "ea app", "ориджин"]),
-        ("uplay / ubisoft", ["uplay", "ubisoft", "юбисофт"]),
-        ("battlenet", ["battlenet", "battle.net", "батлнет"]),
+        ("origin / ea", ["origin", "ea app"]),
+        ("uplay / ubisoft", ["uplay", "ubisoft"]),
+        ("battlenet", ["battlenet", "battle.net"]),
         ("spotify", ["spotify", "спотифай"]),
         ("netflix", ["netflix", "нетфликс"]),
-        ("youtube premium", ["youtube premium", "ютуб премиум"]),
+        ("youtube premium", ["youtube premium"]),
         ("tiktok", ["tiktok", "тикток"]),
         ("vk", ["vk ", "вк ", "вконтакте"])]
     PLATFORM_MAP = {
@@ -2568,20 +2635,18 @@ def _classify_game(lot, vision_text=""):
         "cs 1.6": "PC шутер (Steam)", "valorant": "PC шутер (Riot)",
         "dota 2": "PC MOBA (Steam)", "roblox": "кроссплатформенная песочница",
         "minecraft": "кроссплатформенная песочница", "gta 5": "PC/консоль (Rockstar)",
-        "fortnite": "кроссплатформенный шутер (Epic)", "pubg": "кроссплатформенный шутер",
-        "brawl stars": "мобильная MOBA (Supercell)",
-        "genshin impact": "кроссплатформенная RPG (HoYoverse)",
-        "mobile legends": "мобильная MOBA", "free fire": "мобильный шутер",
-        "wot / wot blitz": "танковый шутер", "warthunder": "танковый/авиа симулятор",
-        "apex legends": "PC шутер (EA)", "rust": "PC выживание (Facepunch)",
-        "rainbow six": "PC шутер (Ubisoft)", "overwatch 2": "PC шутер (Blizzard)",
-        "clash of clans": "мобильная стратегия", "clash royale": "мобильная стратегия",
-        "telegram": "мессенджер-аккаунт", "discord": "мессенджер-аккаунт",
-        "steam": "игровая платформа", "epic games": "игровая платформа",
-        "origin / ea": "игровая платформа", "uplay / ubisoft": "игровая платформа",
-        "battlenet": "игровая платформа", "spotify": "музыкальная подписка",
-        "netflix": "видео подписка", "youtube premium": "видео подписка",
-        "tiktok": "соцсеть", "vk": "соцсеть"}
+        "fortnite": "шутер (Epic)", "pubg": "шутер", "brawl stars": "мобильная MOBA",
+        "genshin impact": "RPG (HoYoverse)", "mobile legends": "мобильная MOBA",
+        "free fire": "мобильный шутер", "wot / wot blitz": "танковый шутер",
+        "warthunder": "танковый/авиа симулятор", "apex legends": "PC шутер (EA)",
+        "rust": "PC выживание", "rainbow six": "PC шутер (Ubisoft)",
+        "overwatch 2": "PC шутер (Blizzard)", "clash of clans": "мобильная стратегия",
+        "clash royale": "мобильная стратегия", "telegram": "мессенджер",
+        "discord": "мессенджер", "steam": "игровая платформа",
+        "epic games": "игровая платформа", "origin / ea": "игровая платформа",
+        "uplay / ubisoft": "игровая платформа", "battlenet": "игровая платформа",
+        "spotify": "музыкальная подписка", "netflix": "видео подписка",
+        "youtube premium": "видео подписка", "tiktok": "соцсеть", "vk": "соцсеть"}
     game = ""
     for canonical, aliases in GAMES:
         for a in aliases:
@@ -2607,14 +2672,14 @@ def _parse_vision_facts(vision_text):
         _grab([r"Платформа", r"💻\s*Платформа"], "platform")
         _grab([r"Жанр", r"🎭\s*Жанр"], "genre")
         _grab([r"Регион сервера", r"Регион", r"🌍\s*Регион"], "region")
-        _grab([r"Никнейм", r"Ник\b", r"Игровое имя"], "nickname")
-        _grab([r"ID[/\s]?тег", r"\bID\b", r"Тег", r"Account ID"], "user_id")
+        _grab([r"Никнейм", r"Ник\b"], "nickname")
+        _grab([r"ID[/\s]?тег", r"\bID\b", r"Тег"], "user_id")
         _grab([r"Уровень", r"Ур\.", r"Level"], "level")
         _grab([r"Ранг", r"Звание", r"Дивизион", r"Rank"], "rank")
         _grab([r"Часов в игре", r"Часы", r"Hours"], "hours")
-        _grab([r"Дата регистрации", r"Регистрация", r"Создан", r"Created"], "reg_date")
-        _grab([r"Статус", r"VAC", r"Бан", r"Ban"], "vac_status")
-        _grab([r"Игровая валюта", r"Валюта", r"💰\s*Валюта"], "currency")
+        _grab([r"Дата регистрации", r"Регистрация"], "reg_date")
+        _grab([r"Статус", r"VAC", r"Бан"], "vac_status")
+        _grab([r"Игровая валюта", r"Валюта"], "currency")
         _grab([r"Премиум[- ]?валюта", r"Гемы", r"Кристаллы", r"💎"], "premium_currency")
         _grab([r"Battle Pass", r"Сезонный пропуск", r"🎟"], "battle_pass")
         _grab([r"Premium", r"\bVIP\b", r"⭐"], "premium")
@@ -2659,13 +2724,12 @@ def _format_facts_for_prompt(facts, lot):
                            ("vac_status", "VAC/бан")):
             if facts.get(key): lines.append(f"• {label}: {facts[key]}")
         if facts.get("currency"): lines.append(f"💰 Игровая валюта: {facts['currency']}")
-        if facts.get("premium_currency"): lines.append(f"💎 Премиум-валюта: {facts['premium_currency']}")
+        if facts.get("premium_currency"): lines.append(f"💎 Премиум: {facts['premium_currency']}")
         if facts.get("battle_pass"): lines.append(f"🎟 Battle Pass: {facts['battle_pass']}")
-        if facts.get("premium"): lines.append(f"⭐ Premium/VIP: {facts['premium']}")
+        if facts.get("premium"): lines.append(f"⭐ Premium: {facts['premium']}")
         items = facts.get("items") or []
         if items and isinstance(items, list):
-            lines.append("")
-            lines.append(f"🎁 ПРЕДМЕТЫ В ИНВЕНТАРЕ ({len(items)}):")
+            lines.append(""); lines.append(f"🎁 ПРЕДМЕТЫ ({len(items)}):")
             seen = set()
             for it in items[:60]:
                 if not isinstance(it, dict): continue
@@ -2813,7 +2877,7 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
                 if _lst == "paid": out = f"Да, заказ #{_loid} оплачен, спасибо! Сейчас подготовлю и выдам товар."
                 elif _lst == "confirmed": out = f"Заказ #{_loid} подтверждён и закрыт."
     except Exception: pass
-    final = _apply_watermark(out)
+    final = _finalize_outgoing(_apply_watermark(out))
     try:
         c.send_message(m.chat_id, final, m.chat_name, watermark=False)
         add_history(m.chat_id, "assistant", out)
@@ -2983,17 +3047,44 @@ def add_history(chat_id, role, text):
         h.append({"role": role, "content": t})
         if len(h) > _HISTORY_HARD_CAP: del h[:-_HISTORY_HARD_CAP]
 
+def _compress_history_item(item, is_old=False):
+    if not isinstance(item, dict): return None
+    role = str(item.get("role") or "")
+    content = str(item.get("content") or "").strip()
+    if role not in ("user", "assistant") or not content: return None
+    cap = int(SETTINGS.get("history_msg_char_cap", 1500) or 1500)
+    cap = max(200, min(10000, cap))
+    if len(content) > cap:
+        content = content[:cap].rstrip() + "…"
+    if is_old and SETTINGS.get("history_compress_old", True) and len(content) > 200:
+        content = content[:200].rstrip() + "…"
+    return {"role": role, "content": content}
+
 def _history_for_api(chat_id, exclude_last_user=""):
-    with LOCK: h = list(HISTORY.get(str(chat_id), []))
-    if h and h[-1].get("role") == "user" and h[-1].get("content") == exclude_last_user:
-        h = h[:-1]
-    budget = max(2000, int(SETTINGS.get("history_char_budget", 12000)))
-    total = 0; keep = []
-    for item in reversed(h):
-        ln = len(item.get("content") or "") + 8
-        if total + ln > budget and keep: break
-        keep.append(item); total += ln
-    keep.reverse(); return keep
+    with LOCK: raw = list(HISTORY.get(str(chat_id), []))
+    if raw and raw[-1].get("role") == "user" and raw[-1].get("content") == exclude_last_user:
+        raw = raw[:-1]
+    try: max_msgs = max(4, min(200, int(SETTINGS.get("history_max_messages", 40) or 40)))
+    except Exception: max_msgs = 40
+    if len(raw) > max_msgs: raw = raw[-max_msgs:]
+    try: budget = max(2000, int(SETTINGS.get("history_char_budget", 12000)))
+    except Exception: budget = 12000
+    compressed = []; total = 0
+    for idx, item in enumerate(reversed(raw)):
+        c = _compress_history_item(item, is_old=False)
+        if not c: continue
+        ln = len(c.get("content") or "") + 8
+        if total + ln > budget and compressed: break
+        compressed.append(c); total += ln
+    compressed.reverse()
+    if len(compressed) > 12:
+        head = compressed[:-12]; tail = compressed[-12:]
+        shrunk = []
+        for item in head:
+            c = _compress_history_item(item, is_old=True)
+            if c: shrunk.append(c)
+        compressed = shrunk + tail
+    return compressed
 
 def _get_viewing(c, m):
     viewing = getattr(m, "buyer_viewing", None)
@@ -3099,8 +3190,7 @@ def _lot_prompt(lot):
         try:
             game_info = _classify_game(lot, "")
             if game_info.get("game") != "не определено":
-                base += (f"\n\n🎮 ОПРЕДЕЛЕНО ПО НАЗВАНИЮ/ОПИСАНИЮ:\n"
-                         f"  • Игра: {game_info['game']}\n"
+                base += (f"\n\n🎮 ОПРЕДЕЛЕНО:\n  • Игра: {game_info['game']}\n"
                          f"  • Платформа: {game_info['platform']}\n"
                          f"  • Категория: {game_info['category']}")
         except Exception: pass
@@ -3116,8 +3206,7 @@ def _lot_prompt(lot):
                 logger.warning("vision facts parse/format fail: %s", e); formatted = ""
             if formatted: base += "\n\n" + formatted
             else:
-                base += ("\n\n★ ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА (ИСТИНА, НЕ ВЫДУМЫВАЙ) ★\n"
-                         + vision_details + "\n★ КОНЕЦ ФАКТОВ ★")
+                base += ("\n\n★ ФАКТЫ СО СКРИНОВ ★\n" + vision_details + "\n★ КОНЕЦ ★")
         else:
             imgs = lot.get("image_urls") or []
             if imgs: base += f"\n\nВ лоте {len(imgs)} изображений (данные со скринов ещё не извлечены)."
@@ -3129,10 +3218,10 @@ def _lot_prompt(lot):
 def _chat_status_hint(chat_id):
     orders = _orders_for_prompt(chat_id, limit=3)
     if not orders: return ""
-    lines = ["\nЗАКАЗЫ В ЭТОМ ЧАТЕ (свежие первыми, максимум 3):"]
+    lines = ["\nЗАКАЗЫ В ЭТОМ ЧАТЕ (свежие первыми):"]
     for oid, st in orders: lines.append(f"- #{oid} — {st} ({_STATUS_RU.get(st, st)})")
     latest_oid, latest_st = orders[0]
-    lines.append(f"\nСАМЫЙ СВЕЖИЙ: #{latest_oid} — {latest_st} ({_STATUS_RU.get(latest_st, latest_st)})")
+    lines.append(f"\nСАМЫЙ СВЕЖИЙ: #{latest_oid} — {latest_st}")
     lines.append("- paid → «Да, заказ #XXXX оплачен, спасибо!»")
     lines.append("- confirmed → «Заказ #XXXX подтверждён и закрыт.»")
     lines.append("- refunded → «Заказ #XXXX возвращён.»")
@@ -3160,38 +3249,24 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
     promises = ""
     if SETTINGS.get("no_unconfirmed_promises", True):
         promises = ("\nОБЕЩАНИЯ:\n- НИКОГДА не пиши «я помогу», «мы поможем», «продавец свяжется», "
-            "«передам продавцу», «уточню у продавца».\n"
-            "- Если не можешь ответить — скажи нейтрально.\n")
+            "«передам продавцу», «уточню у продавца».\n- Если не можешь ответить — скажи нейтрально.\n")
     no_hallucination = (
         "\n★★★ ГЛАВНЫЕ ПРАВИЛА ★★★\n"
         "1) ОТВЕЧАЙ СТРОГО НА ЗАДАННЫЙ ВОПРОС. Не вываливай все факты подряд.\n"
-        "   Спросили «какой уровень?» — отвечай только про уровень, одной строкой.\n"
-        "   Спросили «есть ли скины?» — только про скины.\n"
-        "   Спросили «сколько предметов?» — назови ТОЧНОЕ число из фактов.\n"
-        "   Спросили «что за игра?» — назови игру и платформу из блока «ОПРЕДЕЛЕНО».\n"
-        "   Спросили «что по цене?» — назови ЦЕНУ из ТЕКУЩИЙ ТОВАР, не описывай картинки.\n"
-        "2) ИСТОЧНИК ИСТИНЫ — только:\n"
-        "   • блок ТЕКУЩИЙ ТОВАР,\n"
-        "   • блок «🎮 ОПРЕДЕЛЕНО ПО НАЗВАНИЮ/ОПИСАНИЮ»,\n"
-        "   • блок «★ СТРУКТУРИРОВАННЫЕ ФАКТЫ ЛОТА ★»,\n"
-        "   • блок «ПОДКЛЮЧЁННЫЕ ТОВАРЫ»,\n"
-        "   • блок «ИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА».\n"
-        "3) НИКОГДА не придумывай числа: уровень, ранг, часы, количество предметов, "
-        "валюту, даты — если этого НЕТ в фактах.\n"
-        "4) Если в фактах указано «Скины: AK-47 Redline ×2, AWP Asiimov ×1» — "
-        "называй ИМЕННО эти предметы и количество. НЕ ЗАМЕНЯЙ на «есть скины».\n"
-        "5) Если покупатель спрашивает «какие предметы?» — перечисли ВСЕ до одной штуки "
-        "с количествами, как в фактах.\n"
-        "6) Если факта НЕТ — ответь буквально: «В лоте эта информация не указана.»\n"
-        "7) НЕ сравнивай с другими лотами профиля. Отвечай ТОЛЬКО про лот в ТЕКУЩИЙ ТОВАР.\n"
-        "8) Не объясняй, откуда взял данные. Просто ответь по факту.\n"
-        "9) Когда покупатель ЯВНО просит (спрашивает «что на скрине», «опиши фото», "
-        "«покажи скрин») — открой СТРУКТУРИРОВАННЫЕ ФАКТЫ и перечисли ЧТО ВИДНО.\n"
+        "   Спросили «какой уровень?» — только про уровень. «Что по цене?» — ЦЕНУ.\n"
+        "2) ИСТОЧНИК ИСТИНЫ — только ТЕКУЩИЙ ТОВАР, ОПРЕДЕЛЕНО, ФАКТЫ СО СКРИНОВ, "
+        "ПОДКЛЮЧЁННЫЕ ТОВАРЫ, ИНСТРУКЦИЯ.\n"
+        "3) НИКОГДА не придумывай числа — если нет в фактах, значит нет.\n"
+        "4) «AK-47 Redline ×2» называй ИМЕННО так, не заменяй на «есть скины».\n"
+        "5) На «какие предметы?» — перечисли ВСЕ с количествами.\n"
+        "6) Если факта НЕТ — «В лоте эта информация не указана.»\n"
+        "7) НЕ сравнивай с другими лотами профиля.\n"
+        "8) Не объясняй, откуда взял данные.\n"
+        "9) Когда покупатель ЯВНО просит описать скрин/фото — перечисли ЧТО ВИДНО.\n"
         "10) Если покупатель НЕ присылал фото и НЕ просил описать картинки — НИКОГДА не "
-        "описывай никакие изображения. На вопрос «что по цене?» отвечай ЦЕНОЙ, а не "
-        "описанием скриншотов. Скриншоты лота — это НЕ фото покупателя, они для справки.\n"
-        "11) НИКОГДА не выводи в ответ технические метки: User Safety, Response Safety, "
-        "Content Policy, Moderation, Safe/Unsafe. Только человеческий ответ покупателю.\n")
+        "описывай изображения. На «что по цене?» отвечай ЦЕНОЙ.\n"
+        "11) НИКОГДА не выводи технические метки: User Safety, Response Safety, "
+        "Content Policy, Moderation, Rating, Safe/Unsafe. Только ответ покупателю.\n")
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
     lot_instr = ""
@@ -3205,7 +3280,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
                 for k, v in instrs.items():
                     if _norm_nick(k) == ntitle: lot_instr = str(v or "").strip(); break
     instr_block = ""
-    if lot_instr: instr_block = f"\n\nИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА (приоритет выше общих правил):\n{lot_instr}\n"
+    if lot_instr: instr_block = f"\n\nИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА:\n{lot_instr}\n"
     attached_block = ""
     if lot:
         with LOCK: attached = dict(SETTINGS.get("lot_attached_items") or {})
@@ -3220,15 +3295,14 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
                     if _norm_nick(k) == ntitle and isinstance(v, list):
                         items = [str(x) for x in v if str(x).strip()]; break
         if items:
-            attached_block = ("\n\nПОДКЛЮЧЁННЫЕ ТОВАРЫ / ФАКТЫ К ЭТОМУ ЛОТУ:\n"
+            attached_block = ("\n\nПОДКЛЮЧЁННЫЕ ТОВАРЫ / ФАКТЫ:\n"
                               + "\n".join(f"- {x[:300]}" for x in items[:20]) + "\n")
     search_block = ""
     if search_results:
         search_block = ("\n\nРЕЗУЛЬТАТЫ ПОИСКА В ОТКРЫТЫХ ИСТОЧНИКАХ "
                         "(используй как доп. инфо, не цитируй URL):\n" + search_results + "\n")
     return (f"{SETTINGS['system_prompt']}\n\n{role_block}\n"
-        f"ПАМЯТЬ ДИАЛОГА:\n{memory_note}\n\n"
-        f"КОНТЕКСТ ТОВАРА:\n{viewing_note}\n\n"
+        f"ПАМЯТЬ ДИАЛОГА:\n{memory_note}\n\nКОНТЕКСТ ТОВАРА:\n{viewing_note}\n\n"
         f"ИНФОРМАЦИЯ О ПРОДАВЦЕ:\n{seller or 'не задана'}\n\n"
         f"ТЕКУЩИЙ ТОВАР:\n{_lot_prompt(lot)}"
         f"{instr_block}{attached_block}\n\n{FUNPAY_RULES_SNAPSHOT}\n\n"
@@ -3264,7 +3338,7 @@ def ask_ai(m, buyer_text, lot):
     buyer_text_clean = str(buyer_text or "")
 
     image_data_url = _extract_message_image(m)
-    buyer_asks_lot_screens = bool(_RE_LOT_SCREEN_ASK.search(buyer_text_clean))
+    buyer_asks_lot_screens = bool(_RE_LOT_SCREEN_ASK.search(buyer_text_clean)) or bool(_RE_PHOTO_ASK.search(buyer_text_clean))
     lot_image_urls = []
     if (SETTINGS.get("lot_images_vision", True) and lot and isinstance(lot, dict)
             and buyer_asks_lot_screens and not image_data_url):
@@ -3278,14 +3352,12 @@ def ask_ai(m, buyer_text, lot):
                 du = _extract_url_as_data_url(u)
                 if du: lot_image_data_urls.append(du)
             except Exception: continue
-
     effective = buyer_text_clean
     msgs = [{"role": "system", "content": _sys_prompt(lot, full_chat, chat_id, lang_hint, tone_hint_text)}]
     msgs += history
     lot_imgs_ok = [du for du in lot_image_data_urls[:3] if du]
     if image_data_url and lot_imgs_ok:
-        head_content = [{"type": "text",
-                         "text": "Контекст: скриншоты лота (НЕ фото покупателя)."}]
+        head_content = [{"type": "text", "text": "Контекст: скриншоты лота (НЕ фото покупателя)."}]
         for du in lot_imgs_ok: head_content.append({"type": "image_url", "image_url": {"url": du}})
         msgs.append({"role": "user", "content": head_content})
         msgs.append({"role": "user", "content": [
@@ -3297,8 +3369,7 @@ def ask_ai(m, buyer_text, lot):
             {"type": "image_url", "image_url": {"url": image_data_url}}]})
     elif lot_imgs_ok:
         content = [{"type": "text",
-                    "text": (effective + "\n\n(Ниже — скриншоты ЛОТА для справки. "
-                             "Опиши/ответь ТОЛЬКО на заданный вопрос, не пересказывай скрин целиком.)")}]
+                    "text": (effective + "\n\n(Ниже — скриншоты ЛОТА для справки. Отвечай ТОЛЬКО на заданный вопрос.)")}]
         for du in lot_imgs_ok: content.append({"type": "image_url", "image_url": {"url": du}})
         msgs.append({"role": "user", "content": content})
     else:
@@ -3308,8 +3379,21 @@ def ask_ai(m, buyer_text, lot):
     max_tokens = int(SETTINGS["num_predict"])
     timeout = SETTINGS["ai_timeout"]
     first = _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens)
-    if SETTINGS.get("strip_safety_junk", True):
-        first = _RE_SAFETY_JUNK.sub("", first).strip()
+
+    if first:
+        first = first.replace("\r", "")
+
+    if SETTINGS.get("strip_safety_junk", True) and first:
+        for _ in range(10):
+            try:
+                new = _RE_SAFETY_JUNK.sub("", first).strip()
+            except Exception:
+                break
+            if new == first or not new: break
+            first = new
+
+    if not first or not first.strip():
+        first = str(SETTINGS.get("unknown_reply", "Уточните, пожалуйста, что именно нужно."))
 
     if SETTINGS.get("web_search_enabled", True):
         msearch = _RE_SEARCH_MARKER.search(first)
@@ -3332,9 +3416,18 @@ def ask_ai(m, buyer_text, lot):
                 try:
                     final = _call_ai_api(base, key, model, msgs2, timeout, temperature, max_tokens)
                     if final:
+                        final = final.replace("\r", "")
                         final = _RE_SEARCH_MARKER.sub("", final).strip()
                         if SETTINGS.get("strip_safety_junk", True):
-                            final = _RE_SAFETY_JUNK.sub("", final).strip()
+                            for _ in range(10):
+                                try:
+                                    new = _RE_SAFETY_JUNK.sub("", final).strip()
+                                except Exception:
+                                    break
+                                if new == final or not new: break
+                                final = new
+                        if not final or not final.strip():
+                            final = first
                         return final or first
                 except Exception: pass
             return _RE_SEARCH_MARKER.sub("", first).strip() or first
@@ -3429,6 +3522,12 @@ def _drain(chat):
             _bootstrap_chat_history(c, m, text)
             add_history(chat, "user", text)
             handle_message(c, m, text)
+            # ФИКС: сбрасываем vision-атрибуты, чтобы картинка не залипала в очереди.
+            for attr in ("image_link", "image_url", "image", "photo",
+                         "preview_url", "media_url", "attachment_url"):
+                if hasattr(m, attr):
+                    try: setattr(m, attr, None)
+                    except Exception: pass
         except Exception: logger.exception("queue handler chat=%s", chat)
 
 def _enqueue(c, m, text):
@@ -3610,8 +3709,12 @@ def init_telegram(cardinal):
             f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
             f"🚫 Без обещаний: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b>\n"
             f"🔔 О неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
-            f"🧹 Чистка меток: <b>{utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}</b>\n"
-            f"🔍 Web-поиск: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
+            f"🧹 Метки модерации: <b>{utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}</b>\n"
+            f"🛡 HTML-safe: <b>{utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}</b> · "
+            f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
+            f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
+            f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
+            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
         kb = K(row_width=2)
         kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
         kb.row(B("🏪 Продавец", callback_data=f"{CB}:seller"),
@@ -3621,10 +3724,33 @@ def init_telegram(cardinal):
         kb.row(B(f"🚫 Обещ. {utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}", callback_data=f"{CB}:nopromise"),
                B(f"🔔 Увер. {utils.bool_to_text(SETTINGS.get('confidence_notify', True))}", callback_data=f"{CB}:confnotify"))
         kb.row(B(f"🧹 Метки {utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}", callback_data=f"{CB}:tog:safetyclean"),
+               B(f"🛡 HTML {utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}", callback_data=f"{CB}:tog:htmlsafe"))
+        kb.row(B(f"🔧 Balance {utils.bool_to_text(SETTINGS.get('balance_html_output', True))}", callback_data=f"{CB}:tog:htmlbalance"),
+               B(f"🎭 Анти-leet {utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}", callback_data=f"{CB}:tog:deleet"))
+        kb.row(B(f"🔬 Pure {utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}", callback_data=f"{CB}:tog:pureleat"),
                B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"))
         kb.row(B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"),
                B("✏️ Текст вод. знака", callback_data=f"{CB}:wmtext"))
+        kb.add(B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception: pass
+
+    def show_memory(call):
+        text = (f"🎛 <b>Память и контекст</b>\n\n"
+            f"📨 Макс. сообщений в контексте: <b>{SETTINGS.get('history_max_messages', 40)}</b>\n"
+            f"📏 Лимит длины одного сообщения: <b>{SETTINGS.get('history_msg_char_cap', 1500)}</b>\n"
+            f"📦 Общий бюджет: <b>{SETTINGS.get('history_char_budget', 12000)}</b> симв.\n"
+            f"🗜 Сжимать старые: <b>{utils.bool_to_text(SETTINGS.get('history_compress_old', True))}</b>\n\n"
+            f"<i>Помогает не жечь деньги на длинных диалогах.</i>")
+        kb = K(row_width=2)
+        kb.row(B(f"📨 Сообщений {SETTINGS.get('history_max_messages', 40)}", callback_data=f"{CB}:cycle:histmsgs"),
+               B(f"📏 Лимит {SETTINGS.get('history_msg_char_cap', 1500)}", callback_data=f"{CB}:cycle:histcap"))
+        kb.row(B(f"📦 Бюджет {SETTINGS.get('history_char_budget', 12000)}", callback_data=f"{CB}:budget"),
+               B(f"🗜 Сжатие {utils.bool_to_text(SETTINGS.get('history_compress_old', True))}", callback_data=f"{CB}:tog:compress"))
+        kb.add(B("◀️ Назад", callback_data=f"{CB}:m:replies"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
             bot.answer_callback_query(call.id)
@@ -3694,10 +3820,10 @@ def init_telegram(cardinal):
             f"📏 Мин. размер: <b>{SETTINGS.get('lot_image_min_bytes', 5000)}</b> байт\n"
             f"👁️ Vision извлекать: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_extract', True))}</b>\n"
             f"⚡ Vision на лету: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_on_the_fly', True))}</b>\n"
-            f"🔀 Merge скринов: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_merge', True))}</b>\n"
+            f"🔀 Merge: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_merge', True))}</b> · "
             f"🔁 Retry: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_retry', True))}</b>\n"
             f"📢 Логи vision: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_verbose', True))}</b>\n"
-            f"🎯 Max tokens: <b>{SETTINGS.get('lot_vision_max_tokens', 1400)}</b>\n"
+            f"🎯 Max tokens: <b>{SETTINGS.get('lot_vision_max_tokens', 1400)}</b> · "
             f"📸 Макс. скринов: <b>{SETTINGS.get('lot_vision_max_images', 5)}</b>\n"
             f"🎭 Детект ролей: <b>{utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}</b>")
         kb = K(row_width=2)
@@ -3728,7 +3854,7 @@ def init_telegram(cardinal):
             f"   авто-блок: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}</b>\n"
             f"✅ WL: <b>{wl_n}</b> · вкл: <b>{utils.bool_to_text(SETTINGS.get('whitelist_enabled', True))}</b>\n"
             f"   авто после <b>{thr}</b> заказов\n"
-            f"♻️ Авто-разбан при оплате: <b>{utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}</b>")
+            f"♻️ Разбан при оплате: <b>{utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}</b>")
         kb = K(row_width=2)
         kb.row(B(f"🚫 ЧС ({bl_n})", callback_data=f"{CB}:bl"),
                B(f"✅ WL ({wl_n})", callback_data=f"{CB}:wl"))
@@ -3777,6 +3903,16 @@ def init_telegram(cardinal):
         SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show_replies(call)
     def toggle_safetyclean(call):
         SETTINGS["strip_safety_junk"] = not bool(SETTINGS.get("strip_safety_junk", True)); save_config(); show_replies(call)
+    def toggle_htmlsafe(call):
+        SETTINGS["sanitize_html_output"] = not bool(SETTINGS.get("sanitize_html_output", True)); save_config(); show_replies(call)
+    def toggle_htmlbalance(call):
+        SETTINGS["balance_html_output"] = not bool(SETTINGS.get("balance_html_output", True)); save_config(); show_replies(call)
+    def toggle_deleet(call):
+        SETTINGS["deleet_enabled"] = not bool(SETTINGS.get("deleet_enabled", True)); save_config(); show_replies(call)
+    def toggle_pureleat(call):
+        SETTINGS["deleet_pure_normalize"] = not bool(SETTINGS.get("deleet_pure_normalize", True)); save_config(); show_replies(call)
+    def toggle_compress(call):
+        SETTINGS["history_compress_old"] = not bool(SETTINGS.get("history_compress_old", True)); save_config(); show_memory(call)
     def toggle_thank(call):
         SETTINGS["auto_thank_after_payment"] = not bool(SETTINGS.get("auto_thank_after_payment", True)); save_config(); show_orders_menu(call)
     def toggle_autofulfill(call):
@@ -3829,6 +3965,14 @@ def init_telegram(cardinal):
         cur = int(SETTINGS.get("lot_vision_max_tokens", 1400))
         SETTINGS["lot_vision_max_tokens"] = {900: 1400, 1400: 2000, 2000: 2500, 2500: 900}.get(cur, 1400)
         save_config(); show_lots_settings(call)
+    def cycle_histmsgs(call):
+        cur = int(SETTINGS.get("history_max_messages", 40))
+        SETTINGS["history_max_messages"] = {20: 40, 40: 60, 60: 100, 100: 20}.get(cur, 40)
+        save_config(); show_memory(call)
+    def cycle_histcap(call):
+        cur = int(SETTINGS.get("history_msg_char_cap", 1500))
+        SETTINGS["history_msg_char_cap"] = {500: 1000, 1000: 1500, 1500: 2000, 2000: 500}.get(cur, 1500)
+        save_config(); show_memory(call)
     def toggle_manual(call):
         SETTINGS["manual_fulfill_notify"] = not bool(SETTINGS.get("manual_fulfill_notify", True))
         save_config(); show_orders_menu(call)
@@ -4099,7 +4243,10 @@ def init_telegram(cardinal):
             f"🚫 Запрещ. фото: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_forbidden_photo', True))}</b>\n"
             f"🗑 Оффтоп: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_spam', True))}</b>\n"
             f"📸 Фото-вопрос: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}</b>\n"
-            f"📷 Фото×3: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_send', True))}</b>")
+            f"📷 Фото×3: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_send', True))}</b>\n\n"
+            f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b>\n"
+            f"🔬 Pure-нормализация: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
+            f"<i>Обходы через точки/тире/цифры и leet-символы блокируются.</i>")
         kb = K(row_width=2)
         kb.row(B(f"💻 Код {utils.bool_to_text(SETTINGS.get('auto_blacklist_code', True))}", callback_data=f"{CB}:bl_code_toggle"),
                B(f"🧠 Умысел {utils.bool_to_text(SETTINGS.get('auto_blacklist_bad_intent', True))}", callback_data=f"{CB}:bl_badintent_toggle"))
@@ -4109,6 +4256,8 @@ def init_telegram(cardinal):
                B(f"🗑 Оффтоп {utils.bool_to_text(SETTINGS.get('auto_blacklist_spam', True))}", callback_data=f"{CB}:bl_spam_toggle"))
         kb.row(B(f"📸 Вопрос {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}", callback_data=f"{CB}:bl_photo_toggle"),
                B(f"📷 Фото×3 {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_send', True))}", callback_data=f"{CB}:bl_photo_send_toggle"))
+        kb.row(B(f"🎭 Анти-leet {utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}", callback_data=f"{CB}:tog:deleet"),
+               B(f"🔬 Pure {utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}", callback_data=f"{CB}:tog:pureleat"))
         kb.add(B("◀️ К ЧС", callback_data=f"{CB}:bl"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -4302,10 +4451,8 @@ def init_telegram(cardinal):
                         logger.debug("vision_refresh lid=%s: %s", lid, e)
                         continue
                 _save_lot_vision()
-                lines = ["✅ <b>Готово</b>",
-                         f"Всего лотов: <b>{total}</b>",
-                         f"С картинками: <b>{with_imgs}</b>",
-                         f"Прочитано: <b>{done}</b>"]
+                lines = ["✅ <b>Готово</b>", f"Всего лотов: <b>{total}</b>",
+                         f"С картинками: <b>{with_imgs}</b>", f"Прочитано: <b>{done}</b>"]
                 if no_imgs_lids:
                     lines.append(f"\n⚠️ Без картинок: <b>{len(no_imgs_lids)}</b>")
                     for x in no_imgs_lids[:5]: lines.append(f"· лот <code>{utils.escape(str(x))}</code>")
@@ -4383,8 +4530,17 @@ def init_telegram(cardinal):
                                  "· HTML требует авторизации\n· все картинки меньше min_bytes")
                 text = "\n".join(lines)
                 for chunk in [text[i:i+3500] for i in range(0, len(text), 3500)]:
-                    try: bot.send_message(m.chat.id, chunk)
-                    except Exception: pass
+                    try:
+                        bot.send_message(m.chat.id, chunk, parse_mode="HTML")
+                    except Exception:
+                        try:
+                            plain_chunk = re.sub(r"<[^>]+>", "", chunk)
+                            bot.send_message(m.chat.id, plain_chunk, parse_mode=None)
+                        except Exception:
+                            try:
+                                bot.send_message(m.chat.id, plain_chunk)
+                            except Exception:
+                                pass
             except Exception as e:
                 try: bot.send_message(m.chat.id, f"❌ {type(e).__name__}: {str(e)[:300]}")
                 except Exception: pass
@@ -4697,6 +4853,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(show_api, lambda c: c.data == f"{CB}:m:api")
     tg.cbq_handler(show_replies, lambda c: c.data == f"{CB}:m:replies")
+    tg.cbq_handler(show_memory, lambda c: c.data == f"{CB}:m:memory")
     tg.cbq_handler(show_orders_menu, lambda c: c.data == f"{CB}:m:orders")
     tg.cbq_handler(show_lots_menu, lambda c: c.data == f"{CB}:m:lots")
     tg.cbq_handler(show_lots_settings, lambda c: c.data == f"{CB}:lots_settings")
@@ -4720,6 +4877,13 @@ def init_telegram(cardinal):
     tg.cbq_handler(toggle_nopromise, lambda c: c.data == f"{CB}:nopromise")
     tg.cbq_handler(toggle_confnotify, lambda c: c.data == f"{CB}:confnotify")
     tg.cbq_handler(toggle_safetyclean, lambda c: c.data == f"{CB}:tog:safetyclean")
+    tg.cbq_handler(toggle_htmlsafe, lambda c: c.data == f"{CB}:tog:htmlsafe")
+    tg.cbq_handler(toggle_htmlbalance, lambda c: c.data == f"{CB}:tog:htmlbalance")
+    tg.cbq_handler(toggle_deleet, lambda c: c.data == f"{CB}:tog:deleet")
+    tg.cbq_handler(toggle_pureleat, lambda c: c.data == f"{CB}:tog:pureleat")
+    tg.cbq_handler(toggle_compress, lambda c: c.data == f"{CB}:tog:compress")
+    tg.cbq_handler(cycle_histmsgs, lambda c: c.data == f"{CB}:cycle:histmsgs")
+    tg.cbq_handler(cycle_histcap, lambda c: c.data == f"{CB}:cycle:histcap")
     tg.cbq_handler(toggle_thank, lambda c: c.data == f"{CB}:thank")
     tg.cbq_handler(toggle_autofulfill, lambda c: c.data == f"{CB}:autofulfill")
     tg.cbq_handler(toggle_autofulfill_notify, lambda c: c.data == f"{CB}:autofulfillnotify")
@@ -4799,7 +4963,7 @@ def init_telegram(cardinal):
     tg.msg_handler(make_setter("ai_timeout", back_cb=f"{CB}:m:api",
         validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TIMEOUT))
-    tg.msg_handler(make_setter("history_char_budget", back_cb=f"{CB}:m:api",
+    tg.msg_handler(make_setter("history_char_budget", back_cb=f"{CB}:m:memory",
         validate=lambda v: v.isdigit() and 2000 <= int(v) <= 40000, transform=int),
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BUDGET))
     tg.msg_handler(set_wm_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_WM_TEXT))
