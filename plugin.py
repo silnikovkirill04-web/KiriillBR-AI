@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "4.7.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Vision лотов, web-поиск, ЧС+WL, меню по разделам."
+VERSION = "4.8.0"
+DESCRIPTION = "AI-помощник продавца FunPay. Vision-факты лотов, web-поиск, ЧС+WL, меню по разделам."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -29,6 +29,7 @@ CFG_PATH = "storage/plugins/kiriillbr_ai.json"
 ORDERS_PATH = "storage/plugins/kiriillbr_orders.json"
 HISTORY_PATH = "storage/plugins/kiriillbr_history.json"
 BUYER_COUNT_PATH = "storage/plugins/kiriillbr_buyer_count.json"
+LOT_VISION_PATH = "storage/plugins/kiriillbr_lot_vision.json"
 CB = "KBAI"
 ST_MODEL, ST_PROMPT, ST_SELLER = f"{CB}_model", f"{CB}_prompt", f"{CB}_seller"
 ST_URL, ST_KEY, ST_TIMEOUT, ST_BUDGET = f"{CB}_url", f"{CB}_key", f"{CB}_timeout", f"{CB}_budget"
@@ -62,6 +63,32 @@ _VISION_PROMPT = (
     "ПРОВЕРКА 3 — NSFW/SHOCK/SCAT/TRASH — по смыслу.\n"
     "ФОРМАТ: одна метка в начале (если надо), потом описание 2-5 предложений по-русски. "
     "Если есть текст (чек, скрин, номер заказа, сумма) — перечисли дословно."
+)
+
+_VISION_LOT_PROMPT = (
+    "Ты — OCR-ассистент. На изображении — скриншот из лота FunPay (игровой аккаунт/товар).\n\n"
+    "ТВОЯ ЗАДАЧА: извлечь ВСЕ видимые ФАКТЫ о товаре. СТРОГО ПО ФАКТУ, без домыслов.\n\n"
+    "Что искать на скрине:\n"
+    "- Уровень аккаунта (число рядом с аватаром/профилем, часто в углу).\n"
+    "- Никнейм, тег, ID.\n"
+    "- Ранг, дивизион, звание.\n"
+    "- Игровая валюта: золото, монеты, гемы, голда (число + название).\n"
+    "- Игры/приложения на скрине (Steam, Standoff, CS, Roblox и т.п.).\n"
+    "- Наличие калибровки/званий в шутерах.\n"
+    "- Инвентарь, скины, предметы (перечисли по названиям).\n"
+    "- Даты регистрации, сроки банов, VAC-статусы.\n"
+    "- Любые другие числа и подписи, важные для товара.\n\n"
+    "ФОРМАТ ОТВЕТА: короткий список по строкам, по одному факту на строку. "
+    "Пример:\n"
+    "• Уровень: 31\n"
+    "• Золото: 0.20\n"
+    "• Игра: Standoff 2\n"
+    "• Калибровка: не пройдена\n\n"
+    "ПРАВИЛА:\n"
+    "- Если факт НЕ виден на скрине — НЕ пиши его вообще.\n"
+    "- НЕ ПРИДУМЫВАЙ уровни, ранги, суммы.\n"
+    "- Если это не скриншот игры — напиши «не игровой скрин».\n"
+    "- Без вступлений, без эмодзи, только список фактов."
 )
 
 DEFAULT_PROMPT = (
@@ -141,7 +168,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
 
-DEFAULTS = {"version": 57, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 58, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -189,6 +216,7 @@ DEFAULTS = {"version": 57, "enabled": True, "setup_done": False,
     "manual_fulfill_notify": True,
     "web_search_enabled": True,
     "web_search_max_results": 5,
+    "lot_vision_extract": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -212,6 +240,7 @@ CHAT_ROLE = {}
 MANUAL_FULFILL_QUEUE = {}
 BUYER_ORDERS_COUNT = {}
 ORDER_BUYER = {}
+LOT_VISION = {}
 UPDATE_STATE = {"checked_at": 0.0, "status": "not_checked", "error": "",
     "manifest": None, "available": False, "installing": False}
 LOCK = threading.RLock()
@@ -370,7 +399,15 @@ _RE_LOT_SCREEN_ASK = re.compile(
     r"\bскрин\w*\s+(?:есть|можно|посмотр|покаж|гляд|кинул)|"
     r"\b(?:посмотр|покаж|глян|скинь|пришл)\w*\s+(?:скрин\w*|фото\w*|картинк\w*)|"
     r"\bв\s+описани\w*\s+(?:скрин\w*|фото\w*|картинк\w*)|"
-    r"\b(?:скрин\w*|фото\w*|картинк\w*)\s+(?:из\s+)?лот\w*)", re.I)
+    r"\b(?:скрин\w*|фото\w*|картинк\w*)\s+(?:из\s+)?лот\w*|"
+    r"\bкакой\s+уровень\b|\bкакого\s+уровн\w*|\bуровень\s+аккаунт\w*|"
+    r"\bсколько\s+часов\b|\bчасов\s+в\s+игр\w*|"
+    r"\bкакой\s+ранг\b|\bкакого\s+ранг\w*|\bранг\s+аккаунт\w*|"
+    r"\bкакие\s+скин\w*|\bкакие\s+скин\w*\s+есть\b|"
+    r"\bчто\s+в\s+инвентар\w*|\bинвентар\w*\s+какой\b|"
+    r"\bчто\s+на\s+аккаунт\w*|\bчто\s+есть\s+на\s+аккаунт\w*|"
+    r"\bпокаж\w*\s+аккаунт\b|\bпосмотр\w*\s+аккаунт\b|"
+    r"\bописани\w*\s+аккаунт\w*|\bдетали\s+аккаунт\w*)", re.I)
 
 _RE_SEARCH_MARKER = re.compile(r"\[\[\s*SEARCH\s*:\s*(.+?)\s*\]\]", re.I | re.DOTALL)
 
@@ -437,6 +474,10 @@ def load_config():
             SETTINGS.setdefault("whitelist_enabled", True)
             SETTINGS.setdefault("auto_whitelist_after_orders", 3)
             SETTINGS["version"] = 57
+            save_config()
+        if cv < 58:
+            SETTINGS.setdefault("lot_vision_extract", True)
+            SETTINGS["version"] = 58
             save_config()
     except Exception:
         pass
@@ -601,6 +642,28 @@ def _load_buyer_counts():
     except Exception:
         logger.debug("load_buyer_counts failed", exc_info=True)
 
+def _save_lot_vision():
+    try:
+        with LOCK:
+            data = {"saved_at": time.time(), "items": dict(LOT_VISION)}
+        _atomic_write(LOT_VISION_PATH, data)
+    except Exception:
+        logger.debug("save_lot_vision failed", exc_info=True)
+
+def _load_lot_vision():
+    global LOT_VISION
+    if not os.path.exists(LOT_VISION_PATH):
+        return
+    try:
+        with open(LOT_VISION_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("items"), dict):
+            with LOCK:
+                LOT_VISION = {str(k): str(v) for k, v in data["items"].items() if str(v).strip()}
+            logger.info("lot vision cache: %d лотов", len(LOT_VISION))
+    except Exception:
+        logger.debug("load_lot_vision failed", exc_info=True)
+
 def is_enabled(c):
     p = c.plugins.get(UUID)
     return bool(p and p.enabled and SETTINGS.get("enabled"))
@@ -611,7 +674,6 @@ def _norm_nick(nick):
         s = s[1:]
     return s.strip()
 
-# ─── Blacklist ───
 def get_blacklist():
     with LOCK:
         raw = SETTINGS.get("blacklist") or []
@@ -635,7 +697,6 @@ def is_blacklisted(*candidates):
             return True
     return False
 
-# ─── Whitelist ───
 def get_whitelist():
     with LOCK:
         raw = SETTINGS.get("whitelist") or []
@@ -761,7 +822,6 @@ def _set_chat_role(chat_id, role):
             return False
         CHAT_ROLE[key] = role
     save_orders_state()
-    logger.info("chat_role: chat=%s role=%s", key, role)
     return True
 
 def _auto_detect_role(chat_id, lot=None):
@@ -1332,6 +1392,7 @@ def save_orders_worker(c):
             save_orders_state()
             save_history_state()
             _save_buyer_counts()
+            _save_lot_vision()
         except Exception:
             pass
         if STOP.wait(120):
@@ -1461,7 +1522,9 @@ _RE_PURCHASE_TOPIC = re.compile(
     r"\bесть\s+ли\b|\bможн\w*\s+ли\b|\bможно\b|\bчто\s+там\b|\bопиш\w*|\bрасскаж\w*|"
     r"\bподробн\w*|\bдетал\w*|\bпосмотр\w*|\bглян\w*|\bчек\s+эт|\bэт\w*\s+что\b|"
     r"\bиграть\b|\bдруг\w*|\bподход\w*|\bподходит\b|\bподойд\w*|\bможно\s+ли\b|"
-    r"\bбан\w*|\bзабан\w*|\bбезопас\w*|\bсистем\w*\s+требован\w*|\bстим\b|\bsteam\b)", re.I)
+    r"\bбан\w*|\bзабан\w*|\bбезопас\w*|\bсистем\w*\s+требован\w*|\bстим\b|\bsteam\b|"
+    r"\bуровен\w*|\bранг\w*|\bзван\w*|\bчасов\b|\bскин\w*|\bвалют\w*|\bголд\w*|"
+    r"\bкалибровк\w*|\bстатистик\w*|\bаккаунт\w*)", re.I)
 
 _RE_PHOTO_ASK = re.compile(
     r"(?:\bчто\s+на\s+(?:фото|фотке|картинке|скрине|скриншоте|изображении)|"
@@ -1853,7 +1916,6 @@ def _set_order_status(order_id, chat_id, status):
     with LOCK:
         ORDER_STATUS[oid] = (status, ck, time.time())
     if ck: _register_chat_order(ck, oid)
-    logger.info("order=%s status=%s chat=%s", oid, status, ck)
     save_orders_state()
 
 def _get_order_status(order_id):
@@ -1901,7 +1963,6 @@ def _mark_order_closed(order_id, chat_id="", status="confirmed"):
             CLOSED_ORDERS[key] = now
             for k, ts in list(CLOSED_ORDERS.items()):
                 if now - ts > _ORDER_CLOSED_TTL: CLOSED_ORDERS.pop(k, None)
-        logger.info("order=%s closed status=%s", key, status)
         _set_order_status(key, chat_id, status)
 
 def _is_order_closed(order_id):
@@ -2271,6 +2332,52 @@ def _extract_message_image(m):
     except Exception:
         return ""
 
+def _vision_extract_lot_details(image_urls: list) -> str:
+    if not image_urls or not SETTINGS.get("lot_vision_extract", True):
+        return ""
+    base = str(SETTINGS.get("api_url") or "").rstrip("/")
+    key = str(SETTINGS.get("api_key") or "").strip()
+    if key.lower().startswith("env:"):
+        key = os.environ.get(key[4:].strip(), "")
+    model = str(SETTINGS.get("api_model") or "").strip()
+    if not base or not key or not model:
+        return ""
+    data_urls = []
+    for u in image_urls[:3]:
+        try:
+            du = _extract_url_as_data_url(u)
+            if du:
+                data_urls.append(du)
+        except Exception:
+            continue
+    if not data_urls:
+        return ""
+    content = [{"type": "text", "text": _VISION_LOT_PROMPT}]
+    for du in data_urls:
+        content.append({"type": "image_url", "image_url": {"url": du}})
+    try:
+        r = requests.post(
+            base + "/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": content}],
+                "temperature": 0.0,
+                "max_tokens": 500,
+                "stream": False,
+            },
+            timeout=(15, max(30, int(SETTINGS.get("ai_timeout", 120)))),
+        )
+        r.raise_for_status()
+        data = _safe_json(r, "lot_vision")
+        text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        if not text or "не игровой скрин" in text.lower():
+            return ""
+        return text[:1200]
+    except Exception as e:
+        logger.debug("vision_extract_lot_details failed: %s", e)
+        return ""
+
 def _web_search_lite(query: str, max_results: int = 5) -> list:
     try:
         q = str(query or "").strip()[:250]
@@ -2552,34 +2659,54 @@ def _lot_basic(lot):
         "image_urls": _lot_images_from(lot)}
 
 def _enrich(c, lid):
+    imgs = []
     try:
         f = c.account.get_lot_fields(int(lid) if lid.isdigit() else lid)
         with LOCK:
-            if lid not in LOTS: return
+            if lid not in LOTS:
+                return
             t = _obj(f, "title_ru") or _obj(f, "title_en")
             d = _obj(f, "description_ru") or _obj(f, "description_en")
             payment = _obj(f, "payment_msg_ru") or _obj(f, "payment_msg_en")
-            if t: LOTS[lid]["title"] = t
+            if t:
+                LOTS[lid]["title"] = t
             LOTS[lid]["full_description"] = d
-            if payment: LOTS[lid]["payment_message"] = payment
+            if payment:
+                LOTS[lid]["payment_message"] = payment
             try:
                 imgs = _lot_images_from(f)
                 if not imgs:
                     for m in re.finditer(r"https?://[^\s\"'<>]+\.(?:jpe?g|png|webp|gif)", d or "", re.I):
                         imgs.append(m.group(0))
-                if imgs: LOTS[lid]["image_urls"] = imgs[:12]
+                if imgs:
+                    LOTS[lid]["image_urls"] = imgs[:12]
             except Exception:
                 pass
-            if hasattr(f, "auto"): LOTS[lid]["auto"] = bool(getattr(f, "auto"))
-            if getattr(f, "price", None) is not None: LOTS[lid]["price"] = f.price
-            if getattr(f, "amount", None) is not None: LOTS[lid]["amount"] = f.amount
+            if hasattr(f, "auto"):
+                LOTS[lid]["auto"] = bool(getattr(f, "auto"))
+            if getattr(f, "price", None) is not None:
+                LOTS[lid]["price"] = f.price
+            if getattr(f, "amount", None) is not None:
+                LOTS[lid]["amount"] = f.amount
             extra = _extract_extra_params(f)
             if extra:
                 for bad in ("payment_msg_ru", "payment_msg_en", "payment_message"):
                     extra.pop(bad, None)
                 LOTS[lid]["extra_fields"] = extra
+
+        # Vision-извлечение фактов со скринов лота (один раз, кэшируется)
+        if imgs and SETTINGS.get("lot_vision_extract", True):
+            with LOCK:
+                cached_vision = LOT_VISION.get(str(lid), "")
+            if not cached_vision:
+                details = _vision_extract_lot_details(imgs)
+                if details:
+                    with LOCK:
+                        LOT_VISION[str(lid)] = details
+                    _save_lot_vision()
+                    logger.info("lot %s: извлечено vision-фактов (%d симв.)", lid, len(details))
     except Exception:
-        pass
+        logger.debug("_enrich failed lid=%s", lid, exc_info=True)
 
 def sync_lots(c, enrich=True):
     try:
@@ -2676,28 +2803,48 @@ def _last_chat_lot(chat_id, ttl_seconds=1800):
 
 def _get_lot(c, m, text):
     n = norm(text)
+    chat_key = str(getattr(m, "chat_id", "") or "")
+    # 1) Активный лот чата — главный приоритет
+    prev = _last_chat_lot(chat_key, ttl_seconds=3600)
+    if prev:
+        ranked = find_lots(text, 3)
+        if ranked and ranked[0][1] >= 0.65:
+            best, score = ranked[0]
+            second = ranked[1][1] if len(ranked) > 1 else 0.0
+            if len(ranked) == 1 or score - second >= 0.05 or score >= 0.8:
+                _remember_chat_lot(chat_key, best)
+                return best
+        return prev
+    # 2) Поиск по тексту
     ranked = find_lots(text, 3)
     if ranked:
         best, score = ranked[0]
         if score >= 0.52:
             second = ranked[1][1] if len(ranked) > 1 else 0.0
             if len(ranked) == 1 or score - second >= 0.04 or score >= 0.8:
-                _remember_chat_lot(m.chat_id, best); return best
+                _remember_chat_lot(chat_key, best)
+                return best
     if _RE_CONTEXT_LOT.search(n):
-        prev = _last_chat_lot(m.chat_id)
-        if prev: return prev
+        prev2 = _last_chat_lot(chat_key)
+        if prev2:
+            return prev2
+    # 3) viewing — последний fallback
     viewing = _get_viewing(c, m)
     if viewing and getattr(viewing, "is_viewing_lot", False):
         lid = str(getattr(viewing, "lot_id", ""))
-        with LOCK: lot = LOTS.get(lid)
+        with LOCK:
+            lot = LOTS.get(lid)
         if lot:
-            _remember_chat_lot(m.chat_id, lot); return lot
+            _remember_chat_lot(chat_key, lot)
+            return lot
         try:
             if lid:
                 _enrich(c, lid)
-                with LOCK: lot = LOTS.get(lid)
+                with LOCK:
+                    lot = LOTS.get(lid)
                 if lot:
-                    _remember_chat_lot(m.chat_id, lot); return lot
+                    _remember_chat_lot(chat_key, lot)
+                    return lot
         except Exception:
             pass
         vtext = str(getattr(viewing, "text", "") or "").strip()
@@ -2705,16 +2852,19 @@ def _get_lot(c, m, text):
             ranked2 = find_lots(vtext, 1)
             if ranked2 and ranked2[0][1] >= 0.5:
                 lot = ranked2[0][0]
-                _remember_chat_lot(m.chat_id, lot); return lot
+                _remember_chat_lot(chat_key, lot)
+                return lot
             synthetic = {"id": lid or "viewing", "title": vtext[:200], "description": vtext[:200],
                 "full_description": "", "price": None, "currency": "", "amount": None,
                 "auto": False, "subcategory": "", "server": "", "extra_fields": {},
                 "payment_message": "", "image_urls": []}
-            _remember_chat_lot(m.chat_id, synthetic); return synthetic
+            _remember_chat_lot(chat_key, synthetic)
+            return synthetic
     return None
 
 def _lot_prompt(lot):
-    if not lot: return "Товар не определён."
+    if not lot:
+        return "Товар не определён."
     base = (f"Название: {lot.get('title') or '—'}\n"
         f"Цена: {lot.get('price')} {lot.get('currency') or ''}\n"
         f"Количество: {lot.get('amount') if lot.get('amount') is not None else '—'}\n"
@@ -2725,17 +2875,34 @@ def _lot_prompt(lot):
     if isinstance(extra, dict) and extra:
         lines = []
         for k, v in extra.items():
-            if v is None or v == "": continue
-            if isinstance(v, (list, tuple)): v = ", ".join(str(x) for x in v[:30])
-            elif isinstance(v, dict): v = ", ".join(f"{kk}={vv}" for kk, vv in list(v.items())[:30])
-            else: v = str(v)
-            if len(v) > 400: v = v[:400] + "…"
+            if v is None or v == "":
+                continue
+            if isinstance(v, (list, tuple)):
+                v = ", ".join(str(x) for x in v[:30])
+            elif isinstance(v, dict):
+                v = ", ".join(f"{kk}={vv}" for kk, vv in list(v.items())[:30])
+            else:
+                v = str(v)
+            if len(v) > 400:
+                v = v[:400] + "…"
             lines.append(f"- {k}: {v}")
         if lines:
             base += "\n\nИГРОВЫЕ ПАРАМЕТРЫ ЛОТА:\n" + "\n".join(lines)
-    imgs = lot.get("image_urls") or []
-    if imgs:
-        base += f"\n\nВ ЛОТЕ ЕСТЬ {len(imgs)} ИЗОБРАЖЕНИЙ (скринов)."
+
+    # ФАКТЫ СО СКРИНОВ ЛОТА (из vision-модели)
+    lid = str(lot.get("id") or "")
+    vision_details = ""
+    if lid:
+        with LOCK:
+            vision_details = LOT_VISION.get(lid, "")
+    if vision_details:
+        base += ("\n\n★ ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА (это ИСТИНА о лоте) ★\n"
+                 + vision_details
+                 + "\n★ КОНЕЦ ФАКТОВ СО СКРИНОВ ★")
+    else:
+        imgs = lot.get("image_urls") or []
+        if imgs:
+            base += f"\n\nВ лоте {len(imgs)} изображений (данные со скринов ещё не извлечены)."
     return base
 
 def _chat_status_hint(chat_id):
@@ -2775,6 +2942,25 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         promises = ("\nОБЕЩАНИЯ:\n- НИКОГДА не пиши «я помогу», «мы поможем», «продавец свяжется», "
             "«передам продавцу», «уточню у продавца».\n"
             "- Если не можешь ответить — скажи нейтрально: «Не могу подтвердить это по лоту.»\n")
+    no_hallucination = (
+        "\n★★★ ГЛАВНЫЕ ПРАВИЛА ★★★\n"
+        "1) ОТВЕЧАЙ СТРОГО НА ЗАДАННЫЙ ВОПРОС. Не вываливай все факты подряд.\n"
+        "   Спросили «какой уровень?» — отвечай только про уровень, одной строкой.\n"
+        "   Спросили «есть ли скины?» — только про скины.\n"
+        "2) ИСТОЧНИК ИСТИНЫ — только:\n"
+        "   • блок ТЕКУЩИЙ ТОВАР,\n"
+        "   • блок «ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА» (если есть),\n"
+        "   • блок «ПОДКЛЮЧЁННЫЕ ТОВАРЫ»,\n"
+        "   • блок «ИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА».\n"
+        "3) НИКОГДА не придумывай числа: уровень, ранг, часы, скины, регион, "
+        "золото, даты — если это НЕ указано в источниках выше.\n"
+        "4) Если факт есть в «ФАКТЫ СО СКРИНОВ ЛОТА» — называй ИМЕННО то число, "
+        "что там. НЕ ЗАМЕНЯЙ его на «примерное» или «около».\n"
+        "5) Если факта НЕТ ни в тексте лота, ни в фактах со скринов — "
+        "ответь буквально: «В лоте эта информация не указана.» Не выдумывай.\n"
+        "6) НЕ сравнивай с другими лотами профиля. Отвечай ТОЛЬКО про лот в ТЕКУЩИЙ ТОВАР.\n"
+        "7) Не объясняй, откуда взял данные. Просто ответь по факту.\n"
+    )
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
     lot_instr = ""
@@ -2822,7 +3008,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         f"ИНФОРМАЦИЯ О ПРОДАВЦЕ:\n{seller or 'не задана'}\n\n"
         f"ТЕКУЩИЙ ТОВАР:\n{_lot_prompt(lot)}"
         f"{instr_block}{attached_block}\n\n{FUNPAY_RULES_SNAPSHOT}\n\n"
-        f"{status_hint}\n{promises}{extra}{search_block}\n"
+        f"{status_hint}{no_hallucination}\n{promises}{extra}{search_block}\n"
         "Дополнительно:\n- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар.\n"
         "- Название платформы внутри товара — НЕ контакт.")
 
@@ -2867,21 +3053,42 @@ def ask_ai(m, buyer_text, lot):
             lot_image_urls = list(cached.get("image_urls") or [])
         if not lot_image_urls:
             lot_image_urls = list(lot.get("image_urls") or [])
-    lot_image_data_url = ""
+        if not lot_image_urls:
+            try:
+                _enrich(c, str(lot.get("id") or ""))
+                with LOCK:
+                    cached2 = LOTS.get(str(lot.get("id") or ""))
+                if cached2:
+                    lot_image_urls = list(cached2.get("image_urls") or [])
+            except Exception:
+                pass
+    lot_image_data_urls = []
     if not image_data_url and lot_image_urls:
-        try: lot_image_data_url = _extract_url_as_data_url(lot_image_urls[0])
-        except Exception: lot_image_data_url = ""
+        for u in lot_image_urls[:3]:
+            try:
+                du = _extract_url_as_data_url(u)
+                if du:
+                    lot_image_data_urls.append(du)
+            except Exception:
+                continue
     effective = buyer_text
-    img_used = image_data_url or lot_image_data_url
-    if img_used and not (buyer_text or "").strip():
-        effective = "Посмотри, пожалуйста, на фото и ответь."
+    if not image_data_url and lot_image_data_urls:
+        effective = (effective or "").strip() or "Посмотри, пожалуйста, на скрины лота и ответь."
+        if "скрин" not in effective.lower():
+            effective = (effective + "\n\n(Ниже — скриншоты из лота. Отвечай на основе ЭТИХ "
+                         "изображений и полей лота. Не выдумывай данные, которых на них нет.)")
 
     msgs = [{"role": "system", "content": _sys_prompt(lot, full_chat, chat_id, lang_hint, tone_hint_text)}]
     msgs += history
-    if img_used:
+    if image_data_url:
         msgs.append({"role": "user", "content": [
             {"type": "text", "text": effective},
-            {"type": "image_url", "image_url": {"url": img_used}}]})
+            {"type": "image_url", "image_url": {"url": image_data_url}}]})
+    elif lot_image_data_urls:
+        content = [{"type": "text", "text": effective}]
+        for du in lot_image_data_urls[:3]:
+            content.append({"type": "image_url", "image_url": {"url": du}})
+        msgs.append({"role": "user", "content": content})
     else:
         msgs.append({"role": "user", "content": effective})
 
@@ -3126,13 +3333,15 @@ def init_telegram(cardinal):
             n_manual = len(MANUAL_FULFILL_QUEUE)
             n_role_s = sum(1 for r in CHAT_ROLE.values() if r == "seller")
             n_role_b = sum(1 for r in CHAT_ROLE.values() if r == "buyer")
+            n_vision = len(LOT_VISION)
         head = f"🤖 <b>{NAME} v{VERSION}</b>\n"
         head += f"Автор: <b>{CREDITS}</b>\n\n"
         head += f"🟢 Автоответ: <b>{utils.bool_to_text(SETTINGS['enabled'])}</b> · "
         head += f"🔔 Уведомл: <b>{utils.bool_to_text(SETTINGS.get('seller_notify', True))}</b>\n"
         head += f"🌐 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or '—'))}</code> · "
         head += f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'нет'}</b>\n"
-        head += f"🛍 Лотов: <b>{len(LOTS)}</b> · 📌 Заказов: <b>{n_status}</b> · ⚠️ ручных: <b>{n_manual}</b>\n"
+        head += f"🛍 Лотов: <b>{len(LOTS)}</b> · 👁 vision-фактов: <b>{n_vision}</b>\n"
+        head += f"📌 Заказов: <b>{n_status}</b> · ⚠️ ручных: <b>{n_manual}</b>\n"
         head += f"💬 Память: <b>{n_chats}</b> чатов / <b>{n_msgs}</b> сообщений\n"
         head += f"🎭 Роли: 🏪 <b>{n_role_s}</b> · 🛒 <b>{n_role_b}</b>\n"
         head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>\n\n"
@@ -3174,7 +3383,6 @@ def init_telegram(cardinal):
             except Exception:
                 pass
 
-    # ─── Подменю: API ───
     def show_api(call):
         text = (
             f"🌐 <b>API и модель</b>\n\n"
@@ -3198,7 +3406,6 @@ def init_telegram(cardinal):
         except Exception:
             pass
 
-    # ─── Подменю: Промпт и ответы ───
     def show_replies(call):
         text = (
             f"📝 <b>Промпт и ответы</b>\n\n"
@@ -3233,7 +3440,6 @@ def init_telegram(cardinal):
         except Exception:
             pass
 
-    # ─── Подменю: Заказы ───
     def show_orders_menu(call):
         with LOCK:
             n_manual = len(MANUAL_FULFILL_QUEUE)
@@ -3275,30 +3481,32 @@ def init_telegram(cardinal):
         except Exception:
             pass
 
-    # ─── Подменю: Лоты ───
     def show_lots_menu(call):
         with LOCK:
             n_instr = len(SETTINGS.get("lot_instructions") or {})
             n_items = sum(len(v) for v in (SETTINGS.get("lot_attached_items") or {}).values() if isinstance(v, list))
+            n_vision = len(LOT_VISION)
         text = (
             f"🏷 <b>Лоты и товары</b>\n\n"
             f"🛍 Лотов в кэше: <b>{len(LOTS)}</b>\n"
             f"🔄 Авто-обновление: <b>{SETTINGS.get('lot_refresh_minutes', 30)} мин</b>\n"
             f"🖼 Vision лота: <b>{utils.bool_to_text(SETTINGS.get('lot_images_vision', True))}</b>\n"
+            f"👁 Vision-факты со скринов: <b>{n_vision}</b> лотов\n"
             f"📝 Инструкций для лотов: <b>{n_instr}</b>\n"
             f"📦 Товаров/фактов на лоты: <b>{n_items}</b>"
         )
         kb = K(row_width=2)
         kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
-               B(f"🖼 Vision лота {utils.bool_to_text(SETTINGS.get('lot_images_vision', True))}",
-                 callback_data=f"{CB}:tog:lotvision"))
-        kb.row(B(f"📝 Инструкции ({n_instr})", callback_data=f"{CB}:lins:list"),
-               B("➕ Инструкция", callback_data=f"{CB}:lins:add"))
-        kb.row(B("🗑 Удалить инструкцию", callback_data=f"{CB}:lins:del"),
-               B(f"📦 Товары ({n_items})", callback_data=f"{CB}:litem:list"))
-        kb.row(B("➕ Подключить товар", callback_data=f"{CB}:litem:add"),
-               B("🗑 Удалить товар", callback_data=f"{CB}:litem:del"))
-        kb.add(B("📜 Bootstrap истории", callback_data=f"{CB}:bootstrap"))
+               B("👁 Переоценить vision", callback_data=f"{CB}:vision_refresh"))
+        kb.row(B(f"🖼 Vision лота {utils.bool_to_text(SETTINGS.get('lot_images_vision', True))}",
+                 callback_data=f"{CB}:tog:lotvision"),
+               B(f"📝 Инструкции ({n_instr})", callback_data=f"{CB}:lins:list"))
+        kb.row(B("➕ Инструкция", callback_data=f"{CB}:lins:add"),
+               B("🗑 Удалить инструкцию", callback_data=f"{CB}:lins:del"))
+        kb.row(B(f"📦 Товары ({n_items})", callback_data=f"{CB}:litem:list"),
+               B("➕ Подключить товар", callback_data=f"{CB}:litem:add"))
+        kb.row(B("🗑 Удалить товар", callback_data=f"{CB}:litem:del"),
+               B("📜 Bootstrap истории", callback_data=f"{CB}:bootstrap"))
         kb.add(B("📋 Логи чатов", callback_data=f"{CB}:chats"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
@@ -3307,7 +3515,6 @@ def init_telegram(cardinal):
         except Exception:
             pass
 
-    # ─── Подменю: Роли ───
     def show_roles(call):
         with LOCK:
             n_role_s = sum(1 for r in CHAT_ROLE.values() if r == "seller")
@@ -3332,7 +3539,6 @@ def init_telegram(cardinal):
         except Exception:
             pass
 
-    # ─── Подменю: ЧС / WL ───
     def show_bl_wl(call):
         bl_n = len(get_blacklist())
         wl_n = len(get_whitelist())
@@ -3365,20 +3571,21 @@ def init_telegram(cardinal):
         except Exception:
             pass
 
-    # ─── Подменю: Прочее ───
     def show_misc(call):
         text = (
             f"⚙️ <b>Прочее</b>\n\n"
             f"📋 Правила FunPay и стоп-лист — в системном промпте.\n"
             f"💬 Память диалогов: <b>{len(HISTORY)}</b> чатов\n"
             f"📌 Заказов в базе: <b>{len(ORDER_STATUS)}</b>\n"
-            f"👥 Счётчиков покупателей: <b>{len(BUYER_ORDERS_COUNT)}</b>"
+            f"👥 Счётчиков покупателей: <b>{len(BUYER_ORDERS_COUNT)}</b>\n"
+            f"👁 Vision-фактов лотов: <b>{len(LOT_VISION)}</b>"
         )
         kb = K(row_width=2)
         kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"),
                B("🧪 Уведомить сейчас", callback_data=f"{CB}:notify_test"))
         kb.add(B("🗑 Сбросить всю память", callback_data=f"{CB}:clear_history"))
         kb.add(B("🗑 Сбросить счётчики заказов", callback_data=f"{CB}:wipe_counts"))
+        kb.add(B("🗑 Сбросить vision-кэш", callback_data=f"{CB}:wipe_vision"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -3445,7 +3652,6 @@ def init_telegram(cardinal):
         SETTINGS["web_search_max_results"] = {3: 5, 5: 8, 8: 3}.get(cur, 5)
         save_config(); show_replies(call)
 
-    # ─── Whitelist UI ───
     def show_whitelist(call):
         with LOCK:
             raw = list(SETTINGS.get("whitelist") or [])
@@ -3566,6 +3772,15 @@ def init_telegram(cardinal):
             BUYER_ORDERS_COUNT.clear()
         _save_buyer_counts()
         try: bot.answer_callback_query(call.id, "🗑 Счётчики сброшены")
+        except Exception: pass
+        show_misc(call)
+
+    def wipe_vision(call):
+        global LOT_VISION
+        with LOCK:
+            LOT_VISION.clear()
+        _save_lot_vision()
+        try: bot.answer_callback_query(call.id, "🗑 Vision-кэш сброшен")
         except Exception: pass
         show_misc(call)
 
@@ -3888,6 +4103,42 @@ def init_telegram(cardinal):
                     reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:lots")))
             except Exception: pass
         POOL.submit(job)
+    def vision_refresh(call):
+        bot.answer_callback_query(call.id, "👁 Переоцениваю скрины…")
+        msg = bot.send_message(call.message.chat.id, "🔄 Извлекаю факты со скринов лотов…")
+        def job():
+            try:
+                with LOCK:
+                    lids = list(LOTS.keys())
+                total = 0; done = 0
+                for lid in lids:
+                    if STOP.is_set(): break
+                    with LOCK:
+                        rec = LOTS.get(lid) or {}
+                        imgs = list(rec.get("image_urls") or [])
+                    if not imgs: continue
+                    total += 1
+                    try:
+                        details = _vision_extract_lot_details(imgs)
+                        if details:
+                            with LOCK:
+                                LOT_VISION[lid] = details
+                            done += 1
+                        time.sleep(0.5)
+                    except Exception:
+                        continue
+                _save_lot_vision()
+                bot.edit_message_text(
+                    f"✅ Готово: {done} из {total} лотов прочитаны.",
+                    msg.chat.id, msg.id,
+                    reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:lots")))
+            except Exception as e:
+                try:
+                    bot.edit_message_text(f"❌ {type(e).__name__}: {str(e)[:200]}",
+                                          msg.chat.id, msg.id)
+                except Exception:
+                    pass
+        POOL.submit(job)
 
     def updates_text():
         with LOCK:
@@ -4016,7 +4267,6 @@ def init_telegram(cardinal):
         try: bot.answer_callback_query(call.id)
         except Exception: pass
 
-    # ─── Per-lot инструкции ───
     def show_lot_instr(call):
         with LOCK: instrs = dict(SETTINGS.get("lot_instructions") or {})
         if not instrs:
@@ -4082,7 +4332,6 @@ def init_telegram(cardinal):
             else:
                 bot.reply_to(m, "ℹ️ Не найдено.")
 
-    # ─── Товары на лот ───
     def show_lot_items(call):
         with LOCK: items_map = dict(SETTINGS.get("lot_attached_items") or {})
         if not items_map:
@@ -4155,7 +4404,6 @@ def init_telegram(cardinal):
             else:
                 bot.reply_to(m, "ℹ️ Не найдено.")
 
-    # ─── Регистрация ───
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(show_api, lambda c: c.data == f"{CB}:m:api")
     tg.cbq_handler(show_replies, lambda c: c.data == f"{CB}:m:replies")
@@ -4172,6 +4420,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask_wl_del, lambda c: c.data == f"{CB}:wl_del")
     tg.cbq_handler(wl_clear, lambda c: c.data == f"{CB}:wl_clear")
     tg.cbq_handler(wipe_counts, lambda c: c.data == f"{CB}:wipe_counts")
+    tg.cbq_handler(wipe_vision, lambda c: c.data == f"{CB}:wipe_vision")
     tg.cbq_handler(toggle, lambda c: c.data == f"{CB}:tog")
     tg.cbq_handler(toggle_wm, lambda c: c.data == f"{CB}:wm")
     tg.cbq_handler(toggle_notify, lambda c: c.data == f"{CB}:notify")
@@ -4236,6 +4485,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask(ST_NOTIFY_COOLDOWN, "Cooldown 0–60 мин:"), lambda c: c.data == f"{CB}:cooldown")
     tg.cbq_handler(test_api, lambda c: c.data == f"{CB}:test")
     tg.cbq_handler(refresh_lots, lambda c: c.data == f"{CB}:lots")
+    tg.cbq_handler(vision_refresh, lambda c: c.data == f"{CB}:vision_refresh")
 
     tg.msg_handler(make_setter("api_url", back_cb=f"{CB}:m:api"),
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
@@ -4277,6 +4527,7 @@ def init_telegram(cardinal):
 def post_init(c):
     if not os.path.exists(CFG_PATH): load_config()
     _load_buyer_counts()
+    _load_lot_vision()
     load_orders_state()
     load_history_state()
     try:
@@ -4297,6 +4548,8 @@ def on_delete(c, call=None):
     try: save_history_state()
     except Exception: pass
     try: _save_buyer_counts()
+    except Exception: pass
+    try: _save_lot_vision()
     except Exception: pass
     STOP.set()
     try: POOL.shutdown(wait=False, cancel_futures=True)
