@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "4.5.0",
+  "version": "4.6.0",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "b13c4bc1ded033bc018e897349d47ed5772de3ad023f875dafe3cb338a35e2b0",
+  "sha256": "c9d23342704792b1f75857ff2ceddca6d442506e824060f61a6f82783ade3a27",
   "notes": "Автоснятие с ЧС при оплате заказа. Автоопределение роли в чате (продавец/покупатель) по заказам и лотам без ручного переключения.",
   "mandatory": false
 }
