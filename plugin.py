@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "5.1.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Точный vision лотов (фильтр иконок), web-поиск, ЧС+WL."
+VERSION = "5.2.0"
+DESCRIPTION = "AI-помощник продавца FunPay. Точный vision лотов, web-поиск, ЧС+WL."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -166,7 +166,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
 
-DEFAULTS = {"version": 61, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 62, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -189,34 +189,20 @@ DEFAULTS = {"version": 61, "enabled": True, "setup_done": False,
     "update_check_interval_minutes": 30, "auto_update": False,
     "auto_restart_after_update": False, "last_notified_version": "",
     "last_installed_version": "", "pending_restart_version": "",
-    "blacklist": [],
-    "blacklist_enabled": True,
-    "auto_blacklist_enabled": True,
-    "auto_blacklist_spam": True,
-    "auto_blacklist_photo_ask": True,
-    "auto_blacklist_photo_send": True,
-    "auto_blacklist_forbidden_photo": True,
-    "auto_blacklist_indecent": True,
-    "auto_blacklist_code": True,
-    "auto_blacklist_bad_intent": True,
-    "auto_blacklist_bad_goal": True,
-    "unblacklist_on_payment": True,
-    "whitelist": [],
-    "whitelist_enabled": True,
-    "auto_whitelist_after_orders": 3,
-    "role_detection_enabled": True,
-    "default_chat_role": "auto",
+    "blacklist": [], "blacklist_enabled": True,
+    "auto_blacklist_enabled": True, "auto_blacklist_spam": True,
+    "auto_blacklist_photo_ask": True, "auto_blacklist_photo_send": True,
+    "auto_blacklist_forbidden_photo": True, "auto_blacklist_indecent": True,
+    "auto_blacklist_code": True, "auto_blacklist_bad_intent": True,
+    "auto_blacklist_bad_goal": True, "unblacklist_on_payment": True,
+    "whitelist": [], "whitelist_enabled": True, "auto_whitelist_after_orders": 3,
+    "role_detection_enabled": True, "default_chat_role": "auto",
     "buyer_role_prompt": BUYER_ROLE_PROMPT,
-    "lot_instructions": {},
-    "lot_attached_items": {},
-    "notify_only_when_called": True,
-    "lot_images_vision": True,
-    "manual_fulfill_notify": True,
-    "web_search_enabled": True,
-    "web_search_max_results": 5,
-    "lot_vision_extract": True,
-    "lot_image_min_bytes": 5000,
-    "lot_image_validate_http": True,
+    "lot_instructions": {}, "lot_attached_items": {},
+    "notify_only_when_called": True, "lot_images_vision": True,
+    "manual_fulfill_notify": True, "web_search_enabled": True,
+    "web_search_max_results": 5, "lot_vision_extract": True,
+    "lot_image_min_bytes": 5000, "lot_image_validate_http": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -338,21 +324,6 @@ _RE_INDECENT = re.compile(
     r"\bтварь\s+ты\b|\bты\s+тварь\b|\bты\s+лох\b|\bты\s+чмо\b|\bты\s+дебил\b|"
     r"\bиди\s+на\b|\bпош[её]л\s+на\b|\bиди\s+ты\b|\bна\s+хуй\b|\bнах\s+ты\b)", re.I)
 
-_RE_FORBIDDEN_PHOTO = re.compile(
-    r"(?:\[\[(?:NSFW|SHOCK|SCAT|TRASH|TEXT_NSFW|ANATOMY_NSFW)\]\]|"
-    r"\b18\s*\+|\bпорно\w*|\bэротик\w*|\bнагота\b|\bобнаж[её]нн\w*|"
-    r"\bгенитал\w*|\bвагин\w*|\bпенис\w*|\bполов\w*\s+орган\w*|\bинтим\w*|"
-    r"\bрасчлен[её]нк\w*|\bтруп\w*|\bмертв[оы]\w*\s+тел\w*|"
-    r"\bкал\b|\bкакашк\w*|\bговн\w*|\bфекали\w*|\bэкскремент\w*|\bиспражнени\w*|\bнавоз\w*|"
-    r"\bтужит\w*|\bтужащ\w*|\bтужил\w*|\bрвот\w*|\bблевот\w*|"
-    r"\bизвращ\w*|\bвульгарн\w*|\bнепристойн\w*|"
-    r"\bнапомина\w*\s+(?:по\s+форме\s+)?(?:женск|мужск|полов|вагин|влагалищ|пенис|член)|"
-    r"\bпохож\w*\s+на\s+(?:женск|мужск|полов|вагин|пенис|член|генитал)|"
-    r"\bсходств\w*\s+с\s+(?:женск|мужск|полов|вагин|пенис|член|генитал)|"
-    r"\bрот\w*\s+(?:напомина|похож)|"
-    r"\bгуб\w*\s+(?:напомина|похож)|"
-    r"\bхуесос\w*|\bхуесоск\w*|\bдолбо[её]б\w*|\bгандон\w*|\bшлюх\w*|\bбляд\w*)", re.I)
-
 _RE_AI_REFUSAL_PHOTO = re.compile(
     r"(?:не\s+могу\s+(?:помочь|описать|проанализировать|посмотреть|разобрать|"
     r"обработать|предоставить|дать|комментировать|работать)|"
@@ -376,6 +347,14 @@ _RE_AI_REFUSAL_PHOTO = re.compile(
     r"sorry,?\s+i\s+(?:can'?t|cannot|won'?t)|"
     r"inappropriate\s+content)", re.I)
 
+# Реальная "запрещёнка" в ответе AI (метка или ключевые слова NSFW)
+_RE_REAL_NSFW = re.compile(
+    r"\[\[(?:NSFW|SHOCK|SCAT|TRASH|TEXT_NSFW|ANATOMY_NSFW)\]\]|"
+    r"\b18\s*\+|\bпорно\w*|\bпорн\w*|\bобнаж[её]нн\w*|\bгенитал\w*|\bвагин\w*|"
+    r"\bпенис\w*|\bполов\w*\s+орган\w*|\bрасчлен[её]нк\w*|\bтруп\w*|"
+    r"\bкал\b|\bговн\w*|\bфекал\w*|\bэкскремент\w*|\bиспражнени\w*",
+    re.I)
+
 _RE_CALL_SELLER = re.compile(
     r"(?:\bпродав\w*|\bхозяин\w*|\bвладел\w*|\bадмин\w*|\bчеловек\b|\bживой\b|"
     r"\bреальн\w*\s+человек|\bау\b|\bалло\b|\bвы\s+тут\b|\bвы\s+здесь\b|"
@@ -389,6 +368,11 @@ _RE_LOT_SCREEN_ASK = re.compile(
     r"\b(?:посмотр|покаж|глян|скинь|пришл)\w*\s+(?:скрин\w*|фото\w*|картинк\w*)|"
     r"\bв\s+описани\w*\s+(?:скрин\w*|фото\w*|картинк\w*)|"
     r"\b(?:скрин\w*|фото\w*|картинк\w*)\s+(?:из\s+)?лот\w*|"
+    r"\bчто\s+на\s+(?:фото|фотке|картинк\w*|скрин\w*|скриншот\w*|изображени\w*)|"
+    r"\bчто\s+(?:изображено|нарисовано|показано|видно)\b|"
+    r"\bопиш\w*\s+(?:фото|скрин\w*|картинк\w*|изображени\w*|это|всё)|"
+    r"\bрасскаж\w*\s+(?:что\s+на\s+)?(?:фото|скрин\w*|картинк\w*|изображени\w*)|"
+    r"\bпокаж\w*\s+(?:скрин\w*|фото\w*|картинк\w*|изображени\w*)|"
     r"\bкакой\s+уровень\b|\bкакого\s+уровн\w*|\bуровень\s+аккаунт\w*|"
     r"\bсколько\s+часов\b|\bчасов\s+в\s+игр\w*|"
     r"\bкакой\s+ранг\b|\bкакого\s+ранг\w*|\bранг\s+аккаунт\w*|"
@@ -418,13 +402,12 @@ _FUNPAY_UI_IMG = re.compile(
 )
 
 # Иконки игр каталога FunPay: /s/file/xx/yy/<game_slug>.il<hash>.<ext>
-# Пример: https://sfunpay.com/s/file/il/97/standoff_2.il9734kt0i.jpg
 _FUNPAY_GAME_ICON = re.compile(
     r"/s/file/[a-z0-9]{1,4}/[a-z0-9]{1,4}/[a-z0-9_\-]+\.il[0-9a-z]+\.(?:jpe?g|png|webp|gif|bmp)",
     re.I
 )
 
-# Скрины лотов FunPay: /s/offer/xx/yy/<random>.<ext> — высокий приоритет
+# Скрины лотов FunPay: /s/offer/xx/yy/<random>.<ext>
 _FUNPAY_LOT_OFFER = re.compile(
     r"/s/offer/[a-z0-9]{1,4}/[a-z0-9]{1,4}/[a-z0-9_\-]+\.(?:jpe?g|png|webp|gif|bmp)",
     re.I
@@ -463,7 +446,7 @@ def load_config():
         return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
@@ -471,10 +454,10 @@ def load_config():
                         SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 61:
+        if cv < 62:
             SETTINGS.setdefault("lot_image_min_bytes", 5000)
             SETTINGS.setdefault("lot_image_validate_http", True)
-            SETTINGS["version"] = 61
+            SETTINGS["version"] = 62
             save_config()
     except Exception:
         pass
@@ -536,8 +519,7 @@ def load_orders_state():
         for oid, val in (data.get("order_status") or {}).items():
             try:
                 st, ck, ts = val[0], val[1], float(val[2])
-                if now - ts > _ORDER_CLOSED_TTL:
-                    continue
+                if now - ts > _ORDER_CLOSED_TTL: continue
                 ORDER_STATUS[str(oid)] = (str(st), str(ck), ts)
             except Exception: continue
         for ck, lst in (data.get("chat_orders") or {}).items():
@@ -835,14 +817,6 @@ def _is_indecent_message(text):
     if not SETTINGS.get("auto_blacklist_indecent", True): return False
     s = str(text or "")
     return bool(_RE_INDECENT.search(s)) if s else False
-
-def _is_forbidden_photo_response(ai_answer, buyer_text=""):
-    if not SETTINGS.get("auto_blacklist_forbidden_photo", True): return False
-    blob = f"{ai_answer or ''}\n{buyer_text or ''}"
-    if not blob.strip(): return False
-    if _RE_FORBIDDEN_PHOTO.search(blob): return True
-    if ai_answer and _RE_AI_REFUSAL_PHOTO.search(str(ai_answer)): return True
-    return False
 
 def _is_code_request(text):
     if not SETTINGS.get("auto_blacklist_code", True): return False
@@ -2144,7 +2118,7 @@ def _dedupe_image_variants(urls: list) -> list:
     result = []
     for _key, items in groups.items():
         best = max(items, key=lambda x: (
-            ("/s/offer/" in x.lower()),  # приоритет официального upload лота
+            ("/s/offer/" in x.lower()),
             ("upload" in x.lower() or "offer" in x.lower()),
             "preview" not in x.lower(),
             "small" not in x.lower(),
@@ -2154,7 +2128,7 @@ def _dedupe_image_variants(urls: list) -> list:
     return result
 
 def _is_lot_image(url: str) -> bool:
-    """Возвращает True, если URL похож на картинку лота (не UI-мусор, не иконка каталога)."""
+    """True если URL похож на картинку лота (не UI-мусор, не иконка каталога)."""
     u = str(url or "").strip()
     if not u: return False
     if _FUNPAY_UI_IMG.search(u): return False
@@ -2358,7 +2332,6 @@ def _vision_extract_lot_details(image_urls: list) -> str:
     model = str(SETTINGS.get("api_model") or "").strip()
     if not base or not key or not model: return ""
 
-    # Готовим data-URL для каждой картинки
     pairs = []
     for u in image_urls[:5]:
         try:
@@ -2395,7 +2368,6 @@ def _vision_extract_lot_details(image_urls: list) -> str:
             return True
         return False
 
-    # Перебираем картинки по одной
     collected = []
     for idx, (_url, du) in enumerate(pairs, 1):
         content = [
@@ -2414,7 +2386,6 @@ def _vision_extract_lot_details(image_urls: list) -> str:
         logger.info("vision_extract: собрано фактов с %d картинок", len(collected))
         return joined
 
-    # Ни одна отдельно не дала — групповой fallback
     logger.debug("vision_extract: перебор по одной не дал — пробую всех вместе")
     content2 = [{"type": "text", "text": _VISION_LOT_PROMPT +
                  "\n\nВАЖНО: на картинках точно есть факты об аккаунте. "
@@ -2913,19 +2884,24 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
     no_hallucination = (
         "\n★★★ ГЛАВНЫЕ ПРАВИЛА ★★★\n"
         "1) ОТВЕЧАЙ СТРОГО НА ЗАДАННЫЙ ВОПРОС. Не вываливай все факты подряд.\n"
-        "   Спросили «какой уровень?» — отвечай только про уровень, одной строкой.\n"
-        "   Спросили «есть ли скины?» — только про скины.\n"
         "2) ИСТОЧНИК ИСТИНЫ — только:\n"
         "   • блок ТЕКУЩИЙ ТОВАР,\n"
-        "   • блок «ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА»,\n"
+        "   • блок «ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА» (если есть),\n"
         "   • блок «ПОДКЛЮЧЁННЫЕ ТОВАРЫ»,\n"
         "   • блок «ИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА».\n"
-        "3) НИКОГДА не придумывай числа: уровень, ранг, часы, скины, регион, "
-        "золото, даты — если это НЕ указано в источниках выше.\n"
-        "4) Если факт есть в «ФАКТЫ СО СКРИНОВ ЛОТА» — называй ИМЕННО то число, что там.\n"
-        "5) Если факта НЕТ — ответь буквально: «В лоте эта информация не указана.»\n"
-        "6) НЕ сравнивай с другими лотами профиля. Отвечай ТОЛЬКО про лот в ТЕКУЩИЙ ТОВАР.\n"
-        "7) Не объясняй, откуда взял данные. Просто ответь по факту.\n"
+        "3) НИКОГДА не выдумывай числа (уровень, ранг, часы, скины, регион, золото, "
+        "даты), если их нет в источниках выше.\n"
+        "4) ★ ОСОБОЕ ПРАВИЛО ПРО ФОТО ★\n"
+        "   Если покупатель спрашивает про фото / скрины / картинки / изображения лота — "
+        "ты ОБЯЗАН ответить и ОПИСАТЬ что видно.\n"
+        "   Используй блок «ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА» — там уже извлечено с этих "
+        "самых скринов (уровень, ранг, ник, валюта).\n"
+        "   Если у тебя есть картинка в запросе — опиши что на ней.\n"
+        "   НЕ ОТКАЗЫВАЙСЯ отвечать про фото. НЕ пиши «не могу описать фото».\n"
+        "5) Если данных нет вообще — ответь нейтрально одной строкой, но не отказывайся. "
+        "Например: «Уровень в лоте не указан.»\n"
+        "6) НЕ сравнивай с другими лотами профиля.\n"
+        "7) Не объясняй, откуда взял данные.\n"
     )
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
@@ -3105,9 +3081,22 @@ def handle_message(c, m, text):
         _say(c, m, str(SETTINGS["unknown_reply"]), notify=True,
             notify_header="🆘 <b>AI-провайдер не ответил</b>",
             reason="API недоступен", buyer_text=text); return
-    if _is_forbidden_photo_response(answer, text):
-        if not wl: _instant_blacklist(c, m, "Запрещённое фото или отказ AI от описания", answer)
+    # Проверка на NSFW / отказ AI от описания
+    real_nsfw = bool(_RE_REAL_NSFW.search(str(answer or "")))
+    if real_nsfw:
+        if not wl: _instant_blacklist(c, m, "Запрещённое фото (NSFW)", answer)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+    if _RE_AI_REFUSAL_PHOTO.search(str(answer or "")) and _RE_LOT_SCREEN_ASK.search(str(text or "")):
+        # AI отказался описывать скрин лота → отдаём vision-факты или уведомляем продавца
+        if lot and isinstance(lot, dict) and lot.get("id"):
+            with LOCK: facts = LOT_VISION.get(str(lot.get("id")), "")
+            if facts:
+                logger.info("AI отказался от фото — отдаём vision-факты лота %s", lot.get("id"))
+                _say(c, m, facts, notify=False); return
+        _say(c, m, answer, notify=True,
+             notify_header="🆘 <b>AI не захотел описывать фото</b>",
+             reason="AI отказался описывать фото — проверьте ответ",
+             buyer_text=text); return
     if is_offtopic(answer) and not wl:
         _instant_blacklist(c, m, "AI ответил оффтопом", text)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
@@ -3393,7 +3382,8 @@ def init_telegram(cardinal):
             f"📝 Инструкций: <b>{n_instr}</b> · 📦 Товаров/фактов: <b>{n_items}</b>\n"
             f"🖼 Мин. размер картинки: <b>{SETTINGS.get('lot_image_min_bytes', 5000)}</b> байт · "
             f"HEAD-проверка: <b>{utils.bool_to_text(SETTINGS.get('lot_image_validate_http', True))}</b>\n"
-            f"🚫 Иконки игр каталога отсеиваются автоматически.")
+            f"🚫 Иконки игр каталога (/s/file/) отсеиваются автоматически.\n"
+            f"✅ Скрины лотов (/s/offer/) в приоритете для vision.")
         kb = K(row_width=2)
         kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
                B("👁 Переоценить vision", callback_data=f"{CB}:vision_refresh"))
