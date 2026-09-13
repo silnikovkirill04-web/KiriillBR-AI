@@ -3948,7 +3948,8 @@ def init_telegram(cardinal):
         def job():
             try: cardinal.telegram.send_notification("🆘 <b>Тестовое уведомление</b>")
             except Exception: pass
-        threading.Thread def notify_test(call):
+        threading.Thread
+def notify_test(call):
         bot.answer_callback_query(call.id, "Отправляю…")
         def job():
             try: cardinal.telegram.send_notification("🆘 <b>Тестовое уведомление</b>")
