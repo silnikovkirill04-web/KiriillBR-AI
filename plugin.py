@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "4.6.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Vision лотов, web-поиск, инструкции и товары на лот."
+VERSION = "4.7.0"
+DESCRIPTION = "AI-помощник продавца FunPay. Vision лотов, web-поиск, ЧС+WL, меню по разделам."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -28,6 +28,7 @@ UPDATE_USER_AGENT = f"KiriillBRAI/{VERSION} ({UUID})"
 CFG_PATH = "storage/plugins/kiriillbr_ai.json"
 ORDERS_PATH = "storage/plugins/kiriillbr_orders.json"
 HISTORY_PATH = "storage/plugins/kiriillbr_history.json"
+BUYER_COUNT_PATH = "storage/plugins/kiriillbr_buyer_count.json"
 CB = "KBAI"
 ST_MODEL, ST_PROMPT, ST_SELLER = f"{CB}_model", f"{CB}_prompt", f"{CB}_seller"
 ST_URL, ST_KEY, ST_TIMEOUT, ST_BUDGET = f"{CB}_url", f"{CB}_key", f"{CB}_timeout", f"{CB}_budget"
@@ -38,6 +39,7 @@ ST_SURVEY_TEXT = f"{CB}_surveytext"
 ST_AF_DELAY = f"{CB}_afdelay"
 ST_THANK_TEXT = f"{CB}_thanktext"
 ST_BLACKLIST = f"{CB}_blacklist"
+ST_WHITELIST = f"{CB}_wl"
 ST_ROLE_CHAT = f"{CB}_rolechat"
 ST_LOT_INSTR = f"{CB}_lotinstr"
 ST_LOT_INSTR_DEL = f"{CB}_lotinstrdel"
@@ -139,7 +141,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
 
-DEFAULTS = {"version": 56, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 57, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -174,6 +176,9 @@ DEFAULTS = {"version": 56, "enabled": True, "setup_done": False,
     "auto_blacklist_bad_intent": True,
     "auto_blacklist_bad_goal": True,
     "unblacklist_on_payment": True,
+    "whitelist": [],
+    "whitelist_enabled": True,
+    "auto_whitelist_after_orders": 3,
     "role_detection_enabled": True,
     "default_chat_role": "auto",
     "buyer_role_prompt": BUYER_ROLE_PROMPT,
@@ -205,6 +210,8 @@ ORDER_STATUS = {}
 CHAT_ORDERS = {}
 CHAT_ROLE = {}
 MANUAL_FULFILL_QUEUE = {}
+BUYER_ORDERS_COUNT = {}
+ORDER_BUYER = {}
 UPDATE_STATE = {"checked_at": 0.0, "status": "not_checked", "error": "",
     "manifest": None, "available": False, "installing": False}
 LOCK = threading.RLock()
@@ -424,6 +431,13 @@ def load_config():
                 SETTINGS["lot_attached_items"] = {}
             SETTINGS["version"] = 56
             save_config()
+        if cv < 57:
+            if not isinstance(SETTINGS.get("whitelist"), list):
+                SETTINGS["whitelist"] = []
+            SETTINGS.setdefault("whitelist_enabled", True)
+            SETTINGS.setdefault("auto_whitelist_after_orders", 3)
+            SETTINGS["version"] = 57
+            save_config()
     except Exception:
         pass
 
@@ -461,7 +475,8 @@ def save_orders_state():
                 "closed_orders": dict(CLOSED_ORDERS),
                 "processed_orders": dict(PROCESSED_ORDERS),
                 "chat_role": dict(CHAT_ROLE),
-                "manual_queue": dict(MANUAL_FULFILL_QUEUE)}
+                "manual_queue": dict(MANUAL_FULFILL_QUEUE),
+                "order_buyer": dict(ORDER_BUYER)}
         _atomic_write(ORDERS_PATH, data)
     except Exception:
         logger.debug("save_orders_state failed", exc_info=True)
@@ -516,6 +531,9 @@ def load_orders_state():
                     MANUAL_FULFILL_QUEUE[str(oid)] = rec
             except Exception:
                 continue
+        for oid, nick in (data.get("order_buyer") or {}).items():
+            if str(nick).strip():
+                ORDER_BUYER[str(oid)] = str(nick)
     except Exception:
         logger.debug("load_orders_state failed", exc_info=True)
 
@@ -561,6 +579,28 @@ def load_history_state():
     except Exception:
         logger.debug("load_history_state failed", exc_info=True)
 
+def _save_buyer_counts():
+    try:
+        with LOCK:
+            data = {"saved_at": time.time(), "counts": dict(BUYER_ORDERS_COUNT)}
+        _atomic_write(BUYER_COUNT_PATH, data)
+    except Exception:
+        logger.debug("save_buyer_counts failed", exc_info=True)
+
+def _load_buyer_counts():
+    global BUYER_ORDERS_COUNT
+    if not os.path.exists(BUYER_COUNT_PATH):
+        return
+    try:
+        with open(BUYER_COUNT_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        counts = data.get("counts") or {}
+        if isinstance(counts, dict):
+            with LOCK:
+                BUYER_ORDERS_COUNT = {str(k): int(v) for k, v in counts.items() if str(k)}
+    except Exception:
+        logger.debug("load_buyer_counts failed", exc_info=True)
+
 def is_enabled(c):
     p = c.plugins.get(UUID)
     return bool(p and p.enabled and SETTINGS.get("enabled"))
@@ -571,6 +611,7 @@ def _norm_nick(nick):
         s = s[1:]
     return s.strip()
 
+# ─── Blacklist ───
 def get_blacklist():
     with LOCK:
         raw = SETTINGS.get("blacklist") or []
@@ -593,6 +634,68 @@ def is_blacklisted(*candidates):
         if n and n in bl:
             return True
     return False
+
+# ─── Whitelist ───
+def get_whitelist():
+    with LOCK:
+        raw = SETTINGS.get("whitelist") or []
+    result = set()
+    if isinstance(raw, (list, tuple)):
+        for x in raw:
+            n = _norm_nick(x)
+            if n:
+                result.add(n)
+    return result
+
+def is_whitelisted(*candidates):
+    if not SETTINGS.get("whitelist_enabled", True):
+        return False
+    wl = get_whitelist()
+    if not wl:
+        return False
+    for cand in candidates:
+        n = _norm_nick(cand)
+        if n and n in wl:
+            return True
+    return False
+
+def _add_to_whitelist(nick, auto=False):
+    n = _norm_nick(nick)
+    if not n:
+        return False
+    with LOCK:
+        cur = list(SETTINGS.get("whitelist") or [])
+        cur_norm = {_norm_nick(x) for x in cur}
+        if n in cur_norm:
+            return True
+        cur.append(n)
+        SETTINGS["whitelist"] = cur
+    save_config()
+    logger.info("whitelist %s: %s", "auto-added" if auto else "added", n)
+    return True
+
+def _remove_from_whitelist(nick):
+    n = _norm_nick(nick)
+    if not n:
+        return False
+    with LOCK:
+        cur = list(SETTINGS.get("whitelist") or [])
+        new = [x for x in cur if _norm_nick(x) != n]
+        if len(new) == len(cur):
+            return False
+        SETTINGS["whitelist"] = new
+    save_config()
+    return True
+
+def _bump_buyer_orders(nick) -> int:
+    n = _norm_nick(nick)
+    if not n:
+        return 0
+    with LOCK:
+        cnt = int(BUYER_ORDERS_COUNT.get(n, 0)) + 1
+        BUYER_ORDERS_COUNT[n] = cnt
+    _save_buyer_counts()
+    return cnt
 
 def _extract_nick_from_message(m):
     for attr in ("author", "username", "chat_name", "interlocutor_username", "buyer_username"):
@@ -629,6 +732,24 @@ def _remove_from_blacklist(nick):
     save_config()
     logger.info("blacklist removed: %s", n)
     return True
+
+def _auto_whitelist_check(c, buyer):
+    if not SETTINGS.get("whitelist_enabled", True):
+        return
+    try:
+        threshold = max(1, int(SETTINGS.get("auto_whitelist_after_orders", 3) or 3))
+    except Exception:
+        threshold = 3
+    cnt = _bump_buyer_orders(buyer)
+    if cnt >= threshold and not is_whitelisted(buyer):
+        if _add_to_whitelist(buyer, auto=True):
+            try:
+                notify_seller_text(c, header="✅ <b>Покупатель в белом списке</b>",
+                    body=(f"👤 Ник: <b>{utils.escape(_safe_for_notify(buyer, 120))}</b>\n"
+                          f"🎉 Успешных заказов: <b>{cnt}</b>\n"
+                          f"💡 Авто-добавление после {threshold} заказов."))
+            except Exception:
+                pass
 
 def _set_chat_role(chat_id, role):
     key = str(chat_id or "")
@@ -1151,7 +1272,7 @@ def notify_update(c, manifest, force=False):
         return False
     kb = K(row_width=1)
     kb.add(B(f"⬆️ Обновить до v{version}", callback_data=f"{CB}:upd:install"))
-    kb.add(B("🔄 Открыть обновления", callback_data=f"{CB}:update"))
+    kb.add(B("🔄 Открыть обновления", callback_data=f"{CB}:m:update"))
     try:
         c.telegram.send_notification(_update_notification_text(manifest), keyboard=kb)
         SETTINGS["last_notified_version"] = version
@@ -1210,6 +1331,7 @@ def save_orders_worker(c):
         try:
             save_orders_state()
             save_history_state()
+            _save_buyer_counts()
         except Exception:
             pass
         if STOP.wait(120):
@@ -1463,10 +1585,8 @@ def _strip_already_answered(text):
     return result
 
 def _strip_promises(text):
-    """Убирает обещания: «я помогу», «продавец свяжется», «передам продавцу» и т.п."""
     if not text: return text
     result = str(text)
-    # режем целые предложения с обещаниями
     sentences = re.split(r"(?<=[.!?])\s+", result)
     kept = []
     for sent in sentences:
@@ -1476,7 +1596,6 @@ def _strip_promises(text):
             continue
         kept.append(sent)
     result = " ".join(kept).strip()
-    # чистим одиночные вхождения, если предложение осталось
     for rx in _PROMISE_PHRASES:
         result = rx.sub("", result)
     result = re.sub(r"\s{2,}", " ", result)
@@ -1858,6 +1977,10 @@ def load_recent_orders(c, limit=10):
             if current and current != "paid": continue
             _set_order_status(oid, chat_id, st)
             if chat_id: _set_chat_role(chat_id, "seller")
+            buyer = _order_buyer_name(o)
+            if buyer and buyer != "покупатель":
+                with LOCK:
+                    ORDER_BUYER[oid] = buyer
             count += 1
         except Exception:
             continue
@@ -1938,7 +2061,6 @@ def _fulfill_paid_order(c, order):
             return
         except Exception:
             pass
-    # нет payment_msg → чистая ручная выдача
     _register_manual_fulfill(order_id, chat_id, buyer_name, title)
     if SETTINGS.get("manual_fulfill_notify", True) and SETTINGS.get("auto_fulfill_notify_seller", True):
         notify_seller_text(c, header="⚠️ <b>ОПЛАЧЕН ЗАКАЗ — РУЧНАЯ ВЫДАЧА</b>",
@@ -1958,6 +2080,10 @@ def _handle_new_paid_order(c, order):
     _set_order_status(order_id, chat_id, "paid")
     if chat_id: _set_chat_role(chat_id, "seller")
     buyer_name = _order_buyer_name(order)
+    if buyer_name:
+        with LOCK:
+            ORDER_BUYER[order_id] = buyer_name
+        save_orders_state()
     if SETTINGS.get("unblacklist_on_payment", True) and buyer_name:
         if is_blacklisted(buyer_name):
             if _remove_from_blacklist(buyer_name):
@@ -2010,6 +2136,13 @@ def _handle_order_confirmed(c, item):
     order_id = _extract_order_id_from_text(text)
     if order_id:
         _mark_order_closed(order_id, chat_id, "confirmed")
+        with LOCK:
+            buyer = ORDER_BUYER.get(order_id, "")
+        if buyer:
+            try:
+                _auto_whitelist_check(c, buyer)
+            except Exception:
+                logger.debug("auto_whitelist_check failed", exc_info=True)
     _trigger_post_order_survey(c, item)
 
 def _handle_order_refunded(c, item):
@@ -2043,7 +2176,15 @@ def _observe_transaction_message(c, item):
                         _set_order_status(oid, chat_id, "paid")
                         if chat_id: _set_chat_role(chat_id, "seller")
                 elif status == "refunded": _mark_order_closed(oid, chat_id, "refunded")
-                elif status == "confirmed": _mark_order_closed(oid, chat_id, "confirmed")
+                elif status == "confirmed":
+                    _mark_order_closed(oid, chat_id, "confirmed")
+                    with LOCK:
+                        buyer = ORDER_BUYER.get(oid, "")
+                    if buyer:
+                        try:
+                            _auto_whitelist_check(c, buyer)
+                        except Exception:
+                            pass
                 return
     except Exception:
         pass
@@ -2131,7 +2272,6 @@ def _extract_message_image(m):
         return ""
 
 def _web_search_lite(query: str, max_results: int = 5) -> list:
-    """DuckDuckGo HTML-поиск без ключа. Возвращает список {title, url, snippet}."""
     try:
         q = str(query or "").strip()[:250]
         if not q: return []
@@ -2153,7 +2293,6 @@ def _web_search_lite(query: str, max_results: int = 5) -> list:
             if total > _WEB_SEARCH_MAX_BYTES: break
             chunks.append(chunk)
         html = b"".join(chunks).decode("utf-8", errors="ignore")
-        # Парсим результаты из HTML (минимум зависимостей)
         results = []
         for m in re.finditer(
             r'<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?'
@@ -2162,7 +2301,6 @@ def _web_search_lite(query: str, max_results: int = 5) -> list:
             url = m.group(1) or ""
             title = re.sub(r"<[^>]+>", "", m.group(2) or "").strip()
             snippet = re.sub(r"<[^>]+>", "", (m.group(3) or m.group(4) or "")).strip()
-            # DDG редирект-обёртка
             um = re.search(r"uddg=([^&]+)", url)
             if um:
                 try:
@@ -2639,7 +2777,6 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
             "- Если не можешь ответить — скажи нейтрально: «Не могу подтвердить это по лоту.»\n")
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
-    # per-lot инструкция
     lot_instr = ""
     if lot:
         with LOCK:
@@ -2657,7 +2794,6 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
     instr_block = ""
     if lot_instr:
         instr_block = f"\n\nИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА (приоритет выше общих правил):\n{lot_instr}\n"
-    # подключённые товары
     attached_block = ""
     if lot:
         with LOCK:
@@ -2740,7 +2876,6 @@ def ask_ai(m, buyer_text, lot):
     if img_used and not (buyer_text or "").strip():
         effective = "Посмотри, пожалуйста, на фото и ответь."
 
-    # 1) Первый запрос без результатов поиска — AI может вернуть [[SEARCH: ...]]
     msgs = [{"role": "system", "content": _sys_prompt(lot, full_chat, chat_id, lang_hint, tone_hint_text)}]
     msgs += history
     if img_used:
@@ -2755,7 +2890,6 @@ def ask_ai(m, buyer_text, lot):
     timeout = SETTINGS["ai_timeout"]
     first = _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens)
 
-    # 2) Если есть маркер поиска — идём в открытые источники
     if SETTINGS.get("web_search_enabled", True):
         msearch = _RE_SEARCH_MARKER.search(first)
         if msearch:
@@ -2767,7 +2901,6 @@ def ask_ai(m, buyer_text, lot):
             results = _web_search_lite(query, max_res)
             if results:
                 search_text = _format_search_results(results)
-                # Второй запрос — с результатами поиска
                 msgs2 = [{"role": "system",
                           "content": _sys_prompt(lot, full_chat, chat_id, lang_hint,
                                                  tone_hint_text, search_results=search_text)}]
@@ -2781,43 +2914,58 @@ def ask_ai(m, buyer_text, lot):
                 try:
                     final = _call_ai_api(base, key, model, msgs2, timeout, temperature, max_tokens)
                     if final:
-                        # убираем маркер поиска, если остался
                         final = _RE_SEARCH_MARKER.sub("", final).strip()
                         return final or first
                 except Exception:
                     pass
-            # не нашли или второй запрос не прошёл — отдаём первый без маркера
             return _RE_SEARCH_MARKER.sub("", first).strip() or first
     return _RE_SEARCH_MARKER.sub("", first).strip() or first
 
 def handle_message(c, m, text):
-    if _is_code_request(text):
-        _instant_blacklist(c, m, "Просьба написать код / программу", text)
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if _is_bad_intent(text):
-        _instant_blacklist(c, m, "Плохой умысел (обман/обход/шантаж/угрозы)", text)
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    try:
-        if _is_chat_goal_bad(getattr(m, "chat_id", "")):
-            _instant_blacklist(c, m, "Плохая цель чата (по истории)", text)
-            _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    except Exception:
-        pass
-    if _auto_blacklist_indecent(c, m, text):
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+    wl = is_whitelisted(
+        _extract_nick_from_message(m),
+        getattr(m, "author", None),
+        getattr(m, "username", None),
+        getattr(m, "chat_name", None),
+        getattr(m, "interlocutor_username", None),
+    )
     if _is_jailbreak_attempt(text):
         _instant_blacklist(c, m, "Джейлбрейк / попытка взлома AI", text)
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if _track_suspicious(c, m, text):
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if is_offtopic(text):
-        _instant_blacklist(c, m, "Оффтоп (не по теме товара)", text)
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+        return
+    if _auto_blacklist_indecent(c, m, text):
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+        return
     violation = classify_policy_violation(text)
     if violation:
         _instant_blacklist(c, m, f"Нарушение правил: {violation}", text)
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if handle_deterministic(c, m, text): return
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+        return
+    if not wl:
+        if _is_code_request(text):
+            _instant_blacklist(c, m, "Просьба написать код / программу", text)
+            _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+            return
+        if _is_bad_intent(text):
+            _instant_blacklist(c, m, "Плохой умысел (обман/обход/шантаж/угрозы)", text)
+            _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+            return
+        try:
+            if _is_chat_goal_bad(getattr(m, "chat_id", "")):
+                _instant_blacklist(c, m, "Плохая цель чата (по истории)", text)
+                _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+                return
+        except Exception:
+            pass
+        if _track_suspicious(c, m, text):
+            _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+            return
+        if is_offtopic(text):
+            _instant_blacklist(c, m, "Оффтоп (не по теме товара)", text)
+            _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+            return
+    if handle_deterministic(c, m, text):
+        return
     lot = _get_lot(c, m, text)
     try:
         answer = ask_ai(m, text, lot)
@@ -2825,13 +2973,17 @@ def handle_message(c, m, text):
         logger.warning("AI fail: %s: %s", type(e).__name__, e)
         _say(c, m, str(SETTINGS["unknown_reply"]), notify=True,
             notify_header="🆘 <b>AI-провайдер не ответил</b>",
-            reason="API недоступен", buyer_text=text); return
+            reason="API недоступен", buyer_text=text)
+        return
     if _is_forbidden_photo_response(answer, text):
-        _instant_blacklist(c, m, "Запрещённое фото или отказ AI от описания", answer)
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if is_offtopic(answer):
+        if not wl:
+            _instant_blacklist(c, m, "Запрещённое фото или отказ AI от описания", answer)
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+        return
+    if is_offtopic(answer) and not wl:
         _instant_blacklist(c, m, "AI ответил оффтопом", text)
-        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False)
+        return
     uncertain = is_uncertain_answer(answer)
     header = ""; reason = ""
     if uncertain:
@@ -2846,7 +2998,6 @@ def handle_message(c, m, text):
             header = "🆘 <b>AI упомянул скидку/бонус</b>"
             reason = "AI ответил про скидку/бонус"
     notify = bool((uncertain or extra_trigger) and SETTINGS.get("confidence_notify", True))
-    # smart-notify: пинаем продавца только когда его явно зовут / тема проблемная
     if notify and SETTINGS.get("notify_only_when_called", True):
         buyer_calls = bool(_RE_CALL_SELLER.search(text or ""))
         problem_topic = bool(re.search(
@@ -2971,102 +3122,36 @@ def init_telegram(cardinal):
         with LOCK:
             n_chats = len(HISTORY)
             n_msgs = sum(len(h) for h in HISTORY.values())
-            n_view = sum(1 for _, v in VIEWING_CACHE.values() if v and getattr(v, "is_viewing_lot", False))
             n_status = len(ORDER_STATUS)
+            n_manual = len(MANUAL_FULFILL_QUEUE)
             n_role_s = sum(1 for r in CHAT_ROLE.values() if r == "seller")
             n_role_b = sum(1 for r in CHAT_ROLE.values() if r == "buyer")
-            n_instr = len(SETTINGS.get("lot_instructions") or {})
-            n_items = sum(len(v) for v in (SETTINGS.get("lot_attached_items") or {}).values() if isinstance(v, list))
-            n_manual = len(MANUAL_FULFILL_QUEUE)
-        wm = str(SETTINGS.get("watermark_text") or "").strip()
-        head = f"🤖 <b>{NAME} v{VERSION}</b>\n\nАвтор: <b>{CREDITS}</b>\n"
-        head += f"🟢 Автоответ: <b>{utils.bool_to_text(SETTINGS['enabled'])}</b>\n"
-        head += f"💧 Водяной знак: <b>{utils.bool_to_text(SETTINGS.get('watermark', True))}</b>\n"
-        if wm: head += f"     <i>{utils.escape(wm)}</i>\n"
-        head += f"🔔 Уведомления: <b>{utils.bool_to_text(SETTINGS.get('seller_notify', True))}</b> "
-        head += f"· только-при-зове: <b>{utils.bool_to_text(SETTINGS.get('notify_only_when_called', True))}</b>\n"
-        head += f"📌 Заказов: <b>{n_status}</b> · ⚠️ ручных в очереди: <b>{n_manual}</b>\n"
-        head += f"⚡ Автовыдача: <b>{utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}</b> · <b>{SETTINGS.get('auto_fulfill_delay_sec', 3)}с</b>\n"
-        head += f"📊 Опрос: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b> · "
-        head += f"🌍 Язык: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b>\n"
-        head += f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
-        head += f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
-        head += f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'не задан'}</b>\n"
-        head += f"🔍 Web-поиск: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b>\n"
-        head += f"📝 Инструкций: <b>{n_instr}</b> · 📦 Товаров-на-лот: <b>{n_items}</b>\n"
-        head += f"🖼 Vision лота: <b>{utils.bool_to_text(SETTINGS.get('lot_images_vision', True))}</b>\n"
-        head += f"🛍 Лотов: <b>{len(LOTS)}</b> · 👀 Смотрят: <b>{n_view}</b>\n"
+        head = f"🤖 <b>{NAME} v{VERSION}</b>\n"
+        head += f"Автор: <b>{CREDITS}</b>\n\n"
+        head += f"🟢 Автоответ: <b>{utils.bool_to_text(SETTINGS['enabled'])}</b> · "
+        head += f"🔔 Уведомл: <b>{utils.bool_to_text(SETTINGS.get('seller_notify', True))}</b>\n"
+        head += f"🌐 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or '—'))}</code> · "
+        head += f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'нет'}</b>\n"
+        head += f"🛍 Лотов: <b>{len(LOTS)}</b> · 📌 Заказов: <b>{n_status}</b> · ⚠️ ручных: <b>{n_manual}</b>\n"
         head += f"💬 Память: <b>{n_chats}</b> чатов / <b>{n_msgs}</b> сообщений\n"
-        bl_count = len(get_blacklist())
-        head += f"🚫 ЧС: <b>{bl_count}</b> · авто-разбан: <b>{utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}</b>\n"
-        head += (f"🎭 Роли: 🏪 <b>{n_role_s}</b> · 🛒 <b>{n_role_b}</b> · "
-                 f"режим: <b>{utils.escape(_role_ru(SETTINGS.get('default_chat_role')))}</b>\n")
-        head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>"
+        head += f"🎭 Роли: 🏪 <b>{n_role_s}</b> · 🛒 <b>{n_role_b}</b>\n"
+        head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>\n\n"
+        head += "<i>Выберите раздел ↓</i>"
         return head
 
     def main_kb():
         kb = K(row_width=2)
-        kb.row(B(f"Автоответ {utils.bool_to_text(SETTINGS['enabled'])}", callback_data=f"{CB}:tog"),
+        kb.row(B(f"🟢 Автоответ {utils.bool_to_text(SETTINGS['enabled'])}", callback_data=f"{CB}:tog"),
                B(f"🔔 Уведомл. {utils.bool_to_text(SETTINGS.get('seller_notify', True))}", callback_data=f"{CB}:notify"))
-        kb.row(B(f"💧 Знак {utils.bool_to_text(SETTINGS.get('watermark', True))}", callback_data=f"{CB}:wm"),
-               B("✏️ Текст знака", callback_data=f"{CB}:wmtext"))
-        kb.row(B("⏱ Cooldown уведомл.", callback_data=f"{CB}:cooldown"),
-               B("🧪 Уведомить сейчас", callback_data=f"{CB}:notify_test"))
-        kb.row(B("🌐 API URL", callback_data=f"{CB}:url"), B("🔑 API key", callback_data=f"{CB}:key"))
-        kb.row(B("🧠 Модель", callback_data=f"{CB}:model"), B("📝 Промпт", callback_data=f"{CB}:prompt"))
-        kb.row(B("🏪 Продавец", callback_data=f"{CB}:seller"), B("⏱ Timeout", callback_data=f"{CB}:timeout"))
-        kb.row(B("📏 Бюджет истории", callback_data=f"{CB}:budget"), B("📋 Логи чатов", callback_data=f"{CB}:chats"))
-        kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
-               B("📜 Bootstrap ист.", callback_data=f"{CB}:bootstrap"))
-        kb.row(B(f"🙏 Спасибо {utils.bool_to_text(SETTINGS.get('auto_thank_after_payment', True))}",
-                 callback_data=f"{CB}:thank"),
-               B("✏️ Текст благодарности", callback_data=f"{CB}:thanktext"))
-        kb.row(B(f"🛒 Автовыдача {utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}",
-                 callback_data=f"{CB}:autofulfill"),
-               B(f"⚠️ Ручная выдача {utils.bool_to_text(SETTINGS.get('manual_fulfill_notify', True))}",
-                 callback_data=f"{CB}:tog:manual"))
-        kb.row(B(f"📊 Опрос {utils.bool_to_text(SETTINGS.get('post_order_survey', True))}", callback_data=f"{CB}:survey"),
-               B("✏️ Текст опроса", callback_data=f"{CB}:surveytext"))
-        kb.add(B(f"⏱ Задержка выдачи: {SETTINGS.get('auto_fulfill_delay_sec', 3)}с", callback_data=f"{CB}:autofulfilldelay"))
-        kb.add(B("🗑 Сбросить статусы заказов", callback_data=f"{CB}:resetstatus"))
-        bl_n = len(get_blacklist())
-        kb.row(B(f"🚫 Чёрный список ({bl_n})", callback_data=f"{CB}:bl"),
-               B(f"🚫 Вкл/Выкл {utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}",
-                 callback_data=f"{CB}:bl_toggle"))
-        kb.row(B(f"♻️ Разбан при оплате {utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}",
-                 callback_data=f"{CB}:unbl_onpay"),
-               B(f"🎭 Роль: {_role_ru(SETTINGS.get('default_chat_role'))[:14]}",
-                 callback_data=f"{CB}:role_default"))
-        kb.row(B(f"🎭 Детект роли {utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}",
-                 callback_data=f"{CB}:role_toggle"),
-               B("🎭 Назначить вручную", callback_data=f"{CB}:role_set_chat"))
-        kb.add(B("🧹 Сбросить роли чатов", callback_data=f"{CB}:roles_reset"))
-        kb.row(B(f"📝 Инструкц. лотов ({len(SETTINGS.get('lot_instructions') or {})})",
-                 callback_data=f"{CB}:lins:list"),
-               B("➕ Добавить", callback_data=f"{CB}:lins:add"))
-        kb.row(B("🗑 Удалить инструкцию", callback_data=f"{CB}:lins:del"),
-               B("📦 Товары на лот", callback_data=f"{CB}:litem:list"))
-        kb.row(B("➕ Подключить товар", callback_data=f"{CB}:litem:add"),
-               B("🗑 Удалить товар", callback_data=f"{CB}:litem:del"))
-        kb.row(B(f"🔔 Только-при-зове {utils.bool_to_text(SETTINGS.get('notify_only_when_called', True))}",
-                 callback_data=f"{CB}:tog:called"),
-               B(f"🖼 Vision лота {utils.bool_to_text(SETTINGS.get('lot_images_vision', True))}",
-                 callback_data=f"{CB}:tog:lotvision"))
-        kb.row(B(f"🔍 Web-поиск {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}",
-                 callback_data=f"{CB}:tog:websearch"),
-               B(f"🔢 Результатов: {SETTINGS.get('web_search_max_results', 5)}",
-                 callback_data=f"{CB}:cycle:webres"))
-        kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"), B("🧪 Тест API", callback_data=f"{CB}:test"))
-        kb.add(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"))
-        kb.row(B(f"🌍 Язык {utils.bool_to_text(SETTINGS.get('match_language', True))}", callback_data=f"{CB}:lang"),
-               B(f"🧊 Тон {utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}", callback_data=f"{CB}:tone"))
-        kb.row(B(f"🚫 Без обещаний {utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}",
-                 callback_data=f"{CB}:nopromise"),
-               B(f"🔔 Неувер. {utils.bool_to_text(SETTINGS.get('confidence_notify', True))}",
-                 callback_data=f"{CB}:confnotify"))
-        kb.row(B(f"🔄 Обновления: {update_status_line()[:24]}", callback_data=f"{CB}:update"),
-               B("⚙️ Автообновл.", callback_data=f"{CB}:updcfg"))
-        kb.add(B("🗑 Сбросить всю память", callback_data=f"{CB}:clear_history"))
+        kb.row(B("🌐 API и модель", callback_data=f"{CB}:m:api"),
+               B("📝 Промпт и ответы", callback_data=f"{CB}:m:replies"))
+        kb.row(B("🛒 Заказы и выдача", callback_data=f"{CB}:m:orders"),
+               B("🏷 Лоты и товары", callback_data=f"{CB}:m:lots"))
+        kb.row(B("🎭 Роли чатов", callback_data=f"{CB}:m:roles"),
+               B(f"🚫 ЧС / ✅ WL ({len(get_blacklist())}/{len(get_whitelist())})",
+                 callback_data=f"{CB}:m:bl"))
+        kb.row(B(f"🔄 Обновления: {update_status_line()[:20]}", callback_data=f"{CB}:m:update"),
+               B("⚙️ Прочее", callback_data=f"{CB}:m:misc"))
         kb.add(B("◀️ Назад", callback_data=f"{CBT.EDIT_PLUGIN}:{UUID}:0"))
         return kb
 
@@ -3077,10 +3162,8 @@ def init_telegram(cardinal):
         except Exception:
             pass
 
-    def show_text(call, text, back_cb=f"{CB}:main", kb_builder=None):
-        kb = K().add(B("◀️ Назад", callback_data=back_cb))
-        if kb_builder:
-            kb = kb_builder()
+    def show_text(call, text, back_cb=f"{CB}:main", kb_override=None):
+        kb = kb_override if kb_override else K().add(B("◀️ Назад", callback_data=back_cb))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
             bot.answer_callback_query(call.id)
@@ -3091,32 +3174,246 @@ def init_telegram(cardinal):
             except Exception:
                 pass
 
+    # ─── Подменю: API ───
+    def show_api(call):
+        text = (
+            f"🌐 <b>API и модель</b>\n\n"
+            f"🌐 URL: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
+            f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'не задан'}</b>\n"
+            f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
+            f"⏱ Timeout: <b>{SETTINGS.get('ai_timeout', 120)} сек</b>\n"
+            f"📏 Бюджет истории: <b>{SETTINGS.get('history_char_budget', 12000)}</b>\n"
+            f"🌡 Temperature: <b>{SETTINGS.get('temperature', 0.25)}</b>"
+        )
+        kb = K(row_width=2)
+        kb.row(B("🌐 URL", callback_data=f"{CB}:url"), B("🔑 API key", callback_data=f"{CB}:key"))
+        kb.row(B("🧠 Модель", callback_data=f"{CB}:model"), B("⏱ Timeout", callback_data=f"{CB}:timeout"))
+        kb.row(B("📏 Бюджет истории", callback_data=f"{CB}:budget"),
+               B("🧪 Тест API", callback_data=f"{CB}:test"))
+        kb.add(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"))
+        kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
+    # ─── Подменю: Промпт и ответы ───
+    def show_replies(call):
+        text = (
+            f"📝 <b>Промпт и ответы</b>\n\n"
+            f"💧 Водяной знак: <b>{utils.bool_to_text(SETTINGS.get('watermark', True))}</b>\n"
+            f"     <i>{utils.escape(str(SETTINGS.get('watermark_text') or '—'))}</i>\n"
+            f"🌍 Язык покупателя: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b>\n"
+            f"🧊 Нейтральный тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
+            f"🚫 Без обещаний: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b>\n"
+            f"🔔 Уведомл. о неуверенных: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
+            f"🔍 Web-поиск: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · "
+            f"<b>{SETTINGS.get('web_search_max_results', 5)}</b> рез."
+        )
+        kb = K(row_width=2)
+        kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
+        kb.add(B("🏪 Данные о продавце", callback_data=f"{CB}:seller"))
+        kb.row(B(f"💧 Знак {utils.bool_to_text(SETTINGS.get('watermark', True))}", callback_data=f"{CB}:wm"),
+               B("✏️ Текст знака", callback_data=f"{CB}:wmtext"))
+        kb.row(B(f"🌍 Язык {utils.bool_to_text(SETTINGS.get('match_language', True))}", callback_data=f"{CB}:lang"),
+               B(f"🧊 Тон {utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}", callback_data=f"{CB}:tone"))
+        kb.row(B(f"🚫 Без обещаний {utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}",
+                 callback_data=f"{CB}:nopromise"),
+               B(f"🔔 Неувер. {utils.bool_to_text(SETTINGS.get('confidence_notify', True))}",
+                 callback_data=f"{CB}:confnotify"))
+        kb.row(B(f"🔍 Web-поиск {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}",
+                 callback_data=f"{CB}:tog:websearch"),
+               B(f"🔢 Результатов: {SETTINGS.get('web_search_max_results', 5)}",
+                 callback_data=f"{CB}:cycle:webres"))
+        kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
+    # ─── Подменю: Заказы ───
+    def show_orders_menu(call):
+        with LOCK:
+            n_manual = len(MANUAL_FULFILL_QUEUE)
+        text = (
+            f"🛒 <b>Заказы и выдача</b>\n\n"
+            f"⚡ Автовыдача: <b>{utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}</b> "
+            f"(задержка <b>{SETTINGS.get('auto_fulfill_delay_sec', 3)}с</b>)\n"
+            f"⚠️ Ручная выдача: <b>{utils.bool_to_text(SETTINGS.get('manual_fulfill_notify', True))}</b> "
+            f"· очередь: <b>{n_manual}</b>\n"
+            f"🔔 Уведомл. о заказе: <b>{utils.bool_to_text(SETTINGS.get('auto_fulfill_notify_seller', True))}</b>\n"
+            f"🔔 Только-при-зове: <b>{utils.bool_to_text(SETTINGS.get('notify_only_when_called', True))}</b> · "
+            f"cooldown: <b>{SETTINGS.get('seller_notify_cooldown', 5)} мин</b>\n"
+            f"🙏 Благодарность: <b>{utils.bool_to_text(SETTINGS.get('auto_thank_after_payment', True))}</b>\n"
+            f"📊 Опрос после заказа: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>"
+        )
+        kb = K(row_width=2)
+        kb.row(B(f"🛒 Автовыдача {utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}",
+                 callback_data=f"{CB}:autofulfill"),
+               B(f"⚠️ Ручная {utils.bool_to_text(SETTINGS.get('manual_fulfill_notify', True))}",
+                 callback_data=f"{CB}:tog:manual"))
+        kb.row(B(f"⏱ Задержка: {SETTINGS.get('auto_fulfill_delay_sec', 3)}с",
+                 callback_data=f"{CB}:autofulfilldelay"),
+               B(f"🔔 О заказе {utils.bool_to_text(SETTINGS.get('auto_fulfill_notify_seller', True))}",
+                 callback_data=f"{CB}:autofulfillnotify"))
+        kb.row(B(f"🔔 Только-при-зове {utils.bool_to_text(SETTINGS.get('notify_only_when_called', True))}",
+                 callback_data=f"{CB}:tog:called"),
+               B("⏱ Cooldown", callback_data=f"{CB}:cooldown"))
+        kb.row(B(f"🙏 Спасибо {utils.bool_to_text(SETTINGS.get('auto_thank_after_payment', True))}",
+                 callback_data=f"{CB}:thank"),
+               B("✏️ Текст благодарности", callback_data=f"{CB}:thanktext"))
+        kb.row(B(f"📊 Опрос {utils.bool_to_text(SETTINGS.get('post_order_survey', True))}",
+                 callback_data=f"{CB}:survey"),
+               B("✏️ Текст опроса", callback_data=f"{CB}:surveytext"))
+        kb.add(B("🗑 Сбросить статусы заказов", callback_data=f"{CB}:resetstatus"))
+        kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
+    # ─── Подменю: Лоты ───
+    def show_lots_menu(call):
+        with LOCK:
+            n_instr = len(SETTINGS.get("lot_instructions") or {})
+            n_items = sum(len(v) for v in (SETTINGS.get("lot_attached_items") or {}).values() if isinstance(v, list))
+        text = (
+            f"🏷 <b>Лоты и товары</b>\n\n"
+            f"🛍 Лотов в кэше: <b>{len(LOTS)}</b>\n"
+            f"🔄 Авто-обновление: <b>{SETTINGS.get('lot_refresh_minutes', 30)} мин</b>\n"
+            f"🖼 Vision лота: <b>{utils.bool_to_text(SETTINGS.get('lot_images_vision', True))}</b>\n"
+            f"📝 Инструкций для лотов: <b>{n_instr}</b>\n"
+            f"📦 Товаров/фактов на лоты: <b>{n_items}</b>"
+        )
+        kb = K(row_width=2)
+        kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
+               B(f"🖼 Vision лота {utils.bool_to_text(SETTINGS.get('lot_images_vision', True))}",
+                 callback_data=f"{CB}:tog:lotvision"))
+        kb.row(B(f"📝 Инструкции ({n_instr})", callback_data=f"{CB}:lins:list"),
+               B("➕ Инструкция", callback_data=f"{CB}:lins:add"))
+        kb.row(B("🗑 Удалить инструкцию", callback_data=f"{CB}:lins:del"),
+               B(f"📦 Товары ({n_items})", callback_data=f"{CB}:litem:list"))
+        kb.row(B("➕ Подключить товар", callback_data=f"{CB}:litem:add"),
+               B("🗑 Удалить товар", callback_data=f"{CB}:litem:del"))
+        kb.add(B("📜 Bootstrap истории", callback_data=f"{CB}:bootstrap"))
+        kb.add(B("📋 Логи чатов", callback_data=f"{CB}:chats"))
+        kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
+    # ─── Подменю: Роли ───
+    def show_roles(call):
+        with LOCK:
+            n_role_s = sum(1 for r in CHAT_ROLE.values() if r == "seller")
+            n_role_b = sum(1 for r in CHAT_ROLE.values() if r == "buyer")
+        text = (
+            f"🎭 <b>Роли чатов</b>\n\n"
+            f"🏪 Seller: <b>{n_role_s}</b> · 🛒 Buyer: <b>{n_role_b}</b>\n"
+            f"🎭 Режим по умолчанию: <b>{utils.escape(_role_ru(SETTINGS.get('default_chat_role')))}</b>\n"
+            f"🔍 Авто-детект: <b>{utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}</b>"
+        )
+        kb = K(row_width=2)
+        kb.row(B(f"🎭 Режим: {_role_ru(SETTINGS.get('default_chat_role'))}",
+                 callback_data=f"{CB}:role_default"),
+               B(f"🔍 Детект {utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}",
+                 callback_data=f"{CB}:role_toggle"))
+        kb.add(B("🎭 Назначить вручную", callback_data=f"{CB}:role_set_chat"))
+        kb.add(B("🧹 Сбросить роли чатов", callback_data=f"{CB}:roles_reset"))
+        kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
+    # ─── Подменю: ЧС / WL ───
+    def show_bl_wl(call):
+        bl_n = len(get_blacklist())
+        wl_n = len(get_whitelist())
+        try:
+            thr = int(SETTINGS.get("auto_whitelist_after_orders", 3))
+        except Exception:
+            thr = 3
+        text = (
+            f"🚫 <b>Чёрный / Белый список</b>\n\n"
+            f"🚫 ЧС: <b>{bl_n}</b> ников · вкл: <b>{utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}</b>\n"
+            f"   · авто-блок: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}</b>\n"
+            f"   · авто-разбан при оплате: <b>{utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}</b>\n\n"
+            f"✅ WL: <b>{wl_n}</b> ников · вкл: <b>{utils.bool_to_text(SETTINGS.get('whitelist_enabled', True))}</b>\n"
+            f"   · авто-добавление после <b>{thr}</b> заказов"
+        )
+        kb = K(row_width=2)
+        kb.row(B(f"🚫 Чёрный список ({bl_n})", callback_data=f"{CB}:bl"),
+               B(f"✅ Белый список ({wl_n})", callback_data=f"{CB}:wl"))
+        kb.row(B(f"🚫 ЧС вкл {utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}",
+                 callback_data=f"{CB}:bl_toggle"),
+               B(f"✅ WL вкл {utils.bool_to_text(SETTINGS.get('whitelist_enabled', True))}",
+                 callback_data=f"{CB}:wl_toggle"))
+        kb.row(B(f"♻️ Разбан при оплате {utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}",
+                 callback_data=f"{CB}:unbl_onpay"),
+               B(f"🔢 Порог WL: {thr}", callback_data=f"{CB}:wl:cycle"))
+        kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
+    # ─── Подменю: Прочее ───
+    def show_misc(call):
+        text = (
+            f"⚙️ <b>Прочее</b>\n\n"
+            f"📋 Правила FunPay и стоп-лист — в системном промпте.\n"
+            f"💬 Память диалогов: <b>{len(HISTORY)}</b> чатов\n"
+            f"📌 Заказов в базе: <b>{len(ORDER_STATUS)}</b>\n"
+            f"👥 Счётчиков покупателей: <b>{len(BUYER_ORDERS_COUNT)}</b>"
+        )
+        kb = K(row_width=2)
+        kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"),
+               B("🧪 Уведомить сейчас", callback_data=f"{CB}:notify_test"))
+        kb.add(B("🗑 Сбросить всю память", callback_data=f"{CB}:clear_history"))
+        kb.add(B("🗑 Сбросить счётчики заказов", callback_data=f"{CB}:wipe_counts"))
+        kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
     def toggle(call):
         SETTINGS["enabled"] = not SETTINGS["enabled"]; save_config(); show(call)
     def toggle_wm(call):
-        SETTINGS["watermark"] = not bool(SETTINGS.get("watermark", True)); save_config(); show(call)
+        SETTINGS["watermark"] = not bool(SETTINGS.get("watermark", True)); save_config(); show_replies(call)
     def toggle_notify(call):
         SETTINGS["seller_notify"] = not bool(SETTINGS.get("seller_notify", True)); save_config(); show(call)
     def toggle_bootstrap(call):
-        SETTINGS["bootstrap_history"] = not bool(SETTINGS.get("bootstrap_history", True)); save_config(); show(call)
+        SETTINGS["bootstrap_history"] = not bool(SETTINGS.get("bootstrap_history", True)); save_config(); show_lots_menu(call)
     def toggle_lang(call):
-        SETTINGS["match_language"] = not bool(SETTINGS.get("match_language", True)); save_config(); show(call)
+        SETTINGS["match_language"] = not bool(SETTINGS.get("match_language", True)); save_config(); show_replies(call)
     def toggle_tone(call):
-        SETTINGS["neutral_on_anger"] = not bool(SETTINGS.get("neutral_on_anger", True)); save_config(); show(call)
+        SETTINGS["neutral_on_anger"] = not bool(SETTINGS.get("neutral_on_anger", True)); save_config(); show_replies(call)
     def toggle_nopromise(call):
-        SETTINGS["no_unconfirmed_promises"] = not bool(SETTINGS.get("no_unconfirmed_promises", True)); save_config(); show(call)
+        SETTINGS["no_unconfirmed_promises"] = not bool(SETTINGS.get("no_unconfirmed_promises", True)); save_config(); show_replies(call)
     def toggle_confnotify(call):
-        SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show(call)
+        SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show_replies(call)
     def toggle_thank(call):
-        SETTINGS["auto_thank_after_payment"] = not bool(SETTINGS.get("auto_thank_after_payment", True)); save_config(); show(call)
+        SETTINGS["auto_thank_after_payment"] = not bool(SETTINGS.get("auto_thank_after_payment", True)); save_config(); show_orders_menu(call)
     def toggle_autofulfill(call):
-        SETTINGS["auto_fulfill_paid_orders"] = not bool(SETTINGS.get("auto_fulfill_paid_orders", False)); save_config(); show(call)
+        SETTINGS["auto_fulfill_paid_orders"] = not bool(SETTINGS.get("auto_fulfill_paid_orders", False)); save_config(); show_orders_menu(call)
+    def toggle_autofulfill_notify(call):
+        SETTINGS["auto_fulfill_notify_seller"] = not bool(SETTINGS.get("auto_fulfill_notify_seller", True)); save_config(); show_orders_menu(call)
     def toggle_survey(call):
-        SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True)); save_config(); show(call)
+        SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True)); save_config(); show_orders_menu(call)
     def toggle_unbl_onpay(call):
-        SETTINGS["unblacklist_on_payment"] = not bool(SETTINGS.get("unblacklist_on_payment", True)); save_config(); show(call)
+        SETTINGS["unblacklist_on_payment"] = not bool(SETTINGS.get("unblacklist_on_payment", True)); save_config(); show_bl_wl(call)
     def toggle_role_detection(call):
-        SETTINGS["role_detection_enabled"] = not bool(SETTINGS.get("role_detection_enabled", True)); save_config(); show(call)
+        SETTINGS["role_detection_enabled"] = not bool(SETTINGS.get("role_detection_enabled", True)); save_config(); show_roles(call)
     def cycle_role_default(call):
         cur = str(SETTINGS.get("default_chat_role") or "auto").lower()
         order = ["auto", "seller", "buyer"]
@@ -3124,29 +3421,153 @@ def init_telegram(cardinal):
         SETTINGS["default_chat_role"] = nxt; save_config()
         try: bot.answer_callback_query(call.id, f"Режим: {_role_ru(nxt)}")
         except Exception: pass
-        show(call)
+        show_roles(call)
     def reset_roles(call):
         with LOCK: CHAT_ROLE.clear()
         save_orders_state()
         try: bot.answer_callback_query(call.id, "🧹 Роли сброшены")
         except Exception: pass
-        show(call)
+        show_roles(call)
     def toggle_called(call):
         SETTINGS["notify_only_when_called"] = not bool(SETTINGS.get("notify_only_when_called", True))
-        save_config(); show(call)
+        save_config(); show_orders_menu(call)
     def toggle_lotvision(call):
         SETTINGS["lot_images_vision"] = not bool(SETTINGS.get("lot_images_vision", True))
-        save_config(); show(call)
+        save_config(); show_lots_menu(call)
     def toggle_manual(call):
         SETTINGS["manual_fulfill_notify"] = not bool(SETTINGS.get("manual_fulfill_notify", True))
-        save_config(); show(call)
+        save_config(); show_orders_menu(call)
     def toggle_websearch(call):
         SETTINGS["web_search_enabled"] = not bool(SETTINGS.get("web_search_enabled", True))
-        save_config(); show(call)
+        save_config(); show_replies(call)
     def cycle_webres(call):
         cur = int(SETTINGS.get("web_search_max_results", 5))
         SETTINGS["web_search_max_results"] = {3: 5, 5: 8, 8: 3}.get(cur, 5)
-        save_config(); show(call)
+        save_config(); show_replies(call)
+
+    # ─── Whitelist UI ───
+    def show_whitelist(call):
+        with LOCK:
+            raw = list(SETTINGS.get("whitelist") or [])
+        try:
+            thr = int(SETTINGS.get("auto_whitelist_after_orders", 3))
+        except Exception:
+            thr = 3
+        lines = ["✅ <b>Белый список покупателей</b>", "",
+            f"Статус: <b>{utils.bool_to_text(SETTINGS.get('whitelist_enabled', True))}</b>",
+            f"Авто-добавление после <b>{thr}</b> подтверждённых заказов",
+            f"Всего: <b>{len(raw)}</b>", ""]
+        if raw:
+            for i, n in enumerate(sorted(raw, key=lambda x: str(x).lower()), 1):
+                cnt = BUYER_ORDERS_COUNT.get(_norm_nick(n), 0)
+                lines.append(f"{i}. <code>{utils.escape(str(n))}</code> · заказов: <b>{cnt}</b>")
+        else:
+            lines.append("<i>Список пуст.</i>")
+        kb = K(row_width=2)
+        kb.row(B("➕ Добавить", callback_data=f"{CB}:wl_add"),
+               B("➖ Удалить", callback_data=f"{CB}:wl_del"))
+        kb.row(B("🗑 Очистить", callback_data=f"{CB}:wl_clear"),
+               B(f"✅ Вкл/Выкл {utils.bool_to_text(SETTINGS.get('whitelist_enabled', True))}",
+                 callback_data=f"{CB}:wl_toggle"))
+        kb.add(B(f"🔢 Порог авто-добавления: {thr}", callback_data=f"{CB}:wl:cycle"))
+        kb.add(B("◀️ Назад", callback_data=f"{CB}:m:bl"))
+        try:
+            bot.edit_message_text("\n".join(lines), call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
+    def wl_toggle(call):
+        SETTINGS["whitelist_enabled"] = not bool(SETTINGS.get("whitelist_enabled", True))
+        save_config()
+        try: bot.answer_callback_query(call.id, f"WL: {'вкл' if SETTINGS['whitelist_enabled'] else 'выкл'}")
+        except Exception: pass
+        show_whitelist(call)
+
+    def wl_cycle(call):
+        cur = int(SETTINGS.get("auto_whitelist_after_orders", 3))
+        SETTINGS["auto_whitelist_after_orders"] = {1: 3, 3: 5, 5: 10, 10: 1}.get(cur, 3)
+        save_config()
+        try: bot.answer_callback_query(call.id, f"Порог: {SETTINGS['auto_whitelist_after_orders']}")
+        except Exception: pass
+        show_whitelist(call)
+
+    def ask_wl_add(call):
+        msg = bot.send_message(call.message.chat.id,
+            "Пришлите ники через запятую/пробел/перенос для белого списка.",
+            reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_WHITELIST)
+        try: bot.answer_callback_query(call.id)
+        except Exception: pass
+
+    def set_wl_add(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        raw = (m.text or "").replace(",", " ").replace(";", " ").replace("\n", " ")
+        parts = [_norm_nick(p) for p in raw.split() if p.strip()]
+        nicks = [n for n in parts if n and len(n) <= 64]
+        if not nicks:
+            bot.reply_to(m, "❌ Не распознал.",
+                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:wl"))); return
+        with LOCK:
+            cur = list(SETTINGS.get("whitelist") or [])
+            cur_norm = {_norm_nick(x) for x in cur}
+            added = []
+            for n in nicks:
+                if n in cur_norm: continue
+                cur.append(n); cur_norm.add(n); added.append(n)
+            SETTINGS["whitelist"] = cur
+        save_config()
+        body = (f"✅ Добавлено: <b>{len(added)}</b>\n\n"
+                + "\n".join(f"• <code>{utils.escape(x)}</code>" for x in added)) if added else "ℹ️ Все были."
+        bot.reply_to(m, body, reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:wl")))
+
+    def ask_wl_del(call):
+        msg = bot.send_message(call.message.chat.id,
+            "Пришлите ники для удаления. <code>all</code> — очистит всё.",
+            reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_WHITELIST + "_del")
+        try: bot.answer_callback_query(call.id)
+        except Exception: pass
+
+    def set_wl_del(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        raw = (m.text or "").strip()
+        if raw.lower() in ("all", "все", "всё", "clear", "очистить"):
+            with LOCK: SETTINGS["whitelist"] = []
+            save_config()
+            bot.reply_to(m, "🗑 Очищено.",
+                reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:wl"))); return
+        raw = raw.replace(",", " ").replace(";", " ").replace("\n", " ")
+        targets = {_norm_nick(p) for p in raw.split() if p.strip()}
+        if not targets:
+            bot.reply_to(m, "❌ Не распознал.",
+                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:wl"))); return
+        with LOCK:
+            cur = list(SETTINGS.get("whitelist") or [])
+            removed, keep = [], []
+            for x in cur:
+                if _norm_nick(x) in targets: removed.append(x)
+                else: keep.append(x)
+            SETTINGS["whitelist"] = keep
+        save_config()
+        body = (f"🗑 Удалено: <b>{len(removed)}</b>") if removed else "ℹ️ Не найдено."
+        bot.reply_to(m, body, reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:wl")))
+
+    def wl_clear(call):
+        with LOCK: SETTINGS["whitelist"] = []
+        save_config()
+        try: bot.answer_callback_query(call.id, "🗑 Очищено")
+        except Exception: pass
+        show_whitelist(call)
+
+    def wipe_counts(call):
+        global BUYER_ORDERS_COUNT
+        with LOCK:
+            BUYER_ORDERS_COUNT.clear()
+        _save_buyer_counts()
+        try: bot.answer_callback_query(call.id, "🗑 Счётчики сброшены")
+        except Exception: pass
+        show_misc(call)
 
     def ask_thank_text(call):
         msg = bot.send_message(call.message.chat.id, "Пришлите текст благодарности после оплаты:", reply_markup=CLEAR_STATE_BTN())
@@ -3155,7 +3576,7 @@ def init_telegram(cardinal):
     def set_thank_text(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         SETTINGS["auto_thank_text"] = (m.text or "").strip(); save_config()
-        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:orders")))
     def ask_af_delay(call):
         msg = bot.send_message(call.message.chat.id, "Задержка перед отправкой payment_msg (0–60):", reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_AF_DELAY)
@@ -3168,7 +3589,7 @@ def init_telegram(cardinal):
         except Exception:
             bot.reply_to(m, "❌ Введите число 0–60."); return
         SETTINGS["auto_fulfill_delay_sec"] = v; save_config()
-        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:orders")))
     def ask_survey_text(call):
         msg = bot.send_message(call.message.chat.id, "Пришлите новый текст опроса после заказа:", reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_SURVEY_TEXT)
@@ -3176,7 +3597,7 @@ def init_telegram(cardinal):
     def set_survey_text(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         SETTINGS["post_order_survey_text"] = (m.text or "").strip(); save_config()
-        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:orders")))
     def reset_statuses(call):
         with LOCK:
             ORDER_STATUS.clear(); CHAT_ORDERS.clear()
@@ -3186,7 +3607,7 @@ def init_telegram(cardinal):
         except Exception: pass
         try: bot.answer_callback_query(call.id, "✅ Статусы сброшены")
         except Exception: pass
-        show(call)
+        show_orders_menu(call)
     def clear_history(call):
         with LOCK:
             for chat_id in list(HISTORY.keys()):
@@ -3198,7 +3619,7 @@ def init_telegram(cardinal):
         except Exception: pass
         try: bot.answer_callback_query(call.id, "✅ Память сброшена")
         except Exception: pass
-        show(call)
+        show_misc(call)
     def list_chats(call):
         with LOCK: items = list(HISTORY.items())
         if not items:
@@ -3212,19 +3633,19 @@ def init_telegram(cardinal):
                 role_str = _role_ru(role) if role else "❔"
                 lines.append(f"<code>{utils.escape(str(cid))}</code> — {role_str} · {len(hist)} · 👤{n_u} · 🤖{n_a}")
             text = "\n".join(lines)
-        show_text(call, text)
+        show_text(call, text, back_cb=f"{CB}:m:lots")
     def show_rules(call):
         text = ("📋 <b>Снимок правил FunPay</b>\n"
             "Источник: <a href='https://funpay.com/trade/info'>funpay.com/trade/info</a>\n\n"
             f"<pre>{utils.escape(FUNPAY_RULES_SNAPSHOT[:3500])}</pre>")
-        show_text(call, text)
+        show_text(call, text, back_cb=f"{CB}:m:misc")
     def ask(state, prompt):
         def cb(call):
             msg = bot.send_message(call.message.chat.id, prompt, reply_markup=CLEAR_STATE_BTN())
             tg.set_state(call.message.chat.id, msg.id, call.from_user.id, state)
             bot.answer_callback_query(call.id)
         return cb
-    def make_setter(field, validate=None, transform=None):
+    def make_setter(field, validate=None, transform=None, back_cb=f"{CB}:main"):
         def setter(m):
             tg.clear_state(m.chat.id, m.from_user.id, True)
             v = (m.text or "").strip()
@@ -3232,7 +3653,7 @@ def init_telegram(cardinal):
                 bot.reply_to(m, "❌ Некорректное значение."); return
             SETTINGS[field] = transform(v) if transform else v
             save_config()
-            bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+            bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=back_cb)))
         return setter
 
     def ask_prompt_start(call):
@@ -3240,7 +3661,7 @@ def init_telegram(cardinal):
         kb = K(row_width=1)
         kb.add(B("✅ Готово — сохранить промпт", callback_data=f"{CB}:prompt_done"))
         kb.add(B("🗑 Сбросить буфер", callback_data=f"{CB}:prompt_reset"))
-        kb.add(B("❌ Отмена", callback_data=f"{CB}:main"))
+        kb.add(B("❌ Отмена", callback_data=f"{CB}:m:replies"))
         msg = bot.send_message(call.message.chat.id,
             "📝 <b>Пришлите текст промпта.</b> Можно несколькими сообщениями. Потом ✅ Готово.",
             reply_markup=kb)
@@ -3254,7 +3675,7 @@ def init_telegram(cardinal):
         kb = K(row_width=1)
         kb.add(B(f"✅ Готово ({n_chars} симв.)", callback_data=f"{CB}:prompt_done"))
         kb.add(B("🗑 Сбросить буфер", callback_data=f"{CB}:prompt_reset"))
-        kb.add(B("❌ Отмена", callback_data=f"{CB}:main"))
+        kb.add(B("❌ Отмена", callback_data=f"{CB}:m:replies"))
         try: bot.reply_to(m, f"📥 В буфере: <b>{n_chars}</b> симв.", reply_markup=kb)
         except Exception: pass
     def prompt_done(call):
@@ -3266,7 +3687,7 @@ def init_telegram(cardinal):
         try: tg.clear_state(call.message.chat.id, call.from_user.id, True)
         except Exception: pass
         bot.answer_callback_query(call.id, f"✅ Сохранено ({len(text)} симв.)", show_alert=True)
-        show(call)
+        show_replies(call)
     def prompt_reset(call):
         PROMPT_BUFFER["text"] = ""
         bot.answer_callback_query(call.id, "🗑 Буфер очищен.")
@@ -3305,7 +3726,7 @@ def init_telegram(cardinal):
         kb.add(B(f"🗑 ЧС оффтоп {utils.bool_to_text(SETTINGS.get('auto_blacklist_spam', True))}", callback_data=f"{CB}:bl_spam_toggle"))
         kb.add(B(f"📸 ЧС фото-вопрос {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}", callback_data=f"{CB}:bl_photo_toggle"))
         kb.add(B(f"📷 ЧС фото×3 {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_send', True))}", callback_data=f"{CB}:bl_photo_send_toggle"))
-        kb.add(B("◀️ Назад", callback_data=f"{CB}:main"))
+        kb.add(B("◀️ Назад", callback_data=f"{CB}:m:bl"))
         try:
             bot.edit_message_text("\n".join(lines), call.message.chat.id, call.message.id, reply_markup=kb)
             bot.answer_callback_query(call.id)
@@ -3374,7 +3795,7 @@ def init_telegram(cardinal):
         try: bot.answer_callback_query(call.id, f"ЧС: {'вкл' if SETTINGS['blacklist_enabled'] else 'выкл'}")
         except Exception: pass
         try: show_blacklist(call)
-        except Exception: show(call)
+        except Exception: show_bl_wl(call)
 
     def _mk_toggle(label, key, default=True):
         def fn(call):
@@ -3382,7 +3803,7 @@ def init_telegram(cardinal):
             try: bot.answer_callback_query(call.id, f"{label}: {'вкл' if SETTINGS[key] else 'выкл'}")
             except Exception: pass
             try: show_blacklist(call)
-            except Exception: show(call)
+            except Exception: show_bl_wl(call)
         return fn
 
     blacklist_auto_toggle = _mk_toggle("Авто-блок", "auto_blacklist_enabled", True)
@@ -3448,7 +3869,7 @@ def init_telegram(cardinal):
             data = _safe_json(r, "test_photo")
             ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip() or "(пусто)"
             bot.reply_to(m, f"🖼 <b>Ответ AI:</b>\n\n{utils.escape(ans[:3500])}",
-                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
         except Exception as e:
             bot.reply_to(m, f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}")
     def notify_test(call):
@@ -3464,7 +3885,7 @@ def init_telegram(cardinal):
             cnt = sync_lots(cardinal, enrich=False)
             try:
                 bot.edit_message_text(f"✅ Синхронизировано: {cnt}.", msg.chat.id, msg.id,
-                    reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+                    reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:lots")))
             except Exception: pass
         POOL.submit(job)
 
@@ -3570,24 +3991,24 @@ def init_telegram(cardinal):
         except Exception:
             bot.reply_to(m, "❌ 5–1440."); return
         SETTINGS["update_check_interval_minutes"] = v; save_config()
-        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ К обновлениям", callback_data=f"{CB}:update")))
+        bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ К обновлениям", callback_data=f"{CB}:m:update")))
     def set_wm_text(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         raw = (m.text or "").strip()
         SETTINGS["watermark_text"] = "" if raw == "-" else raw
         save_config()
-        bot.reply_to(m, "✅ Обновлено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+        bot.reply_to(m, "✅ Обновлено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:replies")))
     def set_role_chat(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         val = (m.text or "").strip().lower()
         parts = val.split()
         if len(parts) != 2 or parts[1] not in ("seller", "buyer"):
             bot.reply_to(m, "❌ Формат: <code>chat_id seller|buyer</code>",
-                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main"))); return
+                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:roles"))); return
         chat_id, role = parts[0], parts[1]
         _set_chat_role(chat_id, role)
         bot.reply_to(m, f"✅ Чат <code>{utils.escape(chat_id)}</code> → <b>{utils.escape(role)}</b>.",
-            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:roles")))
     def ask_role_chat(call):
         msg = bot.send_message(call.message.chat.id,
             "Пришлите <code>chat_id seller|buyer</code>.", reply_markup=CLEAR_STATE_BTN())
@@ -3608,7 +4029,7 @@ def init_telegram(cardinal):
                 lines.append(f"· <code>{utils.escape(str(k)[:40])}</code>\n   {utils.escape(str(v)[:180])}")
             if len(instrs) > 20: lines.append(f"\n… и ещё {len(instrs) - 20}")
             text = "\n".join(lines)
-        show_text(call, text)
+        show_text(call, text, back_cb=f"{CB}:m:lots")
     def ask_lot_instr_add(call):
         msg = bot.send_message(call.message.chat.id,
             "Пришлите <code>lot_id|текст</code> или <code>название|текст</code>:",
@@ -3678,7 +4099,7 @@ def init_telegram(cardinal):
                     for it in lst[:5]:
                         lines.append(f"   – {utils.escape(str(it)[:120])}")
             text = "\n".join(lines)
-        show_text(call, text)
+        show_text(call, text, back_cb=f"{CB}:m:lots")
     def ask_lot_item_add(call):
         msg = bot.send_message(call.message.chat.id,
             "Пришлите <code>lot_id|товар</code> или <code>название лота|товар</code>:",
@@ -3734,7 +4155,23 @@ def init_telegram(cardinal):
             else:
                 bot.reply_to(m, "ℹ️ Не найдено.")
 
+    # ─── Регистрация ───
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
+    tg.cbq_handler(show_api, lambda c: c.data == f"{CB}:m:api")
+    tg.cbq_handler(show_replies, lambda c: c.data == f"{CB}:m:replies")
+    tg.cbq_handler(show_orders_menu, lambda c: c.data == f"{CB}:m:orders")
+    tg.cbq_handler(show_lots_menu, lambda c: c.data == f"{CB}:m:lots")
+    tg.cbq_handler(show_roles, lambda c: c.data == f"{CB}:m:roles")
+    tg.cbq_handler(show_bl_wl, lambda c: c.data == f"{CB}:m:bl")
+    tg.cbq_handler(open_updates, lambda c: c.data == f"{CB}:m:update")
+    tg.cbq_handler(show_misc, lambda c: c.data == f"{CB}:m:misc")
+    tg.cbq_handler(show_whitelist, lambda c: c.data == f"{CB}:wl")
+    tg.cbq_handler(wl_toggle, lambda c: c.data == f"{CB}:wl_toggle")
+    tg.cbq_handler(wl_cycle, lambda c: c.data == f"{CB}:wl:cycle")
+    tg.cbq_handler(ask_wl_add, lambda c: c.data == f"{CB}:wl_add")
+    tg.cbq_handler(ask_wl_del, lambda c: c.data == f"{CB}:wl_del")
+    tg.cbq_handler(wl_clear, lambda c: c.data == f"{CB}:wl_clear")
+    tg.cbq_handler(wipe_counts, lambda c: c.data == f"{CB}:wipe_counts")
     tg.cbq_handler(toggle, lambda c: c.data == f"{CB}:tog")
     tg.cbq_handler(toggle_wm, lambda c: c.data == f"{CB}:wm")
     tg.cbq_handler(toggle_notify, lambda c: c.data == f"{CB}:notify")
@@ -3764,7 +4201,6 @@ def init_telegram(cardinal):
     tg.cbq_handler(list_chats, lambda c: c.data == f"{CB}:chats")
     tg.cbq_handler(show_rules, lambda c: c.data == f"{CB}:rules")
     tg.cbq_handler(ask_test_photo, lambda c: c.data == f"{CB}:testphoto")
-    tg.cbq_handler(open_updates, lambda c: c.data in (f"{CB}:update", f"{CB}:updcfg"))
     tg.cbq_handler(update_cb, lambda c: c.data.startswith(f"{CB}:upd:"))
     tg.cbq_handler(ask_prompt_start, lambda c: c.data == f"{CB}:prompt")
     tg.cbq_handler(prompt_done, lambda c: c.data == f"{CB}:prompt_done")
@@ -3790,7 +4226,6 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask_lot_item_add, lambda c: c.data == f"{CB}:litem:add")
     tg.cbq_handler(ask_lot_item_del, lambda c: c.data == f"{CB}:litem:del")
     tg.cbq_handler(ask_role_chat, lambda c: c.data == f"{CB}:role_set_chat")
-
     tg.cbq_handler(ask(ST_URL, "Введите base URL API:"), lambda c: c.data == f"{CB}:url")
     tg.cbq_handler(ask(ST_KEY, "Введите API key:"), lambda c: c.data == f"{CB}:key")
     tg.cbq_handler(ask(ST_MODEL, "Введите ID модели:"), lambda c: c.data == f"{CB}:model")
@@ -3802,16 +4237,23 @@ def init_telegram(cardinal):
     tg.cbq_handler(test_api, lambda c: c.data == f"{CB}:test")
     tg.cbq_handler(refresh_lots, lambda c: c.data == f"{CB}:lots")
 
-    tg.msg_handler(make_setter("api_url"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
-    tg.msg_handler(make_setter("api_key"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
-    tg.msg_handler(make_setter("api_model"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
-    tg.msg_handler(make_setter("seller_info"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
-    tg.msg_handler(make_setter("ai_timeout", validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
+    tg.msg_handler(make_setter("api_url", back_cb=f"{CB}:m:api"),
+        func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
+    tg.msg_handler(make_setter("api_key", back_cb=f"{CB}:m:api"),
+        func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
+    tg.msg_handler(make_setter("api_model", back_cb=f"{CB}:m:api"),
+        func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
+    tg.msg_handler(make_setter("seller_info", back_cb=f"{CB}:m:replies"),
+        func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
+    tg.msg_handler(make_setter("ai_timeout", back_cb=f"{CB}:m:api",
+        validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TIMEOUT))
-    tg.msg_handler(make_setter("history_char_budget", validate=lambda v: v.isdigit() and 2000 <= int(v) <= 40000, transform=int),
+    tg.msg_handler(make_setter("history_char_budget", back_cb=f"{CB}:m:api",
+        validate=lambda v: v.isdigit() and 2000 <= int(v) <= 40000, transform=int),
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BUDGET))
     tg.msg_handler(set_wm_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_WM_TEXT))
-    tg.msg_handler(make_setter("seller_notify_cooldown", validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
+    tg.msg_handler(make_setter("seller_notify_cooldown", back_cb=f"{CB}:m:orders",
+        validate=lambda v: v.isdigit() and 0 <= int(v) <= 60, transform=int),
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_NOTIFY_COOLDOWN))
     tg.msg_handler(set_update_interval, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_UPD_INT))
     tg.msg_handler(set_thank_text, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_THANK_TEXT))
@@ -3820,6 +4262,8 @@ def init_telegram(cardinal):
     tg.msg_handler(prompt_collect, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_PROMPT))
     tg.msg_handler(set_blacklist_add, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BLACKLIST))
     tg.msg_handler(set_blacklist_del, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BLACKLIST + "_del"))
+    tg.msg_handler(set_wl_add, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_WHITELIST))
+    tg.msg_handler(set_wl_del, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_WHITELIST + "_del"))
     tg.msg_handler(set_role_chat, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_ROLE_CHAT))
     tg.msg_handler(set_lot_instr, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_LOT_INSTR))
     tg.msg_handler(set_lot_instr_del, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_LOT_INSTR_DEL))
@@ -3832,6 +4276,7 @@ def init_telegram(cardinal):
 
 def post_init(c):
     if not os.path.exists(CFG_PATH): load_config()
+    _load_buyer_counts()
     load_orders_state()
     load_history_state()
     try:
@@ -3850,6 +4295,8 @@ def on_delete(c, call=None):
     try: save_orders_state()
     except Exception: pass
     try: save_history_state()
+    except Exception: pass
+    try: _save_buyer_counts()
     except Exception: pass
     STOP.set()
     try: POOL.shutdown(wait=False, cancel_futures=True)
