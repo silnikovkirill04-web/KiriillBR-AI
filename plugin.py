@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "5.3.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Vision лотов одним запросом, web-поиск, ЧС+WL."
+VERSION = "5.5.0"
+DESCRIPTION = "AI-помощник продавца FunPay. Точный vision лотов, web-поиск, ЧС+WL, меню по разделам."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -47,6 +47,7 @@ ST_LOT_ITEM = f"{CB}_lotitem"
 ST_LOT_ITEM_DEL = f"{CB}_lotitemdel"
 ST_DIAG_LOT = f"{CB}_diaglot"
 ST_VISION_ONE = f"{CB}_vone"
+ST_MIN_BYTES = f"{CB}_minbytes"
 
 _VISION_MAX_BYTES = 4 * 1024 * 1024
 _VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
@@ -67,30 +68,28 @@ _VISION_PROMPT = (
 )
 
 _VISION_LOT_PROMPT = (
-    "Ты — OCR-ассистент. На изображениях — скриншоты из лота FunPay (игровой аккаунт/товар).\n\n"
-    "ТВОЯ ЗАДАЧА: извлечь ВСЕ видимые ФАКТЫ о товаре. Смотри ВСЕ картинки вместе.\n\n"
-    "★★★ ГЛАВНОЕ ★★★\n"
-    "- НИКОГДА не пиши «не игровой скрин», «не могу распознать», «не удалось».\n"
-    "- Если это меню игры или интерфейс — ОПИШИ что за игра и что видно (уровень, ник, валюта).\n"
-    "- Если это обложка/логотип — так и напиши: «Обложка/логотип игры X».\n"
-    "- Если на картинке видно ЧИСЛО (даже мелкое) — назови его.\n\n"
-    "Что искать:\n"
-    "- Уровень аккаунта (число рядом с аватаром, в углу экрана).\n"
+    "Ты — OCR-ассистент. На изображении — скриншот из лота FunPay (игровой аккаунт/товар).\n\n"
+    "ТВОЯ ЗАДАЧА: извлечь ВСЕ видимые ФАКТЫ о товаре. СТРОГО ПО ФАКТУ, без домыслов.\n\n"
+    "Что искать на скрине:\n"
+    "- Уровень аккаунта (число рядом с аватаром/профилем, часто в углу).\n"
     "- Никнейм, тег, ID.\n"
     "- Ранг, дивизион, звание.\n"
-    "- Игровая валюта: золото, монеты, гемы, голда.\n"
-    "- Игра (Steam, Standoff 2, CS2, Roblox и т.п.).\n"
-    "- Калибровка / звание.\n"
-    "- Инвентарь, скины, предметы.\n"
-    "- Даты регистрации, сроки банов, VAC.\n\n"
-    "ФОРМАТ: список по строкам. Пример:\n"
-    "• Игра: Standoff 2\n"
-    "• Уровень: 18\n"
+    "- Игровая валюта: золото, монеты, гемы, голда (число + название).\n"
+    "- Игры/приложения на скрине (Steam, Standoff, CS, Roblox и т.п.).\n"
+    "- Наличие калибровки/званий в шутерах.\n"
+    "- Инвентарь, скины, предметы (перечисли по названиям).\n"
+    "- Даты регистрации, сроки банов, VAC-статусы.\n"
+    "- Любые другие числа и подписи, важные для товара.\n\n"
+    "ФОРМАТ ОТВЕТА: короткий список по строкам, по одному факту на строку. Пример:\n"
+    "• Уровень: 31\n"
     "• Золото: 0.20\n"
-    "• Ник: добби :}\n"
-    "• Калибровка: не пройдена\n"
-    "Если картинка нечитаема, но видна хотя бы игра — пиши «Игра: X». Хоть что-то, но опиши.\n"
-    "Без вступлений, без эмодзи."
+    "• Игра: Standoff 2\n"
+    "• Калибровка: не пройдена\n\n"
+    "ПРАВИЛА:\n"
+    "- Если факт НЕ виден на скрине — НЕ пиши его вообще.\n"
+    "- НЕ ПРИДУМЫВАЙ уровни, ранги, суммы.\n"
+    "- Если это не скриншот игры — напиши «не игровой скрин».\n"
+    "- Без вступлений, без эмодзи, только список фактов."
 )
 
 DEFAULT_PROMPT = (
@@ -128,7 +127,9 @@ DEFAULT_PROMPT = (
     "- Фото пришло — опиши 2-5 предложений. Текст/чек/номер/сумма — дословно.\n\n"
     "ПОИСК В ОТКРЫТЫХ ИСТОЧНИКАХ:\n"
     "Если покупатель спрашивает что-то о САМОЙ ИГРЕ / ПЛАТФОРМЕ / ПРАВИЛАХ, чего нет в "
-    "ТЕКУЩИЙ ТОВАР / ИНСТРУКЦИЯ / ПОДКЛЮЧЁННЫЕ ТОВАРЫ — поставь В КОНЦЕ ответа маркер:\n"
+    "ТЕКУЩИЙ ТОВАР / ИНСТРУКЦИЯ / ПОДКЛЮЧЁННЫЕ ТОВАРЫ (например: «смогу ли я играть с другом "
+    "на этом аккаунте?», «подходит ли для Steam?», «есть ли бан?»), "
+    "И ЭТО НЕ ФАКТ О ЛОТЕ — поставь В КОНЦЕ ответа маркер:\n"
     "[[SEARCH: короткий поисковый запрос]]\n"
     "Не используй [[SEARCH]] если ответ есть в ТЕКУЩИЙ ТОВАР / ИНСТРУКЦИЯ / ПОДКЛЮЧЁННЫЕ ТОВАРЫ.\n"
     "Не используй [[SEARCH]] для оплаты/заказа/статуса.\n\n"
@@ -166,7 +167,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
 
-DEFAULTS = {"version": 63, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 60, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -189,20 +190,34 @@ DEFAULTS = {"version": 63, "enabled": True, "setup_done": False,
     "update_check_interval_minutes": 30, "auto_update": False,
     "auto_restart_after_update": False, "last_notified_version": "",
     "last_installed_version": "", "pending_restart_version": "",
-    "blacklist": [], "blacklist_enabled": True,
-    "auto_blacklist_enabled": True, "auto_blacklist_spam": True,
-    "auto_blacklist_photo_ask": True, "auto_blacklist_photo_send": True,
-    "auto_blacklist_forbidden_photo": True, "auto_blacklist_indecent": True,
-    "auto_blacklist_code": True, "auto_blacklist_bad_intent": True,
-    "auto_blacklist_bad_goal": True, "unblacklist_on_payment": True,
-    "whitelist": [], "whitelist_enabled": True, "auto_whitelist_after_orders": 3,
-    "role_detection_enabled": True, "default_chat_role": "auto",
+    "blacklist": [],
+    "blacklist_enabled": True,
+    "auto_blacklist_enabled": True,
+    "auto_blacklist_spam": True,
+    "auto_blacklist_photo_ask": True,
+    "auto_blacklist_photo_send": True,
+    "auto_blacklist_forbidden_photo": True,
+    "auto_blacklist_indecent": True,
+    "auto_blacklist_code": True,
+    "auto_blacklist_bad_intent": True,
+    "auto_blacklist_bad_goal": True,
+    "unblacklist_on_payment": True,
+    "whitelist": [],
+    "whitelist_enabled": True,
+    "auto_whitelist_after_orders": 3,
+    "role_detection_enabled": True,
+    "default_chat_role": "auto",
     "buyer_role_prompt": BUYER_ROLE_PROMPT,
-    "lot_instructions": {}, "lot_attached_items": {},
-    "notify_only_when_called": True, "lot_images_vision": True,
-    "manual_fulfill_notify": True, "web_search_enabled": True,
-    "web_search_max_results": 5, "lot_vision_extract": True,
-    "lot_image_min_bytes": 5000, "lot_image_validate_http": True,
+    "lot_instructions": {},
+    "lot_attached_items": {},
+    "notify_only_when_called": True,
+    "lot_images_vision": True,
+    "manual_fulfill_notify": True,
+    "web_search_enabled": True,
+    "web_search_max_results": 5,
+    "lot_vision_extract": True,
+    "lot_image_min_bytes": 5000,
+    "lot_image_validate_http": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -324,6 +339,21 @@ _RE_INDECENT = re.compile(
     r"\bтварь\s+ты\b|\bты\s+тварь\b|\bты\s+лох\b|\bты\s+чмо\b|\bты\s+дебил\b|"
     r"\bиди\s+на\b|\bпош[её]л\s+на\b|\bиди\s+ты\b|\bна\s+хуй\b|\bнах\s+ты\b)", re.I)
 
+_RE_FORBIDDEN_PHOTO = re.compile(
+    r"(?:\[\[(?:NSFW|SHOCK|SCAT|TRASH|TEXT_NSFW|ANATOMY_NSFW)\]\]|"
+    r"\b18\s*\+|\bпорно\w*|\bэротик\w*|\bнагота\b|\bобнаж[её]нн\w*|"
+    r"\bгенитал\w*|\bвагин\w*|\bпенис\w*|\bполов\w*\s+орган\w*|\bинтим\w*|"
+    r"\bрасчлен[её]нк\w*|\bтруп\w*|\bмертв[оы]\w*\s+тел\w*|"
+    r"\bкал\b|\bкакашк\w*|\bговн\w*|\bфекали\w*|\bэкскремент\w*|\bиспражнени\w*|\bнавоз\w*|"
+    r"\bтужит\w*|\bтужащ\w*|\bтужил\w*|\bрвот\w*|\bблевот\w*|"
+    r"\bизвращ\w*|\bвульгарн\w*|\bнепристойн\w*|"
+    r"\bнапомина\w*\s+(?:по\s+форме\s+)?(?:женск|мужск|полов|вагин|влагалищ|пенис|член)|"
+    r"\bпохож\w*\s+на\s+(?:женск|мужск|полов|вагин|пенис|член|генитал)|"
+    r"\bсходств\w*\s+с\s+(?:женск|мужск|полов|вагин|пенис|член|генитал)|"
+    r"\bрот\w*\s+(?:напомина|похож)|"
+    r"\bгуб\w*\s+(?:напомина|похож)|"
+    r"\bхуесос\w*|\bхуесоск\w*|\bдолбо[её]б\w*|\bгандон\w*|\bшлюх\w*|\bбляд\w*)", re.I)
+
 _RE_AI_REFUSAL_PHOTO = re.compile(
     r"(?:не\s+могу\s+(?:помочь|описать|проанализировать|посмотреть|разобрать|"
     r"обработать|предоставить|дать|комментировать|работать)|"
@@ -347,13 +377,6 @@ _RE_AI_REFUSAL_PHOTO = re.compile(
     r"sorry,?\s+i\s+(?:can'?t|cannot|won'?t)|"
     r"inappropriate\s+content)", re.I)
 
-_RE_REAL_NSFW = re.compile(
-    r"\[\[(?:NSFW|SHOCK|SCAT|TRASH|TEXT_NSFW|ANATOMY_NSFW)\]\]|"
-    r"\b18\s*\+|\bпорно\w*|\bпорн\w*|\bобнаж[её]нн\w*|\bгенитал\w*|\bвагин\w*|"
-    r"\bпенис\w*|\bполов\w*\s+орган\w*|\bрасчлен[её]нк\w*|\bтруп\w*|"
-    r"\bкал\b|\bговн\w*|\bфекал\w*|\bэкскремент\w*|\bиспражнени\w*",
-    re.I)
-
 _RE_CALL_SELLER = re.compile(
     r"(?:\bпродав\w*|\bхозяин\w*|\bвладел\w*|\bадмин\w*|\bчеловек\b|\bживой\b|"
     r"\bреальн\w*\s+человек|\bау\b|\bалло\b|\bвы\s+тут\b|\bвы\s+здесь\b|"
@@ -367,11 +390,6 @@ _RE_LOT_SCREEN_ASK = re.compile(
     r"\b(?:посмотр|покаж|глян|скинь|пришл)\w*\s+(?:скрин\w*|фото\w*|картинк\w*)|"
     r"\bв\s+описани\w*\s+(?:скрин\w*|фото\w*|картинк\w*)|"
     r"\b(?:скрин\w*|фото\w*|картинк\w*)\s+(?:из\s+)?лот\w*|"
-    r"\bчто\s+на\s+(?:фото|фотке|картинк\w*|скрин\w*|скриншот\w*|изображени\w*)|"
-    r"\bчто\s+(?:изображено|нарисовано|показано|видно)\b|"
-    r"\bопиш\w*\s+(?:фото|скрин\w*|картинк\w*|изображени\w*|это|всё)|"
-    r"\bрасскаж\w*\s+(?:что\s+на\s+)?(?:фото|скрин\w*|картинк\w*|изображени\w*)|"
-    r"\bпокаж\w*\s+(?:скрин\w*|фото\w*|картинк\w*|изображени\w*)|"
     r"\bкакой\s+уровень\b|\bкакого\s+уровн\w*|\bуровень\s+аккаунт\w*|"
     r"\bсколько\s+часов\b|\bчасов\s+в\s+игр\w*|"
     r"\bкакой\s+ранг\b|\bкакого\s+ранг\w*|\bранг\s+аккаунт\w*|"
@@ -397,16 +415,6 @@ _FUNPAY_UI_IMG = re.compile(
     r"funpay\.com/(?:img|static|css|js|assets|design|templates|fonts)/|"
     r"/loading\.|/loader\.|/spinner\.|/arrow|/chevron|/close\.|/menu\.|/search\."
     r")", re.I
-)
-
-_FUNPAY_GAME_ICON = re.compile(
-    r"/s/file/[a-z0-9]{1,4}/[a-z0-9]{1,4}/[a-z0-9_\-]+\.il[0-9a-z]+\.(?:jpe?g|png|webp|gif|bmp)",
-    re.I
-)
-
-_FUNPAY_LOT_OFFER = re.compile(
-    r"/s/offer/[a-z0-9]{1,4}/[a-z0-9]{1,4}/[a-z0-9_\-]+\.(?:jpe?g|png|webp|gif|bmp)",
-    re.I
 )
 
 _PROMISE_PHRASES = [
@@ -442,7 +450,7 @@ def load_config():
         return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
@@ -450,10 +458,10 @@ def load_config():
                         SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 63:
+        if cv < 60:
             SETTINGS.setdefault("lot_image_min_bytes", 5000)
             SETTINGS.setdefault("lot_image_validate_http", True)
-            SETTINGS["version"] = 63
+            SETTINGS["version"] = 60
             save_config()
     except Exception:
         pass
@@ -515,31 +523,42 @@ def load_orders_state():
         for oid, val in (data.get("order_status") or {}).items():
             try:
                 st, ck, ts = val[0], val[1], float(val[2])
-                if now - ts > _ORDER_CLOSED_TTL: continue
+                if now - ts > _ORDER_CLOSED_TTL:
+                    continue
                 ORDER_STATUS[str(oid)] = (str(st), str(ck), ts)
-            except Exception: continue
+            except Exception:
+                continue
         for ck, lst in (data.get("chat_orders") or {}).items():
-            try: CHAT_ORDERS[str(ck)] = [str(x) for x in list(lst)][-10:]
-            except Exception: continue
+            try:
+                CHAT_ORDERS[str(ck)] = [str(x) for x in list(lst)][-10:]
+            except Exception:
+                continue
         for oid, ts in (data.get("closed_orders") or {}).items():
             try:
                 ts = float(ts)
-                if now - ts <= _ORDER_CLOSED_TTL: CLOSED_ORDERS[str(oid)] = ts
-            except Exception: continue
+                if now - ts <= _ORDER_CLOSED_TTL:
+                    CLOSED_ORDERS[str(oid)] = ts
+            except Exception:
+                continue
         for oid, ts in (data.get("processed_orders") or {}).items():
             try:
                 ts = float(ts)
-                if now - ts <= _ORDER_DEDUP_TTL: PROCESSED_ORDERS[str(oid)] = ts
-            except Exception: continue
+                if now - ts <= _ORDER_DEDUP_TTL:
+                    PROCESSED_ORDERS[str(oid)] = ts
+            except Exception:
+                continue
         for ck, rl in (data.get("chat_role") or {}).items():
-            if str(rl) in ("seller", "buyer"): CHAT_ROLE[str(ck)] = str(rl)
+            if str(rl) in ("seller", "buyer"):
+                CHAT_ROLE[str(ck)] = str(rl)
         for oid, rec in (data.get("manual_queue") or {}).items():
             try:
                 if isinstance(rec, dict) and (now - float(rec.get("ts", 0)) < 30 * 86400):
                     MANUAL_FULFILL_QUEUE[str(oid)] = rec
-            except Exception: continue
+            except Exception:
+                continue
         for oid, nick in (data.get("order_buyer") or {}).items():
-            if str(nick).strip(): ORDER_BUYER[str(oid)] = str(nick)
+            if str(nick).strip():
+                ORDER_BUYER[str(oid)] = str(nick)
     except Exception:
         logger.debug("load_orders_state failed", exc_info=True)
 
@@ -548,7 +567,8 @@ def save_history_state():
         with LOCK:
             data = {"saved_at": time.time(), "chats": {}}
             for cid, hist in HISTORY.items():
-                if hist: data["chats"][str(cid)] = list(hist)[-30:]
+                if hist:
+                    data["chats"][str(cid)] = list(hist)[-30:]
         _atomic_write(HISTORY_PATH, data)
     except Exception:
         logger.debug("save_history_state failed", exc_info=True)
@@ -568,10 +588,12 @@ def load_history_state():
         if saved_at and now - saved_at > 30 * 86400:
             return
         for cid, hist in (data.get("chats") or {}).items():
-            if not isinstance(hist, list): continue
+            if not isinstance(hist, list):
+                continue
             clean = []
             for item in hist[-_HISTORY_HARD_CAP:]:
-                if not isinstance(item, dict): continue
+                if not isinstance(item, dict):
+                    continue
                 rl = str(item.get("role") or "")
                 ct = str(item.get("content") or "")
                 if rl in ("user", "assistant") and ct:
@@ -632,7 +654,8 @@ def is_enabled(c):
 
 def _norm_nick(nick):
     s = str(nick or "").strip().lower()
-    if s.startswith("@"): s = s[1:]
+    if s.startswith("@"):
+        s = s[1:]
     return s.strip()
 
 def get_blacklist():
@@ -646,7 +669,8 @@ def get_blacklist():
     return result
 
 def is_blacklisted(*candidates):
-    if not SETTINGS.get("blacklist_enabled", True): return False
+    if not SETTINGS.get("blacklist_enabled", True):
+        return False
     bl = get_blacklist()
     if not bl: return False
     for cand in candidates:
@@ -665,7 +689,8 @@ def get_whitelist():
     return result
 
 def is_whitelisted(*candidates):
-    if not SETTINGS.get("whitelist_enabled", True): return False
+    if not SETTINGS.get("whitelist_enabled", True):
+        return False
     wl = get_whitelist()
     if not wl: return False
     for cand in candidates:
@@ -680,8 +705,10 @@ def _add_to_whitelist(nick, auto=False):
         cur = list(SETTINGS.get("whitelist") or [])
         cur_norm = {_norm_nick(x) for x in cur}
         if n in cur_norm: return True
-        cur.append(n); SETTINGS["whitelist"] = cur
-    save_config(); return True
+        cur.append(n)
+        SETTINGS["whitelist"] = cur
+    save_config()
+    return True
 
 def _remove_from_whitelist(nick):
     n = _norm_nick(nick)
@@ -691,7 +718,8 @@ def _remove_from_whitelist(nick):
         new = [x for x in cur if _norm_nick(x) != n]
         if len(new) == len(cur): return False
         SETTINGS["whitelist"] = new
-    save_config(); return True
+    save_config()
+    return True
 
 def _bump_buyer_orders(nick) -> int:
     n = _norm_nick(nick)
@@ -699,12 +727,14 @@ def _bump_buyer_orders(nick) -> int:
     with LOCK:
         cnt = int(BUYER_ORDERS_COUNT.get(n, 0)) + 1
         BUYER_ORDERS_COUNT[n] = cnt
-    _save_buyer_counts(); return cnt
+    _save_buyer_counts()
+    return cnt
 
 def _extract_nick_from_message(m):
     for attr in ("author", "username", "chat_name", "interlocutor_username", "buyer_username"):
         v = getattr(m, attr, None)
-        if isinstance(v, str) and v.strip(): return v.strip()
+        if isinstance(v, str) and v.strip():
+            return v.strip()
     return ""
 
 def _add_to_blacklist(nick, auto=False):
@@ -714,8 +744,10 @@ def _add_to_blacklist(nick, auto=False):
         cur = list(SETTINGS.get("blacklist") or [])
         cur_norm = {_norm_nick(x) for x in cur}
         if n in cur_norm: return True
-        cur.append(n); SETTINGS["blacklist"] = cur
-    save_config(); return True
+        cur.append(n)
+        SETTINGS["blacklist"] = cur
+    save_config()
+    return True
 
 def _remove_from_blacklist(nick):
     n = _norm_nick(nick)
@@ -725,12 +757,15 @@ def _remove_from_blacklist(nick):
         new = [x for x in cur if _norm_nick(x) != n]
         if len(new) == len(cur): return False
         SETTINGS["blacklist"] = new
-    save_config(); return True
+    save_config()
+    return True
 
 def _auto_whitelist_check(c, buyer):
     if not SETTINGS.get("whitelist_enabled", True): return
-    try: threshold = max(1, int(SETTINGS.get("auto_whitelist_after_orders", 3) or 3))
-    except Exception: threshold = 3
+    try:
+        threshold = max(1, int(SETTINGS.get("auto_whitelist_after_orders", 3) or 3))
+    except Exception:
+        threshold = 3
     cnt = _bump_buyer_orders(buyer)
     if cnt >= threshold and not is_whitelisted(buyer):
         if _add_to_whitelist(buyer, auto=True):
@@ -739,7 +774,8 @@ def _auto_whitelist_check(c, buyer):
                     body=(f"👤 Ник: <b>{utils.escape(_safe_for_notify(buyer, 120))}</b>\n"
                           f"🎉 Успешных заказов: <b>{cnt}</b>\n"
                           f"💡 Авто-добавление после {threshold} заказов."))
-            except Exception: pass
+            except Exception:
+                pass
 
 def _set_chat_role(chat_id, role):
     key = str(chat_id or "")
@@ -748,7 +784,8 @@ def _set_chat_role(chat_id, role):
         prev = CHAT_ROLE.get(key)
         if prev == role: return False
         CHAT_ROLE[key] = role
-    save_orders_state(); return True
+    save_orders_state()
+    return True
 
 def _auto_detect_role(chat_id, lot=None):
     key = str(chat_id or "")
@@ -765,14 +802,16 @@ def _auto_detect_role(chat_id, lot=None):
 def _get_chat_role(chat_id, lot=None):
     key = str(chat_id or "")
     if not key: return ""
-    with LOCK: role = CHAT_ROLE.get(key, "")
+    with LOCK:
+        role = CHAT_ROLE.get(key, "")
     if role: return role
     if not SETTINGS.get("role_detection_enabled", True): return ""
     default = str(SETTINGS.get("default_chat_role") or "auto").strip().lower()
     if default == "auto":
         auto_role = _auto_detect_role(key, lot)
         if auto_role:
-            _set_chat_role(key, auto_role); return auto_role
+            _set_chat_role(key, auto_role)
+            return auto_role
         return "seller"
     if default in ("seller", "buyer"): return default
     return "seller"
@@ -788,31 +827,43 @@ def _message_has_photo(m):
             if v is None: continue
             if isinstance(v, str) and v.strip(): return True
             if isinstance(v, (list, tuple, dict)) and len(v) > 0: return True
-        except Exception: continue
+        except Exception:
+            continue
     for attr in ("text", "message", "body"):
         try:
             t = str(getattr(m, attr, "") or "")
             if re.search(r"https?://[^\s]+\.(?:jpe?g|png|webp|gif|bmp|heic)\b", t, re.I):
                 return True
-        except Exception: continue
+        except Exception:
+            continue
     try:
         mt = getattr(m, "type", None)
         if mt is not None:
             name = str(getattr(mt, "name", "") or mt).upper()
             if "IMAGE" in name or "PHOTO" in name or "PICTURE" in name or "MEDIA" in name:
                 return True
-    except Exception: pass
+    except Exception:
+        pass
     for attr in ("content_type", "mime", "mime_type"):
         try:
             ct = str(getattr(m, attr, "") or "").lower()
             if ct.startswith("image/"): return True
-        except Exception: continue
+        except Exception:
+            continue
     return False
 
 def _is_indecent_message(text):
     if not SETTINGS.get("auto_blacklist_indecent", True): return False
     s = str(text or "")
     return bool(_RE_INDECENT.search(s)) if s else False
+
+def _is_forbidden_photo_response(ai_answer, buyer_text=""):
+    if not SETTINGS.get("auto_blacklist_forbidden_photo", True): return False
+    blob = f"{ai_answer or ''}\n{buyer_text or ''}"
+    if not blob.strip(): return False
+    if _RE_FORBIDDEN_PHOTO.search(blob): return True
+    if ai_answer and _RE_AI_REFUSAL_PHOTO.search(str(ai_answer)): return True
+    return False
 
 def _is_code_request(text):
     if not SETTINGS.get("auto_blacklist_code", True): return False
@@ -830,7 +881,8 @@ def _is_chat_goal_bad(chat_id):
     if not SETTINGS.get("auto_blacklist_bad_goal", True): return False
     key = str(chat_id or "")
     if not key: return False
-    with LOCK: h = list(HISTORY.get(key, []))
+    with LOCK:
+        h = list(HISTORY.get(key, []))
     if not h: return False
     bad = 0
     for item in h[-20:]:
@@ -872,9 +924,11 @@ def _instant_blacklist(c, m, reason, extra=""):
         body = (f"👤 Ник: <b>{utils.escape(safe_nick)}</b>\n"
                 f"💬 Чат: <code>{utils.escape(str(chat_id))}</code>\n"
                 f"🧠 Причина: <i>{utils.escape(reason)}</i>")
-        if safe_extra: body += f"\n\n💬 Текст: <code>{utils.escape(safe_extra)}</code>"
+        if safe_extra:
+            body += f"\n\n💬 Текст: <code>{utils.escape(safe_extra)}</code>"
         notify_seller_text(c, header=header, body=body)
-    except Exception: pass
+    except Exception:
+        pass
     return True
 
 def _auto_blacklist_indecent(c, m, text):
@@ -910,7 +964,8 @@ def _track_suspicious(c, m, text):
             rec = SPAM_WATCH.get(chat_key)
             if rec and int(rec.get("photo_sent", 0)) > 0:
                 rec["count"] = 0; rec["similar"] = 1; rec["photo_ask"] = 0
-            else: SPAM_WATCH.pop(chat_key, None)
+            else:
+                SPAM_WATCH.pop(chat_key, None)
         return False
     is_offtopic_msg = bool(s) and is_offtopic(s)
     is_short_garbage = False
@@ -926,8 +981,10 @@ def _track_suspicious(c, m, text):
         if not rec or now - rec.get("first_ts", 0) > _SPAM_WINDOW:
             rec = {"count": 0, "first_ts": now, "last_text": s, "similar": 1,
                    "photo_ask": 0, "photo_sent": 0}
-        if is_photo_ask: rec["photo_ask"] = int(rec.get("photo_ask", 0)) + 1
-        if has_photo: rec["photo_sent"] = int(rec.get("photo_sent", 0)) + 1
+        if is_photo_ask:
+            rec["photo_ask"] = int(rec.get("photo_ask", 0)) + 1
+        if has_photo:
+            rec["photo_sent"] = int(rec.get("photo_sent", 0)) + 1
         if is_offtopic_msg or is_short_garbage:
             rec["count"] = int(rec.get("count", 0)) + 1
             prev = rec.get("last_text", "") or ""
@@ -935,8 +992,10 @@ def _track_suspicious(c, m, text):
             if prev and s:
                 try: sim = difflib.SequenceMatcher(None, prev.lower(), s.lower()).ratio()
                 except Exception: sim = 0.0
-            if sim >= 0.85: rec["similar"] = int(rec.get("similar", 1)) + 1
-            else: rec["similar"] = 1
+            if sim >= 0.85:
+                rec["similar"] = int(rec.get("similar", 1)) + 1
+            else:
+                rec["similar"] = 1
         if s: rec["last_text"] = s
         SPAM_WATCH[chat_key] = rec
         count = int(rec.get("count", 0))
@@ -961,7 +1020,8 @@ def _track_suspicious(c, m, text):
                 f"💬 Чат: <code>{utils.escape(chat_key)}</code>\n"
                 f"🧠 Причина: <i>{utils.escape(trigger)}</i>")
         notify_seller_text(c, header=header, body=body)
-    except Exception: pass
+    except Exception:
+        pass
     with LOCK: SPAM_WATCH.pop(chat_key, None)
     return True
 
@@ -1016,7 +1076,8 @@ def _validate_manifest(data):
     return res
 
 def _safe_json(r, context=""):
-    try: return r.json()
+    try:
+        return r.json()
     except Exception as e:
         ct = (r.headers.get("Content-Type") or "").lower()
         try: body = r.text[:500]
@@ -1165,7 +1226,8 @@ def notify_update(c, manifest, force=False):
     kb.add(B("🔄 Открыть обновления", callback_data=f"{CB}:m:update"))
     try:
         c.telegram.send_notification(_update_notification_text(manifest), keyboard=kb)
-        SETTINGS["last_notified_version"] = version; save_config()
+        SETTINGS["last_notified_version"] = version
+        save_config()
         return True
     except Exception: return False
 
@@ -1175,7 +1237,8 @@ def check_updates_cycle(c, notify=True, force=False):
     if _version_key(str(manifest.get("version") or "")) <= _version_key(VERSION):
         pending = str(SETTINGS.get("pending_restart_version") or "")
         if pending and _version_key(VERSION) >= _version_key(pending):
-            SETTINGS["pending_restart_version"] = ""; save_config()
+            SETTINGS["pending_restart_version"] = ""
+            save_config()
         return manifest, ""
     if SETTINGS.get("auto_update", False):
         ok, msg = install_update(c, manifest)
@@ -1223,7 +1286,8 @@ def update_status_line():
         status = str(UPDATE_STATE.get("status") or "not_checked")
         manifest = UPDATE_STATE.get("manifest")
         err = str(UPDATE_STATE.get("error") or "")
-    if status == "available" and isinstance(manifest, dict): return f"доступна v{manifest.get('version')}"
+    if status == "available" and isinstance(manifest, dict):
+        return f"доступна v{manifest.get('version')}"
     if status == "current": return "актуальна"
     if status == "error": return f"ошибка: {err[:60]}"
     return "ещё не проверялись"
@@ -1458,7 +1522,8 @@ def _strip_promises(text):
         if any(rx.search(sent) for rx in _PROMISE_PHRASES): continue
         kept.append(sent)
     result = " ".join(kept).strip()
-    for rx in _PROMISE_PHRASES: result = rx.sub("", result)
+    for rx in _PROMISE_PHRASES:
+        result = rx.sub("", result)
     result = re.sub(r"\s{2,}", " ", result)
     result = re.sub(r"\s+([.,;:!?])", r"\1", result)
     return result.strip()
@@ -1500,13 +1565,18 @@ def _is_prod_num(text, m):
 def outbound_violation(text):
     v = str(text or "")
     if not v: return "empty"
-    if _RE_EMAIL.search(v) or _RE_HANDLE.search(v) or _RE_TG_LINK.search(v): return "contacts"
-    if any(not _is_prod_num(v, m) for m in _RE_PHONE.finditer(v)): return "contacts"
+    if _RE_EMAIL.search(v) or _RE_HANDLE.search(v) or _RE_TG_LINK.search(v):
+        return "contacts"
+    if any(not _is_prod_num(v, m) for m in _RE_PHONE.finditer(v)):
+        return "contacts"
     for m in _RE_URL.finditer(v):
-        if not _RE_FUNPAY.match(m.group(0)): return "off_platform"
-    if _RE_SECRET.search(v): return "account_security"
+        if not _RE_FUNPAY.match(m.group(0)):
+            return "off_platform"
+    if _RE_SECRET.search(v):
+        return "account_security"
     for m in _RE_CARD.finditer(v):
-        if not _is_prod_num(v, m): return "confidential"
+        if not _is_prod_num(v, m):
+            return "confidential"
     return ""
 
 def _safe_for_notify(text, limit=1000):
@@ -1550,9 +1620,12 @@ def classify_policy_violation(text):
         return "contacts"
     if _RE_POLICY_OFF_PLATFORM.search(n) or _RE_POLICY_NO_PREPAY.search(n):
         return "off_platform"
-    if _RE_POLICY_ACCOUNT_TRADE.search(n): return "funpay_rules"
-    if _RE_POLICY_PROHIBITED.search(n): return "funpay_rules"
-    if _RE_SECRET.search(scan): return "account_security"
+    if _RE_POLICY_ACCOUNT_TRADE.search(n):
+        return "funpay_rules"
+    if _RE_POLICY_PROHIBITED.search(n):
+        return "funpay_rules"
+    if _RE_SECRET.search(scan):
+        return "account_security"
     return ""
 
 def policy_refusal(code):
@@ -1640,7 +1713,8 @@ def notify_seller(c, m, buyer_text, ai_answer="", reason="", header=""):
         callback = f"{CBT.SEND_FP_MESSAGE}:{getattr(m, 'chat_id', '')}:{buyer_name}"
         if len(callback.encode("utf-8")) <= 64:
             keyboard = K().add(B("✉️ Ответить покупателю", callback_data=callback))
-    except Exception: keyboard = None
+    except Exception:
+        keyboard = None
     def _job():
         try: c.telegram.send_notification(body, keyboard=keyboard)
         except Exception: pass
@@ -1695,14 +1769,16 @@ def _set_order_status(order_id, chat_id, status):
     oid = str(order_id or "").strip().upper()
     ck = str(chat_id or "")
     if not oid or status not in ("paid", "confirmed", "refunded"): return
-    with LOCK: ORDER_STATUS[oid] = (status, ck, time.time())
+    with LOCK:
+        ORDER_STATUS[oid] = (status, ck, time.time())
     if ck: _register_chat_order(ck, oid)
     save_orders_state()
 
 def _get_order_status(order_id):
     oid = str(order_id or "").strip().upper()
     if not oid: return ""
-    with LOCK: item = ORDER_STATUS.get(oid)
+    with LOCK:
+        item = ORDER_STATUS.get(oid)
     if not item: return ""
     status, _, ts = item
     if time.time() - ts > _ORDER_CLOSED_TTL: return ""
@@ -1732,7 +1808,8 @@ def _mark_order_processed(order_id):
             if now - ts > _ORDER_DEDUP_TTL: PROCESSED_ORDERS.pop(k, None)
         if key in PROCESSED_ORDERS: return False
         PROCESSED_ORDERS[key] = now
-    save_orders_state(); return True
+    save_orders_state()
+    return True
 
 def _mark_order_closed(order_id, chat_id="", status="confirmed"):
     key = str(order_id or "").strip().upper()
@@ -1748,7 +1825,8 @@ def _is_order_closed(order_id):
     key = str(order_id or "").strip().upper()
     if not key: return False
     now = time.time()
-    with LOCK: ts = CLOSED_ORDERS.get(key)
+    with LOCK:
+        ts = CLOSED_ORDERS.get(key)
     return bool(ts and now - ts < _ORDER_CLOSED_TTL)
 
 def _register_manual_fulfill(order_id, chat_id, buyer_name, title):
@@ -2076,7 +2154,8 @@ def _extract_message_image(m):
         for attr in ("image_link", "image_url", "image", "photo", "preview_url",
                      "media_url", "attachment_url"):
             v = getattr(m, attr, None)
-            if isinstance(v, str) and v.strip(): url = v.strip(); break
+            if isinstance(v, str) and v.strip():
+                url = v.strip(); break
         if not url: return ""
         return _extract_url_as_data_url(url)
     except Exception: return ""
@@ -2114,7 +2193,6 @@ def _dedupe_image_variants(urls: list) -> list:
     result = []
     for _key, items in groups.items():
         best = max(items, key=lambda x: (
-            ("/s/offer/" in x.lower()),
             ("upload" in x.lower() or "offer" in x.lower()),
             "preview" not in x.lower(),
             "small" not in x.lower(),
@@ -2123,28 +2201,13 @@ def _dedupe_image_variants(urls: list) -> list:
         result.append(best)
     return result
 
-def _is_lot_image(url: str) -> bool:
-    u = str(url or "").strip()
-    if not u: return False
-    if _FUNPAY_UI_IMG.search(u): return False
-    if _FUNPAY_GAME_ICON.search(u): return False
-    return True
-
-def _sort_by_priority(urls: list) -> list:
-    def key(u):
-        low = str(u).lower()
-        if "/s/offer/" in low: return 0
-        if "/s/file/" in low: return 2
-        return 1
-    return sorted(urls, key=key)
-
 def _lot_images_from(lot) -> list:
     imgs = []; seen = set()
     def _add(u):
         if not u: return
         u = str(u).strip().rstrip(".,;)\"'\\")
         if not u.lower().startswith(("http://", "https://")): return
-        if not _is_lot_image(u): return
+        if _FUNPAY_UI_IMG.search(u): return
         if u in seen: return
         seen.add(u); imgs.append(u)
 
@@ -2209,7 +2272,7 @@ def _lot_images_from_dict(lot_dict) -> list:
         if not u: return
         u = str(u).strip().rstrip(".,;)\"'\\")
         if not u.lower().startswith(("http://", "https://")): return
-        if not _is_lot_image(u): return
+        if _FUNPAY_UI_IMG.search(u): return
         if u in seen: return
         seen.add(u); imgs.append(u)
     if not isinstance(lot_dict, dict): return []
@@ -2270,7 +2333,7 @@ def _lot_images_from_html(lot_id: str) -> list:
         if u.startswith("//"): u = "https:" + u
         if not u.lower().startswith(("http://", "https://")): return
         if not re.search(r"\.(?:jpe?g|png|webp|gif|bmp)(?:\?|$)", u, re.I): return
-        if not _is_lot_image(u): return
+        if _FUNPAY_UI_IMG.search(u): return
         if u in seen: return
         seen.add(u); raw.append(u)
 
@@ -2291,9 +2354,9 @@ def _lot_images_from_html(lot_id: str) -> list:
             ok, size, _ = _validate_image_url(u)
             if ok: validated.append((u, size))
         if validated:
-            validated.sort(key=lambda x: (-x[1] if "/s/offer/" in x[0].lower() else 0, -x[1]))
+            validated.sort(key=lambda x: x[1], reverse=True)
             deduped = [u for u, _ in validated]
-    return _sort_by_priority(deduped)[:10]
+    return deduped[:10]
 
 def _lot_images_deep(lot, lot_fields_obj=None, lot_dict=None) -> list:
     if lot_fields_obj is not None:
@@ -2319,54 +2382,34 @@ def _lot_images_deep(lot, lot_fields_obj=None, lot_dict=None) -> list:
     return []
 
 def _vision_extract_lot_details(image_urls: list) -> str:
-    """Один запрос, все картинки сразу — как в v5.0.0, где vision работал корректно."""
-    if not image_urls or not SETTINGS.get("lot_vision_extract", True):
-        return ""
+    if not image_urls or not SETTINGS.get("lot_vision_extract", True): return ""
     base = str(SETTINGS.get("api_url") or "").rstrip("/")
     key = str(SETTINGS.get("api_key") or "").strip()
-    if key.lower().startswith("env:"):
-        key = os.environ.get(key[4:].strip(), "")
+    if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
     model = str(SETTINGS.get("api_model") or "").strip()
-    if not base or not key or not model:
-        return ""
-
+    if not base or not key or not model: return ""
     data_urls = []
     for u in image_urls[:3]:
         try:
             du = _extract_url_as_data_url(u)
-            if du:
-                data_urls.append(du)
-        except Exception:
-            continue
-    if not data_urls:
-        logger.debug("vision_extract: ни одна картинка не загрузилась")
-        return ""
-
+            if du: data_urls.append(du)
+        except Exception: continue
+    if not data_urls: return ""
     content = [{"type": "text", "text": _VISION_LOT_PROMPT}]
     for du in data_urls:
         content.append({"type": "image_url", "image_url": {"url": du}})
-
     try:
         r = requests.post(
             base + "/chat/completions",
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json={"model": model, "messages": [{"role": "user", "content": content}],
-                  "temperature": 0.0, "max_tokens": 600, "stream": False},
+                  "temperature": 0.0, "max_tokens": 500, "stream": False},
             timeout=(15, max(30, int(SETTINGS.get("ai_timeout", 120)))))
         r.raise_for_status()
         data = _safe_json(r, "lot_vision")
         text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-        if not text:
-            return ""
-        low = text.lower()
-        if ("не игровой скрин" in low or "не могу" in low) \
-                and not re.search(r"(?:уровен|level|игр|game|standoff|steam|cs|roblox|"
-                                   r"gold|золот|калибров|ник|ранг|\d{1,3}\b)", low):
-            logger.warning("vision_extract: AI отказался. Raw: %r", text[:300])
-            return ""
-        logger.info("vision_extract: получено фактов (%d симв., %d картинок)",
-                    len(text), len(data_urls))
-        return text[:1600]
+        if not text or "не игровой скрин" in text.lower(): return ""
+        return text[:1200]
     except Exception as e:
         logger.debug("vision_extract_lot_details failed: %s", e)
         return ""
@@ -2595,7 +2638,7 @@ def _lot_basic(lot):
         "auto": bool(getattr(lot, "auto", False)),
         "subcategory": _obj(sub, "fullname") or _obj(sub, "name"),
         "server": _obj(lot, "server"), "extra_fields": {}, "payment_message": "",
-        "image_urls": _sort_by_priority(_dedupe_image_variants(_lot_images_from(lot)))[:10]}
+        "image_urls": _dedupe_image_variants(_lot_images_from(lot))[:10]}
 
 def _enrich(c, lid):
     imgs = []
@@ -2629,7 +2672,7 @@ def _enrich(c, lid):
                 d2 = cached_dict.get("full_description") or ""
                 for m in _IMG_EXT_RE.finditer(d2):
                     u = m.group(0)
-                    if _is_lot_image(u): imgs.append(u)
+                    if not _FUNPAY_UI_IMG.search(u): imgs.append(u)
             except Exception: pass
 
         with LOCK:
@@ -2857,24 +2900,20 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
     no_hallucination = (
         "\n★★★ ГЛАВНЫЕ ПРАВИЛА ★★★\n"
         "1) ОТВЕЧАЙ СТРОГО НА ЗАДАННЫЙ ВОПРОС. Не вываливай все факты подряд.\n"
+        "   Спросили «какой уровень?» — отвечай только про уровень, одной строкой.\n"
+        "   Спросили «есть ли скины?» — только про скины.\n"
         "2) ИСТОЧНИК ИСТИНЫ — только:\n"
         "   • блок ТЕКУЩИЙ ТОВАР,\n"
-        "   • блок «ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА» (если есть),\n"
+        "   • блок «ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА»,\n"
         "   • блок «ПОДКЛЮЧЁННЫЕ ТОВАРЫ»,\n"
         "   • блок «ИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА».\n"
-        "3) НИКОГДА не выдумывай числа (уровень, ранг, часы, скины, регион, золото, "
-        "даты), если их нет в источниках выше.\n"
-        "4) ★ ОСОБОЕ ПРАВИЛО ПРО ФОТО ★\n"
-        "   Если покупатель спрашивает про фото / скрины / картинки / изображения лота — "
-        "ты ОБЯЗАН ответить и ОПИСАТЬ что видно.\n"
-        "   Используй блок «ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА» — там уже извлечено с этих "
-        "самых скринов (уровень, ранг, ник, валюта).\n"
-        "   Если у тебя есть картинка в запросе — опиши что на ней.\n"
-        "   НЕ ОТКАЗЫВАЙСЯ отвечать про фото. НЕ пиши «не могу описать фото».\n"
-        "5) Если данных нет вообще — ответь нейтрально одной строкой, но не отказывайся. "
-        "Например: «Уровень в лоте не указан.»\n"
-        "6) НЕ сравнивай с другими лотами профиля.\n"
-        "7) Не объясняй, откуда взял данные.\n"
+        "3) НИКОГДА не придумывай числа: уровень, ранг, часы, скины, регион, "
+        "золото, даты — если это НЕ указано в источниках выше.\n"
+        "4) Если факт есть в «ФАКТЫ СО СКРИНОВ ЛОТА» — называй ИМЕННО то число, "
+        "что там. НЕ ЗАМЕНЯЙ его на «примерное» или «около».\n"
+        "5) Если факта НЕТ — ответь буквально: «В лоте эта информация не указана.»\n"
+        "6) НЕ сравнивай с другими лотами профиля. Отвечай ТОЛЬКО про лот в ТЕКУЩИЙ ТОВАР.\n"
+        "7) Не объясняй, откуда взял данные. Просто ответь по факту.\n"
     )
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
@@ -2946,39 +2985,6 @@ def ask_ai(m, buyer_text, lot):
     full_chat = len(history) > 2
     lang_hint = language_hint(buyer_text)
     tone_hint_text = tone_hint(buyer_text)
-
-    # ★ ЛЕНИВОЕ ИЗВЛЕЧЕНИЕ VISION: если у лота есть картинки, но vision-фактов ещё нет —
-    # извлекаем их прямо сейчас, чтобы AI использовал инфо со скринов при ответе.
-    if (lot and isinstance(lot, dict) and lot.get("id")
-            and SETTINGS.get("lot_vision_extract", True)):
-        lid = str(lot.get("id"))
-        with LOCK:
-            has_vision = bool(LOT_VISION.get(lid))
-        if not has_vision:
-            imgs_for_vision = list(lot.get("image_urls") or [])
-            if not imgs_for_vision:
-                with LOCK:
-                    cached_lot = LOTS.get(lid) or {}
-                    imgs_for_vision = list(cached_lot.get("image_urls") or [])
-            if not imgs_for_vision:
-                try:
-                    imgs_for_vision = _lot_images_from_html(lid)
-                    if imgs_for_vision:
-                        with LOCK:
-                            LOTS.setdefault(lid, {})["image_urls"] = imgs_for_vision[:12]
-                except Exception:
-                    imgs_for_vision = []
-            if imgs_for_vision:
-                try:
-                    details = _vision_extract_lot_details(imgs_for_vision)
-                    if details:
-                        with LOCK:
-                            LOT_VISION[lid] = details
-                        _save_lot_vision()
-                        logger.info("lazy vision: лот %s — факты получены (%d симв.)",
-                                    lid, len(details))
-                except Exception as e:
-                    logger.debug("lazy vision_extract failed lid=%s: %s", lid, e)
 
     image_data_url = _extract_message_image(m)
     lot_image_urls = []
@@ -3087,20 +3093,9 @@ def handle_message(c, m, text):
         _say(c, m, str(SETTINGS["unknown_reply"]), notify=True,
             notify_header="🆘 <b>AI-провайдер не ответил</b>",
             reason="API недоступен", buyer_text=text); return
-    real_nsfw = bool(_RE_REAL_NSFW.search(str(answer or "")))
-    if real_nsfw:
-        if not wl: _instant_blacklist(c, m, "Запрещённое фото (NSFW)", answer)
+    if _is_forbidden_photo_response(answer, text):
+        if not wl: _instant_blacklist(c, m, "Запрещённое фото или отказ AI от описания", answer)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if _RE_AI_REFUSAL_PHOTO.search(str(answer or "")) and _RE_LOT_SCREEN_ASK.search(str(text or "")):
-        if lot and isinstance(lot, dict) and lot.get("id"):
-            with LOCK: facts = LOT_VISION.get(str(lot.get("id")), "")
-            if facts:
-                logger.info("AI отказался от фото — отдаём vision-факты лота %s", lot.get("id"))
-                _say(c, m, facts, notify=False); return
-        _say(c, m, answer, notify=True,
-             notify_header="🆘 <b>AI не захотел описывать фото</b>",
-             reason="AI отказался описывать фото — проверьте ответ",
-             buyer_text=text); return
     if is_offtopic(answer) and not wl:
         _instant_blacklist(c, m, "AI ответил оффтопом", text)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
@@ -3385,10 +3380,7 @@ def init_telegram(cardinal):
             f"👁 Vision-факты: <b>{n_vision}</b> лотов\n"
             f"📝 Инструкций: <b>{n_instr}</b> · 📦 Товаров/фактов: <b>{n_items}</b>\n"
             f"🖼 Мин. размер картинки: <b>{SETTINGS.get('lot_image_min_bytes', 5000)}</b> байт · "
-            f"HEAD-проверка: <b>{utils.bool_to_text(SETTINGS.get('lot_image_validate_http', True))}</b>\n"
-            f"🚫 Иконки игр каталога (/s/file/) отсеиваются автоматически.\n"
-            f"✅ Скрины лотов (/s/offer/) в приоритете для vision.\n"
-            f"⚡ Ленивое извлечение vision при первом вопросе по лоту.")
+            f"HEAD-проверка: <b>{utils.bool_to_text(SETTINGS.get('lot_image_validate_http', True))}</b>")
         kb = K(row_width=2)
         kb.row(B("🔄 Обновить лоты", callback_data=f"{CB}:lots"),
                B("👁 Переоценить vision", callback_data=f"{CB}:vision_refresh"))
@@ -3948,14 +3940,7 @@ def init_telegram(cardinal):
         def job():
             try: cardinal.telegram.send_notification("🆘 <b>Тестовое уведомление</b>")
             except Exception: pass
-        threading.Thread
-def notify_test(call):
-        bot.answer_callback_query(call.id, "Отправляю…")
-        def job():
-            try: cardinal.telegram.send_notification("🆘 <b>Тестовое уведомление</b>")
-            except Exception: pass
         threading.Thread(target=job, daemon=True).start()
-
     def refresh_lots(call):
         bot.answer_callback_query(call.id, "Запущено…")
         msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую…")
@@ -4121,53 +4106,20 @@ def notify_test(call):
                         f"❌ Не нашёл картинок у лота <code>{utils.escape(lid)}</code>.\n"
                         f"Попробуй «🔎 Диагностика лота».")
                     return
-
-                url_list = "\n".join(f"· <code>{utils.escape(u[:100])}</code>" for u in imgs[:5])
-
                 with LOCK:
                     LOTS.setdefault(lid, {})["image_urls"] = imgs[:12]
                     LOT_VISION.pop(str(lid), None)
-
                 details = _vision_extract_lot_details(imgs)
                 if not details:
-                    raw = ""
-                    try:
-                        base = str(SETTINGS.get("api_url") or "").rstrip("/")
-                        key = str(SETTINGS.get("api_key") or "").strip()
-                        if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
-                        model = str(SETTINGS.get("api_model") or "").strip()
-                        if base and key and model and imgs:
-                            du = _extract_url_as_data_url(imgs[0])
-                            if du:
-                                r = requests.post(base + "/chat/completions",
-                                    headers={"Authorization": f"Bearer {key}",
-                                             "Content-Type": "application/json"},
-                                    json={"model": model, "messages": [{"role": "user", "content": [
-                                        {"type": "text", "text": _VISION_LOT_PROMPT},
-                                        {"type": "image_url", "image_url": {"url": du}}]}],
-                                        "temperature": 0.1, "max_tokens": 500},
-                                    timeout=(15, 60))
-                                r.raise_for_status()
-                                dd = _safe_json(r, "v1raw")
-                                raw = str(((dd.get("choices") or [{}])[0].get("message") or {})
-                                          .get("content") or "").strip()
-                    except Exception as e:
-                        raw = f"ошибка запроса: {type(e).__name__}: {e}"
                     bot.send_message(m.chat.id,
-                        f"⚠️ <b>Vision не вернул фактов</b>\n\n"
-                        f"Найдено картинок: <b>{len(imgs)}</b>\n{url_list}\n\n"
-                        f"<b>Сырой ответ AI на первую картинку:</b>\n"
-                        f"<code>{utils.escape((raw or '(пусто)')[:800])}</code>",
-                        reply_markup=K().add(B("👁 Попробовать снова",
-                            callback_data=f"{CB}:vision_refresh_one")))
+                        f"⚠️ Картинок найдено {len(imgs)}, но vision не вернул фактов.")
                     return
-
                 with LOCK: LOT_VISION[str(lid)] = details
                 _save_lot_vision()
                 bot.send_message(m.chat.id,
                     f"✅ <b>Лот {utils.escape(lid)} прочитан</b>\n\n"
-                    f"Картинок: <b>{len(imgs)}</b>\n\n"
-                    f"<b>Факты:</b>\n{utils.escape(details[:1800])}")
+                    f"Найдено картинок: <b>{len(imgs)}</b>\n\n"
+                    f"<b>Факты:</b>\n{utils.escape(details[:1500])}")
             except Exception as e:
                 try: bot.send_message(m.chat.id, f"❌ {type(e).__name__}: {str(e)[:200]}")
                 except Exception: pass
