@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "4.3.0"
+VERSION = "4.5.0"
 DESCRIPTION = "AI-помощник продавца FunPay. Сохраняет историю и заказы на диск."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -38,6 +38,7 @@ ST_SURVEY_TEXT = f"{CB}_surveytext"
 ST_AF_DELAY = f"{CB}_afdelay"
 ST_THANK_TEXT = f"{CB}_thanktext"
 ST_BLACKLIST = f"{CB}_blacklist"
+ST_ROLE_CHAT = f"{CB}_rolechat"
 
 _VISION_MAX_BYTES = 4 * 1024 * 1024
 _VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
@@ -149,6 +150,36 @@ DEFAULT_PROMPT = (
     "Не выдумывай цену, наличие, гарантию, сроки. Соблюдай ПРАВИЛА FUNPAY."
 )
 
+BUYER_ROLE_PROMPT = (
+    "Ты — AI-помощник ПОКУПАТЕЛЯ на FunPay. Владелец этого бота — ПОКУПАТЕЛЬ в текущем чате, "
+    "а собеседник — ПРОДАВЕЦ.\n\n"
+    "ТВОЯ РОЛЬ (СТРОГО):\n"
+    "- Ты помогаешь покупателю вести диалог с продавцом.\n"
+    "- Ты НЕ являешься продавцом. НИКОГДА не говори от имени продавца.\n"
+    "- Ты НЕ подтверждаешь оплату, НЕ обещаешь выдачу товара, НЕ выдаёшь товар.\n"
+    "- Ты НЕ выдумываешь цены, наличие, сроки, гарантии.\n"
+    "- Если покупатель спрашивает «что мне ответить продавцу» — предложи вежливый вариант.\n"
+    "- Если покупатель хочет уточнить что-то у продавца — предложи сформулировать вопрос.\n"
+    "- Если продавец что-то ответил — можешь пояснить или пересказать покупателю.\n\n"
+    "СТИЛЬ:\n"
+    "- Кратко, по-русски, 1-3 предложения.\n"
+    "- Пиши естественно, живо, как помощник.\n"
+    "- Эмодзи — 1-2 на сообщение, по смыслу (💬 🤝 💡 ⚠️ ❓).\n\n"
+    "ЗАПРЕЩЕНО:\n"
+    "- Обещать товар, оплату, скидку, доставку.\n"
+    "- Писать «Заказ #XXX оплачен», «Заказ подтверждён».\n"
+    "- Оформлять заказы или предлагать «перейти к оплате».\n"
+    "- Раскрывать данные владельца бота (пароли, баланс, реквизиты).\n"
+    "- Передавать контакты, ссылки (кроме funpay.com).\n\n"
+    "РАЗРЕШЕНО:\n"
+    "- Помогать формулировать вопросы продавцу.\n"
+    "- Объяснять покупателю непонятные ответы продавца.\n"
+    "- Подсказывать, как оформить заказ на FunPay.\n"
+    "- Отвечать на общие вопросы по покупке.\n\n"
+    "ПРАВИЛА FUNPAY: не выходите за рамки платформы, не передавайте контакты, "
+    "не организуйте сделки вне FunPay."
+)
+
 FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [1.1] Не передавай и не запрашивай контакты.
 [1.2] Не предлагай накрутку/шантаж/изменение отзыва.
@@ -167,7 +198,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
 """
 
-DEFAULTS = {"version": 54, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 55, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -201,7 +232,10 @@ DEFAULTS = {"version": 54, "enabled": True, "setup_done": False,
     "auto_blacklist_code": True,
     "auto_blacklist_bad_intent": True,
     "auto_blacklist_bad_goal": True,
-    "auto_unblacklist_on_payment": True}
+    "unblacklist_on_payment": True,
+    "role_detection_enabled": True,
+    "default_chat_role": "auto",
+    "buyer_role_prompt": BUYER_ROLE_PROMPT}
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
 HISTORY = {}
@@ -220,7 +254,6 @@ AUTO_FULFILLED_ORDERS = {}
 SPAM_WATCH = {}
 ORDER_STATUS = {}
 CHAT_ORDERS = {}
-ORDER_BUYERS = {}
 CHAT_ROLE = {}
 UPDATE_STATE = {"checked_at": 0.0, "status": "not_checked", "error": "",
     "manifest": None, "available": False, "installing": False}
@@ -231,11 +264,11 @@ _HISTORY_HARD_CAP = 200
 _ORDER_DEDUP_TTL = 24 * 3600
 _ORDER_CLOSED_TTL = 7 * 86400
 _SPAM_WINDOW = 30 * 60
-_SPAM_LIMIT = 1
-_SPAM_SIMILAR_LIMIT = 2
+_SPAM_LIMIT = 3
+_SPAM_SIMILAR_LIMIT = 4
 _PHOTO_ASK_WINDOW = 30 * 60
-_PHOTO_ASK_LIMIT = 1
-_PHOTO_SENT_LIMIT = 3
+_PHOTO_ASK_LIMIT = 2
+_PHOTO_SENT_LIMIT = 4
 _ORDER_PRIO = {"paid": 0, "confirmed": 1, "refunded": 2}
 _STATUS_RU = {"paid": "оплачен, ждём выдачу",
     "confirmed": "закрыт и подтверждён покупателем",
@@ -371,20 +404,6 @@ _RE_AI_REFUSAL_PHOTO = re.compile(
     r"inappropriate\s+content|"
     r"violates?\s+(?:polic|rule|guideline|content))", re.I)
 
-_RE_P = re.compile(r"[^\w\sа-яёa-z0-9]+", re.I)
-_RE_S = re.compile(r"\s+")
-_RU2LAT = str.maketrans({"а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
-    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o",
-    "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "ts", "ч": "ch",
-    "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya"})
-_STOP = {"я", "мне", "мой", "это", "этот", "эта", "эти", "данный", "данного", "вот", "ну",
-    "про", "на", "для", "у", "а", "че", "чо", "что", "типа", "короче", "товар", "товара", "лот",
-    "лота", "нужен", "нужна", "нужно", "хочу", "могу", "можем", "можешь", "ли", "сколько", "стоит",
-    "цена", "цену", "стоимость", "почем", "купить", "покупать", "куплю", "покупаю", "взять",
-    "брать", "беру", "возьму", "заказать", "закажу", "оформить", "оформлю", "можно", "давай",
-    "давайте", "есть", "наличие", "наличии", "доступно", "актуален", "актуально", "какой", "какая",
-    "какое", "какие", "подскажите", "скажите", "пожалуйста", "штук", "единиц", "количество", "осталось"}
-
 def _merge(a, b):
     if isinstance(a, dict) and isinstance(b, dict):
         r = dict(a)
@@ -506,8 +525,19 @@ def load_config():
             SETTINGS["version"] = 53
             save_config()
         if cv < 54:
-            SETTINGS.setdefault("auto_unblacklist_on_payment", True)
+            SETTINGS.setdefault("unblacklist_on_payment", True)
+            SETTINGS.setdefault("role_detection_enabled", True)
+            SETTINGS.setdefault("default_chat_role", "auto")
+            SETTINGS.setdefault("buyer_role_prompt", BUYER_ROLE_PROMPT)
             SETTINGS["version"] = 54
+            save_config()
+        if cv < 55:
+            cur = str(SETTINGS.get("default_chat_role") or "").lower()
+            if cur == "seller":
+                SETTINGS["default_chat_role"] = "auto"
+            SETTINGS.setdefault("role_detection_enabled", True)
+            SETTINGS.setdefault("unblacklist_on_payment", True)
+            SETTINGS["version"] = 55
             save_config()
     except Exception:
         pass
@@ -537,7 +567,7 @@ def save_orders_state():
                 "chat_orders": {ck: list(v) for ck, v in CHAT_ORDERS.items()},
                 "closed_orders": dict(CLOSED_ORDERS),
                 "processed_orders": dict(PROCESSED_ORDERS),
-                "order_buyers": dict(ORDER_BUYERS)}
+                "chat_role": dict(CHAT_ROLE)}
         tmp = f"{ORDERS_PATH}.{os.getpid()}.{threading.get_ident()}.tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as f:
@@ -554,7 +584,7 @@ def save_orders_state():
         logger.debug("save_orders_state failed", exc_info=True)
 
 def load_orders_state():
-    global ORDER_STATUS, CHAT_ORDERS, CLOSED_ORDERS, PROCESSED_ORDERS, ORDER_BUYERS
+    global ORDER_STATUS, CHAT_ORDERS, CLOSED_ORDERS, PROCESSED_ORDERS, CHAT_ROLE
     if not os.path.exists(ORDERS_PATH):
         return
     try:
@@ -600,17 +630,16 @@ def load_orders_state():
                     PROCESSED_ORDERS[str(oid)] = ts
             except Exception:
                 continue
-        ob = data.get("order_buyers") or {}
-        for oid, nick in ob.items():
+        roles = data.get("chat_role") or {}
+        for ck, rl in roles.items():
             try:
-                oid_s = str(oid).strip().upper()
-                nick_s = _norm_nick(nick)
-                if oid_s and nick_s:
-                    ORDER_BUYERS[oid_s] = nick_s
+                rl = str(rl)
+                if rl in ("seller", "buyer"):
+                    CHAT_ROLE[str(ck)] = rl
             except Exception:
                 continue
-        logger.info("orders state loaded: %d заказов, %d чатов, %d покупателей",
-                    loaded, len(CHAT_ORDERS), len(ORDER_BUYERS))
+        logger.info("orders state loaded: %d заказов, %d чатов, %d ролей",
+                    loaded, len(CHAT_ORDERS), len(CHAT_ROLE))
     except Exception:
         logger.debug("load_orders_state failed", exc_info=True)
 
@@ -729,25 +758,73 @@ def _add_to_blacklist(nick, auto=False):
     logger.info("blacklist %s: %s", "auto-added" if auto else "added", n)
     return True
 
-def _remove_from_blacklist(nick, reason=""):
+def _remove_from_blacklist(nick):
     n = _norm_nick(nick)
     if not n:
         return False
-    removed = False
     with LOCK:
         cur = list(SETTINGS.get("blacklist") or [])
-        new = []
-        for x in cur:
-            if _norm_nick(x) == n:
-                removed = True
-            else:
-                new.append(x)
-        if removed:
-            SETTINGS["blacklist"] = new
-    if removed:
-        save_config()
-        logger.info("blacklist removed: %s (%s)", n, reason or "manual")
-    return removed
+        new = [x for x in cur if _norm_nick(x) != n]
+        if len(new) == len(cur):
+            return False
+        SETTINGS["blacklist"] = new
+    save_config()
+    logger.info("blacklist removed: %s", n)
+    return True
+
+def _set_chat_role(chat_id, role):
+    key = str(chat_id or "")
+    if not key or role not in ("seller", "buyer"):
+        return False
+    with LOCK:
+        prev = CHAT_ROLE.get(key)
+        if prev == role:
+            return False
+        CHAT_ROLE[key] = role
+    save_orders_state()
+    logger.info("chat_role: chat=%s role=%s", key, role)
+    return True
+
+def _auto_detect_role(chat_id, lot=None):
+    """Автоопределение роли чата:
+       - Есть заказ в чате (мы продали) → seller
+       - Лот найден в нашем кэше LOTS → seller (покупатель спрашивает о нашем товаре)
+       - Иначе → seller (по умолчанию, т.к. Cardinal в 95% случаев у продавца)
+    """
+    key = str(chat_id or "")
+    if not key:
+        return "seller"
+    with LOCK:
+        has_order = bool(CHAT_ORDERS.get(key))
+    if has_order:
+        return "seller"
+    if lot is not None and lot.get("id"):
+        lid = str(lot.get("id"))
+        with LOCK:
+            if lid in LOTS:
+                return "seller"
+    return "seller"
+
+def _get_chat_role(chat_id, lot=None):
+    key = str(chat_id or "")
+    if not key:
+        return ""
+    with LOCK:
+        role = CHAT_ROLE.get(key, "")
+    if role:
+        return role
+    if not SETTINGS.get("role_detection_enabled", True):
+        return ""
+    default = str(SETTINGS.get("default_chat_role") or "auto").strip().lower()
+    if default == "auto":
+        auto_role = _auto_detect_role(key, lot)
+        if auto_role:
+            _set_chat_role(key, auto_role)
+            return auto_role
+        return "seller"
+    if default in ("seller", "buyer"):
+        return default
+    return "seller"
 
 def _message_has_photo(m):
     if m is None:
@@ -913,6 +990,17 @@ def _auto_blacklist_indecent(c, m, text):
         return False
     return _instant_blacklist(c, m, "Мат / оскорбления / 18+ в тексте", text)
 
+_RE_SHORT_GREET = re.compile(
+    r"^(?:ку|кк|кку|здр|здрасьте|здарова|прив|привет|прет|хай|hi|hello|хелло|хеллоу|"
+    r"йо|ёу|еу|yo|салют|салам|добр\w*|доброе\s+утро|добрый\s+день|добрый\s+вечер|"
+    r"здравствуй\w*|здрасте)[!?.,\s]*$", re.I)
+
+def _is_short_greeting(text):
+    s = str(text or "").strip()
+    if not s or len(s) > 30:
+        return False
+    return bool(_RE_SHORT_GREET.match(s))
+
 def _track_suspicious(c, m, text):
     if not (SETTINGS.get("auto_blacklist_spam", True)
             or SETTINGS.get("auto_blacklist_photo_ask", True)
@@ -925,7 +1013,13 @@ def _track_suspicious(c, m, text):
     has_photo = _message_has_photo(m)
     if not s and not has_photo:
         return False
+    # Приветствия никогда не считаем спамом
+    if s and _is_short_greeting(s):
+        return False
+    if s and len(s) <= 4 and not has_photo:
+        return False
     is_photo_ask = bool(_RE_PHOTO_ASK.search(s)) if s else False
+    # Явно по делу (лот/оплата/заказ/цена/наличие/состав) — сбрасываем наблюдение
     if s and not has_photo and not is_photo_ask and _RE_PURCHASE_TOPIC.search(s):
         with LOCK:
             rec = SPAM_WATCH.get(chat_key)
@@ -940,7 +1034,7 @@ def _track_suspicious(c, m, text):
     is_short_garbage = False
     if s and not is_offtopic_msg and not is_photo_ask and not has_photo:
         words = re.findall(r"[а-яa-zё]{3,}", s, re.I)
-        if len(words) == 0 and len(s) < 40:
+        if len(words) == 0 and len(s) < 40 and not _is_short_greeting(s):
             is_short_garbage = True
     if not (is_photo_ask or is_offtopic_msg or is_short_garbage or has_photo):
         return False
@@ -1004,7 +1098,9 @@ def _track_suspicious(c, m, text):
         pass
     with LOCK:
         SPAM_WATCH.pop(chat_key, None)
-    return True def _version_key(value):
+    return True
+
+def _version_key(value):
     nums = [int(x) for x in re.findall(r"\d+", str(value or ""))[:4]]
     return tuple((nums + [0, 0, 0, 0])[:4])
 
@@ -1340,6 +1436,20 @@ def update_status_line():
         return f"ошибка: {err[:60]}"
     return "ещё не проверялись"
 
+_RE_P = re.compile(r"[^\w\sа-яёa-z0-9]+", re.I)
+_RE_S = re.compile(r"\s+")
+_RU2LAT = str.maketrans({"а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o",
+    "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "ts", "ч": "ch",
+    "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya"})
+_STOP = {"я", "мне", "мой", "это", "этот", "эта", "эти", "данный", "данного", "вот", "ну",
+    "про", "на", "для", "у", "а", "че", "чо", "что", "типа", "короче", "товар", "товара", "лот",
+    "лота", "нужен", "нужна", "нужно", "хочу", "могу", "можем", "можешь", "ли", "сколько", "стоит",
+    "цена", "цену", "стоимость", "почем", "купить", "покупать", "куплю", "покупаю", "взять",
+    "брать", "беру", "возьму", "заказать", "закажу", "оформить", "оформлю", "можно", "давай",
+    "давайте", "есть", "наличие", "наличии", "доступно", "актуален", "актуально", "какой", "какая",
+    "какое", "какие", "подскажите", "скажите", "пожалуйста", "штук", "единиц", "количество", "осталось"}
+
 def norm(t):
     s = str(t or "").lower().replace("ё", "е")
     return _RE_S.sub(" ", _RE_P.sub(" ", s)).strip()
@@ -1422,13 +1532,26 @@ _RE_SECRET = re.compile(r"\b(?:парол\w*|password|passwd|token|токен\w*
     r"phpsessid|cookies?|session(?:id)?|сесси\w*|2fa|otp)\b\s*[:=]\s*[^\s,;]{3,}", re.I)
 _RE_PROD_NUM = re.compile(r"(?:подписчик\w*|просмотр\w*|лайк\w*|зв[её]зд\w*|голос\w*|штук\w*|"
     r"единиц\w*|количеств\w*|пакет\w*|цен\w*|стоим\w*|руб\w*|₽|usd|eur|доллар\w*|евро)", re.I)
-_RE_PURCHASE_TOPIC = re.compile(r"(?:\bоплат\w*|\bзаплат\w*|\bоплатил\w*|\bоплач\w*|\bзаказ\w*|"
+
+# РАСШИРЕННЫЙ purchase-topic: любые вопросы по лоту/инвентарю/составу/наличию/автовыдаче/бонусам
+_RE_PURCHASE_TOPIC = re.compile(
+    r"(?:\bоплат\w*|\bзаплат\w*|\bоплатил\w*|\bоплач\w*|\bзаказ\w*|"
     r"\bзаказал\w*|\bоформ\w*|\bкуп\w*|\bпокуп\w*|\bчек\w*|\bквитанц\w*|\bплатёж\w*|\bплатеж\w*|"
     r"\bвыда\w*|\bдостав\w*|\bавтовыда\w*|\bпришл\w*|\bполуч\w*|\bподтверд\w*|\bотзыв\w*|"
     r"\bцен\w*|\bналичи\w*|\bсрок\w*|\bлот\w*|\bтовар\w*|\bскидк\w*|\bдешевл\w*|\bторг\w*|"
+    # новые ключи — состав/инвентарь/что внутри
+    r"\bинвентар\w*|\bинве\b|\bинв\b|\bсостав\w*|\bсодержим\w*|\bсодержан\w*|"
+    r"\bвход\w*\s+в\b|\bчто\s+вход\w*|\bчто\s+внутр\w*|\bчто\s+в\b|\bчто\s+дает\w*|"
+    r"\bчто\s+будет\b|\bчто\s+за\b|\bчто\s+это\b|\bкак\w*\s+работ\w*|\bкак\s+работает\b|"
+    r"\bактивен\b|\bактивир\w*|\bактивир\w*|\bавто\b|\bавтомат\w*|"
+    r"\bбонус\w*|\bподарок\w*|\bподарк\w*|\bакци\w*|\bпромокод\w*|"
+    r"\bгарант\w*|\bгаран\w*|\bбезопасн\w*|\bриск\w*|"
     r"\bвидн\w*\s+оплат|\bпришл\w*\s+оплат|\bпо\s+заказ|\bпо\s+покупк|\bпо\s+лот|\bпо\s+товар|"
     r"\bфото\w*|\bскрин\w*|\bизображен\w*|\bкартинк\w*|\bфотк\w*|\bснимок\w*|\bснимк\w*|"
-    r"\bпомож\w*|\bподскаж\w*|\bуточн\w*|\bкак\w*\s+купить|\bкак\w*\s+оформ\w*)", re.I)
+    r"\bпомож\w*|\bподскаж\w*|\bуточн\w*|\bкак\w*\s+купить|\bкак\w*\s+оформ\w*|"
+    r"\bесть\s+ли\b|\bможн\w*\s+ли\b|\bможно\b|\bчто\s+там\b|\bопиш\w*|\bрасскаж\w*|"
+    r"\bподробн\w*|\bдетал\w*|\bпосмотр\w*|\bглян\w*|\bчек\s+эт|\bэт\w*\s+что\b)", re.I)
+
 _RE_PHOTO_ASK = re.compile(
     r"(?:\bчто\s+на\s+(?:фото|фотке|картинке|скрине|скриншоте|изображении)|"
     r"\bопиши\s+(?:фото|фотку|картинк\w*|скрин\w*|изображени\w*)|"
@@ -1442,6 +1565,14 @@ _RE_FPAY_REFUND = re.compile(r"(?:вернул|возвратил)\s+деньг�
 _RE_FPAY_CONFIRMED = re.compile(r"(?:подтвердил\s+выполнение\s+заказа|заказ\s+подтвержд[её]н|подтвержд[её]н\s+заказ)\s*#?([A-Z0-9]{6,12})", re.I)
 _RE_FPAY_PAID = re.compile(r"оплатил\s+заказ\s*#?([A-Z0-9]{6,12})", re.I)
 _RE_FPAY_HINT = re.compile(r"(?:оплач|возврат|вернул|вернёт|вернет|подтверд|refund|confirm)", re.I)
+
+_RE_ROLE_BUYER_HINT = re.compile(
+    r"(?:^|\s|>)(?:продавец|the\s+seller|seller)\s+@?([A-Za-z0-9_\-]{3,})?\s*"
+    r"(?:написал|ответил|сообщил|отправил|прислал)", re.I)
+_RE_ROLE_SELLER_HINT = re.compile(
+    r"(?:^|\s|>)(?:покупатель|the\s+buyer|buyer)\s+@?([A-Za-z0-9_\-]{3,})?\s*"
+    r"(?:написал|ответил|сообщил|отправил|прислал)", re.I)
+
 _RE_FAKE_ORDER_ACTION = re.compile(
     r"(?:я\s+)?(?:оформл\w*|оформить|оформил)\s+(?:ваш\s+)?заказ|"
     r"заказ\s+(?:оформлен|принят|создан)|"
@@ -2013,10 +2144,8 @@ def load_recent_orders(c, limit=10):
             if current and current != "paid":
                 continue
             _set_order_status(oid, chat_id, st)
-            bnick = _order_buyer_name(o)
-            if bnick:
-                with LOCK:
-                    ORDER_BUYERS[oid] = _norm_nick(bnick)
+            if chat_id:
+                _set_chat_role(chat_id, "seller")
             count += 1
         except Exception:
             continue
@@ -2127,30 +2256,25 @@ def _handle_new_paid_order(c, order):
     if _get_order_status(order_id) in ("confirmed", "refunded"):
         return
     _set_order_status(order_id, chat_id, "paid")
+    if chat_id:
+        _set_chat_role(chat_id, "seller")
     buyer_name = _order_buyer_name(order)
+    if SETTINGS.get("unblacklist_on_payment", True) and buyer_name:
+        if is_blacklisted(buyer_name):
+            if _remove_from_blacklist(buyer_name):
+                try:
+                    notify_seller_text(c,
+                        header="✅ <b>Покупатель удалён из ЧС (оплатил заказ)</b>",
+                        body=(f"👤 Ник: <b>{utils.escape(_safe_for_notify(buyer_name, 120))}</b>\n"
+                              f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
+                              f"💡 Автоудаление при оплате включено."))
+                except Exception:
+                    pass
     lot = _find_lot_for_order(order)
     title = ""
     if lot:
         lid = str(lot.get("id") or "")
         title = str(lot.get("title") or lot.get("description") or f"лот #{lid}")[:120]
-    if chat_id:
-        with LOCK:
-            CHAT_ROLE[chat_id] = "seller"
-    if buyer_name:
-        with LOCK:
-            ORDER_BUYERS[str(order_id).upper()] = _norm_nick(buyer_name)
-    if SETTINGS.get("auto_unblacklist_on_payment", True) and buyer_name:
-        n = _norm_nick(buyer_name)
-        if n and n not in ("покупатель", "buyer", "unknown", ""):
-            if _remove_from_blacklist(buyer_name, reason="оплата заказа"):
-                try:
-                    notify_seller_text(c, header="✅ <b>Снят с ЧС</b>",
-                        body=(f"👤 <b>{utils.escape(buyer_name)}</b> оплатил заказ "
-                              f"<code>#{utils.escape(order_id)}</code> — удалён из чёрного списка."))
-                except Exception:
-                    pass
-            with LOCK:
-                SPAM_WATCH.pop(str(chat_id), None)
     if SETTINGS.get("auto_fulfill_notify_seller", True) or SETTINGS.get("seller_notify", True):
         body = (f"📦 Заказ: <code>#{utils.escape(order_id)}</code>\n"
                 f"👤 Покупатель: <b>{utils.escape(buyer_name)}</b>")
@@ -2208,7 +2332,14 @@ def _observe_transaction_message(c, item):
         type_name = _detect_message_type_name(item)
         text = str(getattr(item, "text", "") or "")
         chat_id = str(getattr(item, "chat_id", "") or "")
+        if text and chat_id:
+            if _RE_ROLE_BUYER_HINT.search(text):
+                _set_chat_role(chat_id, "buyer")
+            elif _RE_ROLE_SELLER_HINT.search(text):
+                _set_chat_role(chat_id, "seller")
         if type_name == "ORDER_PURCHASED":
+            if chat_id:
+                _set_chat_role(chat_id, "seller")
             _handle_paid_order_message(c, item)
             return
         if type_name in {"ORDER_CONFIRMED", "ORDER_CONFIRMED_BY_ADMIN"}:
@@ -2225,8 +2356,7 @@ def _observe_transaction_message(c, item):
                     if _get_order_status(oid) not in ("confirmed", "refunded"):
                         _set_order_status(oid, chat_id, "paid")
                         if chat_id:
-                            with LOCK:
-                                CHAT_ROLE[chat_id] = "seller"
+                            _set_chat_role(chat_id, "seller")
                 elif status == "refunded":
                     _mark_order_closed(oid, chat_id, "refunded")
                 elif status == "confirmed":
@@ -2417,7 +2547,7 @@ _RE_HELP = re.compile(r"\bпомож\w*|\bподскаж\w*|\bсмож\w* пом
 _RE_SELLER_COUNT = re.compile(r"сколько\s+(?:лотов|товаров|объявлени\w*)", re.I)
 _RE_PRESENCE = re.compile(r"^(?:(?:ты|вы|продавец)\s+)?(?:тут|здесь|на месте|на связи)[!? ]*$|^есть кто\w*[!? ]*$", re.I)
 _RE_CONTEXT_LOT = re.compile(r"\b(?:этот|эта|это|эти|данный|данная|данное|данного|текущий|текущая)\s+(?:товар\w*|лот\w*)\b", re.I)
-_RE_GREET = re.compile(r"^(?:привет\w*|здравствуй\w*|добрый (?:день|вечер)|доброе утро|хай|hi|hello)[!., ]*$", re.I)
+_RE_GREET = re.compile(r"^(?:привет\w*|здравствуй\w*|добрый (?:день|вечер)|доброе утро|хай|hi|hello|ку|кк|йо|ёу|салют|прив)[!., ]*$", re.I)
 _RE_THANKS = re.compile(r"(?:спасибо|благодарю|спс)", re.I)
 _RE_WELL = re.compile(r"\bкак (?:у (?:тебя|вас) )?дела\b|\bкак жизнь\b|\bкак настроение\b", re.I)
 _RE_BYE = re.compile(r"^(?:пока|до свидания|до встречи|всего доброго)[!., ]*$", re.I)
@@ -2819,74 +2949,27 @@ def _chat_status_hint(chat_id):
     lines.append("- НЕ оформляй заказы. Заказ оформляет покупатель сам.")
     return "\n".join(lines) + "\n"
 
-def _detect_chat_role(c, chat_id, lot=None, m=None):
-    ck = str(chat_id or "")
-    if not ck:
-        return "seller"
-    acc_id = getattr(getattr(c, "account", None), "id", None)
-    if acc_id is None:
-        return "seller"
-    if lot:
-        lid = str(lot.get("id") or "")
-        with LOCK:
-            if lid and lid in LOTS:
-                CHAT_ROLE[ck] = "seller"
-                return "seller"
-    with LOCK:
-        order_ids = list(CHAT_ORDERS.get(ck, []))
-    my_nicks = set()
-    for attr in ("username", "nickname", "login", "name"):
-        v = getattr(getattr(c, "account", None), attr, None)
-        if isinstance(v, str) and v.strip():
-            my_nicks.add(_norm_nick(v))
-    for oid in order_ids:
-        with LOCK:
-            bnick = ORDER_BUYERS.get(oid)
-        if bnick and my_nicks and bnick in my_nicks:
-            CHAT_ROLE[ck] = "buyer"
-            return "buyer"
-    if order_ids:
-        CHAT_ROLE[ck] = "seller"
-        return "seller"
-    if m is not None:
-        try:
-            bv = getattr(m, "buyer_viewing", None)
-            if bv and getattr(bv, "is_viewing_lot", False):
-                vlid = str(getattr(bv, "lot_id", ""))
-                with LOCK:
-                    if vlid and vlid in LOTS:
-                        CHAT_ROLE[ck] = "seller"
-                        return "seller"
-        except Exception:
-            pass
-    with LOCK:
-        cached_role = CHAT_ROLE.get(ck)
-    if cached_role in ("buyer", "seller"):
-        return cached_role
-    return "seller"
+def _role_block(chat_id, lot):
+    role = _get_chat_role(chat_id, lot)
+    if role == "buyer":
+        extra = str(SETTINGS.get("buyer_role_prompt") or BUYER_ROLE_PROMPT).strip()
+        note = ("\nВ этом чате владелец бота — ПОКУПАТЕЛЬ, а собеседник — ПРОДАВЕЦ. "
+                "Ты помогаешь покупателю и НИКОГДА не отвечаешь от имени продавца. "
+                "НЕ подтверждай оплату, НЕ выдавай товар, НЕ обещай скидку.")
+        if lot:
+            note += " Текущий лот ниже — то, что покупатель рассматривает у продавца."
+        return f"\nРЕЖИМ ЧАТА: BUYER (покупатель).\n{extra}{note}\n"
+    if role == "seller":
+        return ("\nРЕЖИМ ЧАТА: SELLER (продавец). Владелец бота — продавец, "
+                "собеседник — покупатель.\n")
+    return ""
 
-def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", role="seller"):
+def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text=""):
     seller = str(SETTINGS.get("seller_info") or "").strip()
     memory_note = ("Ты видишь ВСЮ историю этого чата. Отвечай ТОЛЬКО на последнее сообщение." if full_chat
                    else "Ты видишь последние сообщения чата.")
     viewing_note = ("В блоке ТЕКУЩИЙ ТОВАР уже передан лот покупателя. Отвечай сразу по нему." if lot
                     else "Точного лота нет — задай ОДИН короткий уточняющий вопрос.")
-    if role == "buyer":
-        role_hint = (
-            "★★★ ВАЖНО: В ЭТОМ ЧАТЕ ТЫ — ПОКУПАТЕЛЬ, а собеседник — ПРОДАВЕЦ. ★★★\n"
-            "Ты НЕ продаёшь товар, ты его ПОКУПАЕШЬ у собеседника.\n"
-            "НЕ предлагай оформить заказ, НЕ пиши «оформляйте», «жду заказ», "
-            "«спасибо за оплату», «сейчас выдам».\n"
-            "Веди себя как ассистент покупателя: уточняй у продавца цену, наличие, "
-            "сроки, оплату, доставку, статус заказа.\n"
-            "Если продавец ответил — можешь поблагодарить и попросить уточнить."
-        )
-    else:
-        role_hint = (
-            "★★★ ВАЖНО: В ЭТОМ ЧАТЕ ТЫ — ПОМОЩНИК ПРОДАВЦА, а собеседник — ПОКУПАТЕЛЬ. ★★★\n"
-            "Помогай покупателю с выбором, оплатой, статусом, доставкой.\n"
-            "Не бери на себя роль покупателя."
-        )
     extra = ""
     if lang_hint:
         extra += f"\nЯЗЫК ОТВЕТА:\n{lang_hint}\n"
@@ -2897,9 +2980,10 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", rol
         promises = ("\nОБЕЩАНИЯ И СКИДКИ:\n- НИКОГДА не обещай скидку/бонус/подарок/акцию, "
             "если это явно не указано в ТЕКУЩИЙ ТОВАР.\n"
             "- Если покупатель спрашивает про скидку, а в лоте её нет — скажи, что в лоте не указана.\n")
-    status_hint = _chat_status_hint(chat_id) if role == "seller" else ""
-    return (f"{SETTINGS['system_prompt']}\n\nПАМЯТЬ ДИАЛОГА:\n{memory_note}\n\n"
-        f"{role_hint}\n\n"
+    status_hint = _chat_status_hint(chat_id)
+    role_block = _role_block(chat_id, lot)
+    return (f"{SETTINGS['system_prompt']}\n\n{role_block}\n"
+        f"ПАМЯТЬ ДИАЛОГА:\n{memory_note}\n\n"
         f"КОНТЕКСТ ТОВАРА:\n{viewing_note}\n\n"
         f"ИНФОРМАЦИЯ О ПРОДАВЦЕ:\n{seller or 'не задана'}\n\n"
         f"ТЕКУЩИЙ ТОВАР:\n{_lot_prompt(lot)}\n\n{FUNPAY_RULES_SNAPSHOT}\n\n"
@@ -2907,7 +2991,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", rol
         "Дополнительно:\n- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар.\n"
         "- Название платформы внутри товара — НЕ контакт.")
 
-def ask_ai(c, m, buyer_text, lot):
+def ask_ai(m, buyer_text, lot):
     base = str(SETTINGS.get("api_url") or "").rstrip("/")
     if not base:
         raise RuntimeError("API URL не задан.")
@@ -2924,11 +3008,7 @@ def ask_ai(c, m, buyer_text, lot):
     full_chat = len(history) > 2
     lang_hint = language_hint(buyer_text)
     tone_hint_text = tone_hint(buyer_text)
-    role = _detect_chat_role(c, chat_id, lot, m=m)
-    with LOCK:
-        CHAT_ROLE[str(chat_id)] = role
-    logger.info("chat_role chat=%s role=%s", chat_id, role)
-    msgs = [{"role": "system", "content": _sys_prompt(lot, full_chat, chat_id, lang_hint, tone_hint_text, role)}]
+    msgs = [{"role": "system", "content": _sys_prompt(lot, full_chat, chat_id, lang_hint, tone_hint_text)}]
     msgs += history
     image_data_url = _extract_message_image(m)
     effective = buyer_text
@@ -2991,7 +3071,7 @@ def handle_message(c, m, text):
         return
     lot = _get_lot(c, m, text)
     try:
-        answer = ask_ai(c, m, text, lot)
+        answer = ask_ai(m, text, lot)
     except Exception as e:
         logger.warning("AI fail: %s: %s", type(e).__name__, e)
         _say(c, m, str(SETTINGS["unknown_reply"]), notify=True,
@@ -3077,7 +3157,9 @@ def _mark(mid):
         if k in DONE:
             return False
         DONE[k] = now
-    return True def on_message(c, e):
+    return True
+
+def on_message(c, e):
     if not is_enabled(c):
         return
     m = e.message
@@ -3167,13 +3249,23 @@ def init_telegram(cardinal):
     tg, bot = cardinal.telegram, cardinal.telegram.bot
     PROMPT_BUFFER = {"text": "", "msg_id": None}
 
+    def _role_ru(role):
+        if role == "buyer":
+            return "🛒 Покупатель"
+        if role == "seller":
+            return "🏪 Продавец"
+        if role == "auto":
+            return "🎭 Авто"
+        return "❔ Не задано"
+
     def main_text():
         with LOCK:
             n_chats = len(HISTORY)
             n_msgs = sum(len(h) for h in HISTORY.values())
             n_view = sum(1 for _, v in VIEWING_CACHE.values() if v and getattr(v, "is_viewing_lot", False))
             n_status = len(ORDER_STATUS)
-            n_buyers = len(ORDER_BUYERS)
+            n_role_s = sum(1 for r in CHAT_ROLE.values() if r == "seller")
+            n_role_b = sum(1 for r in CHAT_ROLE.values() if r == "buyer")
         wm = str(SETTINGS.get("watermark_text") or "").strip()
         head = f"🤖 <b>{NAME} v{VERSION}</b>\n\nАвтор: <b>{CREDITS}</b>\n"
         head += f"🟢 Автоответ: <b>{utils.bool_to_text(SETTINGS['enabled'])}</b>\n"
@@ -3182,19 +3274,18 @@ def init_telegram(cardinal):
             head += f"     <i>{utils.escape(wm)}</i>\n"
         head += f"🔔 Уведомления: <b>{utils.bool_to_text(SETTINGS.get('seller_notify', True))}</b>\n"
         head += f"📌 Заказов в памяти: <b>{n_status}</b>\n"
-        head += f"👥 Покупателей в памяти: <b>{n_buyers}</b>\n"
-        head += f"✅ Снятие с ЧС при оплате: <b>{utils.bool_to_text(SETTINGS.get('auto_unblacklist_on_payment', True))}</b>\n"
         head += f"⚡ Автовыдача: <b>{utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}</b> · <b>{SETTINGS.get('auto_fulfill_delay_sec', 3)}с</b>\n"
         head += f"📊 Опрос: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>\n"
         head += f"🌍 Язык: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b>\n"
-        head += f"🎭 Роль в чате: <b>авто</b>\n"
         head += f"🌐 API: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
         head += f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
         head += f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'не задан'}</b>\n"
         head += f"🛍 Лотов: <b>{len(LOTS)}</b> · 👀 Смотрят: <b>{n_view}</b>\n"
         head += f"💬 Память: <b>{n_chats}</b> чатов / <b>{n_msgs}</b> сообщений\n"
         bl_count = len(get_blacklist())
-        head += f"🚫 ЧС: <b>{bl_count}</b>\n"
+        head += f"🚫 ЧС: <b>{bl_count}</b> · авто-разбан при оплате: <b>{utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}</b>\n"
+        head += (f"🎭 Роли чатов: 🏪 <b>{n_role_s}</b> · 🛒 <b>{n_role_b}</b> · "
+                 f"режим: <b>{utils.escape(_role_ru(SETTINGS.get('default_chat_role')))}</b>\n")
         head += f"🚨 МГНОВЕННЫЙ ЧС: мат, код, оффтоп, умысел, джейлбрейк, NSFW-фото, отказ AI от описания\n"
         head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>"
         return head
@@ -3228,8 +3319,14 @@ def init_telegram(cardinal):
         kb.row(B(f"🚫 Чёрный список ({bl_n})", callback_data=f"{CB}:bl"),
                B(f"🚫 Вкл/Выкл {utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}",
                  callback_data=f"{CB}:bl_toggle"))
-        kb.row(B(f"✅ Снятие с ЧС при оплате {utils.bool_to_text(SETTINGS.get('auto_unblacklist_on_payment', True))}",
-                 callback_data=f"{CB}:unbl_toggle"))
+        kb.row(B(f"♻️ Разбан при оплате {utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}",
+                 callback_data=f"{CB}:unbl_onpay"),
+               B(f"🎭 Режим роли: {_role_ru(SETTINGS.get('default_chat_role'))[:14]}",
+                 callback_data=f"{CB}:role_default"))
+        kb.row(B(f"🎭 Детект роли {utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}",
+                 callback_data=f"{CB}:role_toggle"),
+               B("🎭 Назначить вручную", callback_data=f"{CB}:role_set_chat"))
+        kb.add(B("🧹 Сбросить роли чатов", callback_data=f"{CB}:roles_reset"))
         kb.row(B("📋 Правила FunPay", callback_data=f"{CB}:rules"), B("🧪 Тест API", callback_data=f"{CB}:test"))
         kb.add(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"))
         kb.row(B(f"🌍 Язык {utils.bool_to_text(SETTINGS.get('match_language', True))}", callback_data=f"{CB}:lang"),
@@ -3250,71 +3347,72 @@ def init_telegram(cardinal):
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-
     def toggle(call):
         SETTINGS["enabled"] = not SETTINGS["enabled"]; save_config(); show(call)
-
     def toggle_wm(call):
         SETTINGS["watermark"] = not bool(SETTINGS.get("watermark", True)); save_config(); show(call)
-
     def toggle_notify(call):
         SETTINGS["seller_notify"] = not bool(SETTINGS.get("seller_notify", True)); save_config(); show(call)
-
     def toggle_bootstrap(call):
         SETTINGS["bootstrap_history"] = not bool(SETTINGS.get("bootstrap_history", True)); save_config(); show(call)
-
     def toggle_lang(call):
         SETTINGS["match_language"] = not bool(SETTINGS.get("match_language", True)); save_config(); show(call)
-
     def toggle_tone(call):
         SETTINGS["neutral_on_anger"] = not bool(SETTINGS.get("neutral_on_anger", True)); save_config(); show(call)
-
     def toggle_nopromise(call):
         SETTINGS["no_unconfirmed_promises"] = not bool(SETTINGS.get("no_unconfirmed_promises", True)); save_config(); show(call)
-
     def toggle_confnotify(call):
         SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show(call)
-
     def toggle_thank(call):
         SETTINGS["auto_thank_after_payment"] = not bool(SETTINGS.get("auto_thank_after_payment", True)); save_config(); show(call)
-
     def toggle_autofulfill(call):
         SETTINGS["auto_fulfill_paid_orders"] = not bool(SETTINGS.get("auto_fulfill_paid_orders", False)); save_config(); show(call)
-
     def toggle_autofulfill_notify(call):
         SETTINGS["auto_fulfill_notify_seller"] = not bool(SETTINGS.get("auto_fulfill_notify_seller", True)); save_config(); show(call)
-
     def toggle_survey(call):
         SETTINGS["post_order_survey"] = not bool(SETTINGS.get("post_order_survey", True)); save_config(); show(call)
-
-    def toggle_unbl(call):
-        SETTINGS["auto_unblacklist_on_payment"] = not bool(SETTINGS.get("auto_unblacklist_on_payment", True))
+    def toggle_unbl_onpay(call):
+        SETTINGS["unblacklist_on_payment"] = not bool(SETTINGS.get("unblacklist_on_payment", True))
         save_config()
-        try:
-            bot.answer_callback_query(call.id,
-                f"Снятие с ЧС при оплате: {'вкл' if SETTINGS['auto_unblacklist_on_payment'] else 'выкл'}",
-                show_alert=True)
-        except Exception:
-            pass
+        try: bot.answer_callback_query(call.id, f"Разбан при оплате: {'вкл' if SETTINGS['unblacklist_on_payment'] else 'выкл'}")
+        except Exception: pass
         show(call)
-
+    def toggle_role_detection(call):
+        SETTINGS["role_detection_enabled"] = not bool(SETTINGS.get("role_detection_enabled", True))
+        save_config()
+        try: bot.answer_callback_query(call.id, f"Детект роли: {'вкл' if SETTINGS['role_detection_enabled'] else 'выкл'}")
+        except Exception: pass
+        show(call)
+    def cycle_role_default(call):
+        cur = str(SETTINGS.get("default_chat_role") or "auto").lower()
+        order = ["auto", "seller", "buyer"]
+        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "auto"
+        SETTINGS["default_chat_role"] = nxt
+        save_config()
+        try: bot.answer_callback_query(call.id, f"Режим роли: {_role_ru(nxt)}", show_alert=False)
+        except Exception: pass
+        show(call)
+    def reset_roles(call):
+        with LOCK:
+            CHAT_ROLE.clear()
+        save_orders_state()
+        try: bot.answer_callback_query(call.id, "🧹 Роли чатов очищены")
+        except Exception: pass
+        show(call)
     def ask_thank_text(call):
         msg = bot.send_message(call.message.chat.id, "Пришлите текст благодарности после оплаты:",
                                reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_THANK_TEXT)
         bot.answer_callback_query(call.id)
-
     def set_thank_text(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         SETTINGS["auto_thank_text"] = (m.text or "").strip(); save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-
     def ask_af_delay(call):
         msg = bot.send_message(call.message.chat.id, "Задержка перед отправкой payment_msg (0–60):",
                                reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_AF_DELAY)
         bot.answer_callback_query(call.id)
-
     def set_af_delay(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         try:
@@ -3325,26 +3423,21 @@ def init_telegram(cardinal):
             bot.reply_to(m, "❌ Введите число 0–60."); return
         SETTINGS["auto_fulfill_delay_sec"] = v; save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-
     def ask_survey_text(call):
         msg = bot.send_message(call.message.chat.id, "Пришлите новый текст опроса после заказа:",
                                reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_SURVEY_TEXT)
         bot.answer_callback_query(call.id)
-
     def set_survey_text(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         SETTINGS["post_order_survey_text"] = (m.text or "").strip(); save_config()
         bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
-
     def reset_statuses(call):
         with LOCK:
             ORDER_STATUS.clear()
             CHAT_ORDERS.clear()
             CLOSED_ORDERS.clear()
             PROCESSED_ORDERS.clear()
-            ORDER_BUYERS.clear()
-            CHAT_ROLE.clear()
         try:
             if os.path.exists(ORDERS_PATH):
                 os.remove(ORDERS_PATH)
@@ -3355,7 +3448,6 @@ def init_telegram(cardinal):
         except Exception:
             pass
         show(call)
-
     def clear_history(call):
         with LOCK:
             for chat_id in list(HISTORY.keys()):
@@ -3367,7 +3459,6 @@ def init_telegram(cardinal):
             SELLER_NOTIFY_AT.clear()
             DONE.clear()
             SPAM_WATCH.clear()
-            CHAT_ROLE.clear()
         try:
             if os.path.exists(HISTORY_PATH):
                 os.remove(HISTORY_PATH)
@@ -3378,7 +3469,6 @@ def init_telegram(cardinal):
         except Exception:
             pass
         show(call)
-
     def list_chats(call):
         with LOCK:
             items = list(HISTORY.items())
@@ -3389,8 +3479,10 @@ def init_telegram(cardinal):
             for cid, hist in items[:30]:
                 n_a = sum(1 for x in hist if x.get("role") == "assistant")
                 n_u = sum(1 for x in hist if x.get("role") == "user")
-                role = CHAT_ROLE.get(str(cid), "—")
-                lines.append(f"<code>{utils.escape(str(cid))}</code> — {len(hist)} · 👤 {n_u} · 🤖 {n_a} · 🎭 {role}")
+                with LOCK:
+                    role = CHAT_ROLE.get(str(cid), "")
+                role_str = _role_ru(role) if role else "❔"
+                lines.append(f"<code>{utils.escape(str(cid))}</code> — {role_str} · всего {len(hist)} · 👤 {n_u} · 🤖/🏪 {n_a}")
             if len(items) > 30:
                 lines.append(f"… и ещё {len(items) - 30}")
             text = "\n".join(lines)
@@ -3400,7 +3492,6 @@ def init_telegram(cardinal):
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-
     def show_rules(call):
         text = ("📋 <b>Снимок правил FunPay в промпте</b>\n"
             "Источник: <a href='https://funpay.com/trade/info'>funpay.com/trade/info</a>\n\n"
@@ -3411,14 +3502,12 @@ def init_telegram(cardinal):
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-
     def ask(state, prompt):
         def cb(call):
             msg = bot.send_message(call.message.chat.id, prompt, reply_markup=CLEAR_STATE_BTN())
             tg.set_state(call.message.chat.id, msg.id, call.from_user.id, state)
             bot.answer_callback_query(call.id)
         return cb
-
     def make_setter(field, validate=None, transform=None):
         def setter(m):
             tg.clear_state(m.chat.id, m.from_user.id, True)
@@ -3484,8 +3573,8 @@ def init_telegram(cardinal):
             raw = list(SETTINGS.get("blacklist") or [])
         lines = ["🚫 <b>Чёрный список покупателей</b>", "",
             f"Статус: <b>{utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}</b>",
+            f"Авто-разбан при оплате: <b>{utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}</b>",
             f"Авто-блок: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}</b>",
-            f"✅ Снятие с ЧС при оплате: <b>{utils.bool_to_text(SETTINGS.get('auto_unblacklist_on_payment', True))}</b>",
             f"Код → ЧС: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_code', True))}</b>",
             f"Умысел → ЧС: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_bad_intent', True))}</b>",
             f"Цель чата → ЧС: <b>{utils.bool_to_text(SETTINGS.get('auto_blacklist_bad_goal', True))}</b>",
@@ -3507,10 +3596,10 @@ def init_telegram(cardinal):
         kb.row(B("🗑 Очистить всё", callback_data=f"{CB}:bl_clear"),
                B(f"🚫 Вкл/Выкл {utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}",
                  callback_data=f"{CB}:bl_toggle"))
+        kb.add(B(f"♻️ Авто-разбан при оплате {utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}",
+                 callback_data=f"{CB}:unbl_onpay"))
         kb.add(B(f"🤖 Авто-блок {utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}",
                  callback_data=f"{CB}:bl_auto_toggle"))
-        kb.add(B(f"✅ Снятие при оплате {utils.bool_to_text(SETTINGS.get('auto_unblacklist_on_payment', True))}",
-                 callback_data=f"{CB}:unbl_toggle"))
         kb.add(B(f"💻 ЧС код {utils.bool_to_text(SETTINGS.get('auto_blacklist_code', True))}",
                  callback_data=f"{CB}:bl_code_toggle"))
         kb.add(B(f"🧠 ЧС умысел {utils.bool_to_text(SETTINGS.get('auto_blacklist_bad_intent', True))}",
@@ -3858,6 +3947,26 @@ def init_telegram(cardinal):
         save_config()
         bot.reply_to(m, "✅ Обновлено.", reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
 
+    def set_role_chat(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        val = (m.text or "").strip().lower()
+        parts = val.split()
+        if len(parts) != 2 or parts[1] not in ("seller", "buyer"):
+            bot.reply_to(m, "❌ Формат: <code>chat_id seller|buyer</code>",
+                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main"))); return
+        chat_id, role = parts[0], parts[1]
+        _set_chat_role(chat_id, role)
+        bot.reply_to(m, f"✅ Чат <code>{utils.escape(chat_id)}</code> → <b>{utils.escape(role)}</b>.",
+            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:main")))
+
+    def ask_role_chat(call):
+        msg = bot.send_message(call.message.chat.id,
+            "Пришлите <code>chat_id seller|buyer</code> для ручного назначения роли.",
+            reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_ROLE_CHAT)
+        try: bot.answer_callback_query(call.id)
+        except Exception: pass
+
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(toggle, lambda c: c.data == f"{CB}:tog")
     tg.cbq_handler(toggle_wm, lambda c: c.data == f"{CB}:wm")
@@ -3871,7 +3980,11 @@ def init_telegram(cardinal):
     tg.cbq_handler(toggle_autofulfill, lambda c: c.data == f"{CB}:autofulfill")
     tg.cbq_handler(toggle_autofulfill_notify, lambda c: c.data == f"{CB}:autofulfillnotify")
     tg.cbq_handler(toggle_survey, lambda c: c.data == f"{CB}:survey")
-    tg.cbq_handler(toggle_unbl, lambda c: c.data == f"{CB}:unbl_toggle")
+    tg.cbq_handler(toggle_unbl_onpay, lambda c: c.data == f"{CB}:unbl_onpay")
+    tg.cbq_handler(toggle_role_detection, lambda c: c.data == f"{CB}:role_toggle")
+    tg.cbq_handler(cycle_role_default, lambda c: c.data == f"{CB}:role_default")
+    tg.cbq_handler(reset_roles, lambda c: c.data == f"{CB}:roles_reset")
+    tg.cbq_handler(ask_role_chat, lambda c: c.data == f"{CB}:role_set_chat")
     tg.cbq_handler(ask_thank_text, lambda c: c.data == f"{CB}:thanktext")
     tg.cbq_handler(ask_af_delay, lambda c: c.data == f"{CB}:autofulfilldelay")
     tg.cbq_handler(ask_survey_text, lambda c: c.data == f"{CB}:surveytext")
@@ -3933,6 +4046,7 @@ def init_telegram(cardinal):
     tg.msg_handler(prompt_collect, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_PROMPT))
     tg.msg_handler(set_blacklist_add, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BLACKLIST))
     tg.msg_handler(set_blacklist_del, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_BLACKLIST + "_del"))
+    tg.msg_handler(set_role_chat, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_ROLE_CHAT))
     tg.msg_handler(handle_test_photo, content_types=["photo"],
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TEST_PHOTO))
     tg.msg_handler(cmd_ai, commands=["ai"])
