@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "7.0.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Исправленный vision, диагностика, web-поиск, ЧС+WL."
+VERSION = "7.2.0"
+DESCRIPTION = "AI-помощник продавца FunPay. Vision, web-поиск, ЧС+WL, чистая выдача ответов."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -177,7 +177,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 63, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 65, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -218,6 +218,7 @@ DEFAULTS = {"version": 63, "enabled": True, "setup_done": False,
     "lot_vision_max_images": 5, "lot_vision_merge": True,
     "lot_vision_retry": True, "lot_vision_verbose": True,
     "lot_vision_max_tokens": 1400, "lot_vision_strict_parse": True,
+    "lot_vision_explain_errors": True, "strip_safety_junk": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -262,6 +263,16 @@ _ORDER_PRIO = {"paid": 0, "confirmed": 1, "refunded": 2}
 _STATUS_RU = {"paid": "оплачен, ждём выдачу",
     "confirmed": "закрыт и подтверждён покупателем",
     "refunded": "деньги возвращены покупателю"}
+
+_RE_SAFETY_JUNK = re.compile(
+    r"^\s*(?:user\s+safety|response\s+safety|safety\s+check|safety|"
+    r"content\s+policy|content\s+moderation|moderation|policy\s+check|"
+    r"harmful\s+content|safe\s+content|violation|flagged|"
+    r"user\s+safety\s*:|response\s+safety\s*:)"
+    r"[\s:：\-]+(?:safe|unsafe|ok|flagged|blocked|clean|none|yes|no|passed|failed|true|false)"
+    r"[^\n]*\n?",
+    re.I | re.MULTILINE
+)
 
 _RE_CODE_REQUEST = re.compile(
     r"(?:напиш\w*\s+(?:мне\s+)?(?:код|скрипт|программ\w*|функци\w*|бот\w*|парсер\w*|сортиров\w*|"
@@ -398,7 +409,9 @@ _RE_LOT_SCREEN_ASK = re.compile(
     r"\bчто\s+в\s+инвентар\w*|\bинвентар\w*\s+какой\b|"
     r"\bчто\s+на\s+аккаунт\w*|\bчто\s+есть\s+на\s+аккаунт\w*|"
     r"\bпокаж\w*\s+аккаунт\b|\bпосмотр\w*\s+аккаунт\b|"
-    r"\bописани\w*\s+аккаунт\w*|\bдетали\s+аккаунт\w*)", re.I)
+    r"\bописани\w*\s+аккаунт\w*|\bдетали\s+аккаунт\w*|"
+    r"\bчто\s+на\s+(?:скрине|скриншоте|фото|картинке|изображении)\b|"
+    r"\bопиши\s+(?:скрин\w*|фото\w*|картинк\w*|изображени\w*)\b)", re.I)
 
 _RE_SEARCH_MARKER = re.compile(r"\[\[\s*SEARCH\s*:\s*(.+?)\s*\]\]", re.I | re.DOTALL)
 _IMG_EXT_RE = re.compile(r"https?://[^\s\"'<>\\]+\.(?:jpe?g|png|webp|gif|bmp)", re.I)
@@ -442,19 +455,16 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 63:
-            SETTINGS.setdefault("lot_vision_retry", True)
-            SETTINGS.setdefault("lot_vision_verbose", True)
-            SETTINGS.setdefault("lot_vision_max_tokens", 1400)
-            SETTINGS.setdefault("lot_vision_strict_parse", True)
-            SETTINGS["version"] = 63
+        if cv < 65:
+            SETTINGS.setdefault("strip_safety_junk", True)
+            SETTINGS["version"] = 65
             save_config()
     except Exception: pass
 
@@ -1446,6 +1456,11 @@ def _strip_fake_order_action(text):
 
 def _clean_ai_answer(text):
     result = str(text or "")
+    if SETTINGS.get("strip_safety_junk", True):
+        for _ in range(8):
+            new = _RE_SAFETY_JUNK.sub("", result).strip()
+            if new == result: break
+            result = new
     for pat in _FORBIDDEN_AI_PHRASES:
         result = pat.sub("скидка на усмотрение продавца", result)
     result = _strip_already_answered(result)
@@ -2399,6 +2414,38 @@ def _vision_extract_lot_details(image_urls):
                     len(all_parts), debug["merge_applied"], len(merged))
     return merged[:2500]
 
+def _explain_http_error(status_code, body_snippet=""):
+    body = str(body_snippet or "").lower()
+    if status_code == 402:
+        return ("💳 <b>Закончились средства на API-провайдере (HTTP 402).</b>\n\n"
+                "Что делать:\n"
+                "• Пополни баланс на openrouter.ai/credits, ИЛИ\n"
+                "• Смени модель на бесплатную с суффиксом <code>:free</code>\n"
+                "  например <code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n\n"
+                "Всё остальное в плагине работает — проблема только в балансе.")
+    if status_code == 401:
+        return ("🔑 <b>Неверный API-ключ (HTTP 401).</b>\n\nПроверь ключ: 🌐 API → 🔑 Key")
+    if status_code == 429:
+        return ("⏱ <b>Превышен лимит запросов (HTTP 429).</b>\n\n"
+                "Подожди минуту или возьми модель с большим лимитом.")
+    if status_code == 400 and ("vision" in body or "image" in body or "multimodal" in body):
+        return ("🖼 <b>Модель не поддерживает vision (HTTP 400).</b>\n\n"
+                "Возьми vision-модель: gpt-4o-mini, gemini-2.0-flash,\n"
+                "claude-3.5-sonnet или любую с приставкой -vision / -vl.")
+    if status_code == 403:
+        return "🚫 <b>Доступ запрещён (HTTP 403).</b>\n\nПроверь что ключ имеет право на эту модель."
+    if status_code == 404:
+        return ("❓ <b>Модель не найдена на API-провайдере (HTTP 404).</b>\n\n"
+                "Скорее всего модель удалена. Актуальный список:\n"
+                "openrouter.ai/models → фильтр Modality: Text + Image → Text\n\n"
+                "Или попробуй:\n"
+                "• <code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n"
+                "• <code>qwen/qwen2.5-vl-72b-instruct:free</code>\n"
+                "• <code>openai/gpt-4o-mini</code>")
+    if status_code >= 500:
+        return f"🔧 <b>Сервер провайдера упал (HTTP {status_code}).</b>\n\nПопробуй позже."
+    return f"❌ Ошибка API: HTTP {status_code}"
+
 def _vision_debug_for_lot(lot_id):
     lid = str(lot_id or "").strip()
     if not lid: return "❌ Нет lot_id."
@@ -2423,8 +2470,20 @@ def _vision_debug_for_lot(lot_id):
         lines.append("🔬 <b>Debug последнего запуска:</b>")
         lines.append(f"· images_in: <b>{last_debug.get('images_in', 0)}</b> · "
                      f"ok: <b>{last_debug.get('images_ok', 0)}</b>")
+        http_codes = []
+        for s in (last_debug.get("screens") or []):
+            err = str(s.get("err", ""))
+            m = re.search(r"HTTPError:\s*(\d{3})", err)
+            if m: http_codes.append(int(m.group(1)))
+        if http_codes and SETTINGS.get("lot_vision_explain_errors", True):
+            dominant = max(set(http_codes), key=http_codes.count)
+            lines.append("")
+            lines.append(_explain_http_error(dominant))
+            lines.append("")
         if last_debug.get("error"):
-            lines.append(f"· ⚠️ error: <code>{utils.escape(str(last_debug['error'])[:200])}</code>")
+            err_text = str(last_debug["error"])
+            if not http_codes:
+                lines.append(f"· ⚠️ error: <code>{utils.escape(err_text[:200])}</code>")
         for s in (last_debug.get("screens") or [])[:5]:
             st = "✅" if s.get("ok") else ("🔇" if s.get("refused") else "❌")
             lines.append(f"· {st} #{s.get('idx')} du_len=<b>{s.get('du_len', 0)}</b> "
@@ -2438,22 +2497,28 @@ def _vision_probe_api():
     if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
     model = str(SETTINGS.get("api_model") or "").strip()
     if not base or not key or not model: return "❌ Не заданы API URL / key / model."
-    # Минимальный PNG 1x1 белый
     test_png_b64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
     try:
         r = requests.post(base + "/chat/completions",
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json={"model": model,
                   "messages": [{"role": "user", "content": [
-                      {"type": "text", "text": "Что на картинке? Ответь одним предложением."},
+                      {"type": "text", "text": "Ответь одним словом: что видишь?"},
                       {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_png_b64}"}}]}],
-                  "temperature": 0.0, "max_tokens": 100, "stream": False},
+                  "temperature": 0.0, "max_tokens": 30, "stream": False},
             timeout=(15, 60))
-        r.raise_for_status()
+        if r.status_code >= 400:
+            try: body = r.text[:400]
+            except Exception: body = ""
+            return _explain_http_error(r.status_code, body)
         data = _safe_json(r, "vision_probe")
         ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
         if not ans:
-            return "❌ Модель вернула пустой ответ на картинку. Скорее всего модель НЕ vision-совместимая."
+            return ("❌ Модель вернула пустой ответ на картинку.\n\n"
+                    "Скорее всего модель НЕ vision-совместимая. Возьми:\n"
+                    "<code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n"
+                    "<code>openai/gpt-4o-mini</code>\n"
+                    "<code>qwen/qwen2.5-vl-72b-instruct:free</code>")
         return f"✅ Модель ответила на картинку:\n\n<code>{utils.escape(ans[:300])}</code>"
     except Exception as e:
         return f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}"
@@ -3104,6 +3169,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "   Спросили «есть ли скины?» — только про скины.\n"
         "   Спросили «сколько предметов?» — назови ТОЧНОЕ число из фактов.\n"
         "   Спросили «что за игра?» — назови игру и платформу из блока «ОПРЕДЕЛЕНО».\n"
+        "   Спросили «что по цене?» — назови ЦЕНУ из ТЕКУЩИЙ ТОВАР, не описывай картинки.\n"
         "2) ИСТОЧНИК ИСТИНЫ — только:\n"
         "   • блок ТЕКУЩИЙ ТОВАР,\n"
         "   • блок «🎮 ОПРЕДЕЛЕНО ПО НАЗВАНИЮ/ОПИСАНИЮ»,\n"
@@ -3119,8 +3185,13 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "6) Если факта НЕТ — ответь буквально: «В лоте эта информация не указана.»\n"
         "7) НЕ сравнивай с другими лотами профиля. Отвечай ТОЛЬКО про лот в ТЕКУЩИЙ ТОВАР.\n"
         "8) Не объясняй, откуда взял данные. Просто ответь по факту.\n"
-        "9) Когда покупатель спрашивает про фото/скрин лота — открой блок "
-        "СТРУКТУРИРОВАННЫЕ ФАКТЫ и перечисли ЧТО ВИДНО: игру, ник, уровень, предметы с количеством.\n")
+        "9) Когда покупатель ЯВНО просит (спрашивает «что на скрине», «опиши фото», "
+        "«покажи скрин») — открой СТРУКТУРИРОВАННЫЕ ФАКТЫ и перечисли ЧТО ВИДНО.\n"
+        "10) Если покупатель НЕ присылал фото и НЕ просил описать картинки — НИКОГДА не "
+        "описывай никакие изображения. На вопрос «что по цене?» отвечай ЦЕНОЙ, а не "
+        "описанием скриншотов. Скриншоты лота — это НЕ фото покупателя, они для справки.\n"
+        "11) НИКОГДА не выводи в ответ технические метки: User Safety, Response Safety, "
+        "Content Policy, Moderation, Safe/Unsafe. Только человеческий ответ покупателю.\n")
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
     lot_instr = ""
@@ -3190,30 +3261,31 @@ def ask_ai(m, buyer_text, lot):
     full_chat = len(history) > 2
     lang_hint = language_hint(buyer_text)
     tone_hint_text = tone_hint(buyer_text)
+    buyer_text_clean = str(buyer_text or "")
+
     image_data_url = _extract_message_image(m)
+    buyer_asks_lot_screens = bool(_RE_LOT_SCREEN_ASK.search(buyer_text_clean))
     lot_image_urls = []
-    if (SETTINGS.get("lot_images_vision", True) and lot and isinstance(lot, dict)):
+    if (SETTINGS.get("lot_images_vision", True) and lot and isinstance(lot, dict)
+            and buyer_asks_lot_screens and not image_data_url):
         with LOCK: cached = LOTS.get(str(lot.get("id") or ""))
         if cached: lot_image_urls = list(cached.get("image_urls") or [])
         if not lot_image_urls: lot_image_urls = list(lot.get("image_urls") or [])
     lot_image_data_urls = []
-    if not image_data_url and lot_image_urls:
+    if lot_image_urls:
         for u in lot_image_urls[:3]:
             try:
                 du = _extract_url_as_data_url(u)
                 if du: lot_image_data_urls.append(du)
             except Exception: continue
-    effective = buyer_text
-    if not image_data_url and lot_image_data_urls:
-        effective = (effective or "").strip() or "Посмотри, пожалуйста, на скрины лота и ответь."
-        if "скрин" not in effective.lower():
-            effective = (effective + "\n\n(Ниже — скриншоты из лота. Отвечай на основе ЭТИХ "
-                         "изображений и полей лота. Не выдумывай данные, которых на них нет.)")
+
+    effective = buyer_text_clean
     msgs = [{"role": "system", "content": _sys_prompt(lot, full_chat, chat_id, lang_hint, tone_hint_text)}]
     msgs += history
     lot_imgs_ok = [du for du in lot_image_data_urls[:3] if du]
     if image_data_url and lot_imgs_ok:
-        head_content = [{"type": "text", "text": "Ниже — скрины из лота (используй как факты):"}]
+        head_content = [{"type": "text",
+                         "text": "Контекст: скриншоты лота (НЕ фото покупателя)."}]
         for du in lot_imgs_ok: head_content.append({"type": "image_url", "image_url": {"url": du}})
         msgs.append({"role": "user", "content": head_content})
         msgs.append({"role": "user", "content": [
@@ -3224,15 +3296,21 @@ def ask_ai(m, buyer_text, lot):
             {"type": "text", "text": effective},
             {"type": "image_url", "image_url": {"url": image_data_url}}]})
     elif lot_imgs_ok:
-        content = [{"type": "text", "text": effective}]
+        content = [{"type": "text",
+                    "text": (effective + "\n\n(Ниже — скриншоты ЛОТА для справки. "
+                             "Опиши/ответь ТОЛЬКО на заданный вопрос, не пересказывай скрин целиком.)")}]
         for du in lot_imgs_ok: content.append({"type": "image_url", "image_url": {"url": du}})
         msgs.append({"role": "user", "content": content})
     else:
         msgs.append({"role": "user", "content": effective})
+
     temperature = float(SETTINGS["temperature"])
     max_tokens = int(SETTINGS["num_predict"])
     timeout = SETTINGS["ai_timeout"]
     first = _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens)
+    if SETTINGS.get("strip_safety_junk", True):
+        first = _RE_SAFETY_JUNK.sub("", first).strip()
+
     if SETTINGS.get("web_search_enabled", True):
         msearch = _RE_SEARCH_MARKER.search(first)
         if msearch:
@@ -3255,6 +3333,8 @@ def ask_ai(m, buyer_text, lot):
                     final = _call_ai_api(base, key, model, msgs2, timeout, temperature, max_tokens)
                     if final:
                         final = _RE_SEARCH_MARKER.sub("", final).strip()
+                        if SETTINGS.get("strip_safety_junk", True):
+                            final = _RE_SAFETY_JUNK.sub("", final).strip()
                         return final or first
                 except Exception: pass
             return _RE_SEARCH_MARKER.sub("", first).strip() or first
@@ -3530,6 +3610,7 @@ def init_telegram(cardinal):
             f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
             f"🚫 Без обещаний: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b>\n"
             f"🔔 О неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
+            f"🧹 Чистка меток: <b>{utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}</b>\n"
             f"🔍 Web-поиск: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
         kb = K(row_width=2)
         kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
@@ -3539,9 +3620,10 @@ def init_telegram(cardinal):
                B(f"🧊 Тон {utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}", callback_data=f"{CB}:tone"))
         kb.row(B(f"🚫 Обещ. {utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}", callback_data=f"{CB}:nopromise"),
                B(f"🔔 Увер. {utils.bool_to_text(SETTINGS.get('confidence_notify', True))}", callback_data=f"{CB}:confnotify"))
-        kb.row(B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"),
-               B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"))
-        kb.add(B("✏️ Текст вод. знака", callback_data=f"{CB}:wmtext"))
+        kb.row(B(f"🧹 Метки {utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}", callback_data=f"{CB}:tog:safetyclean"),
+               B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"))
+        kb.row(B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"),
+               B("✏️ Текст вод. знака", callback_data=f"{CB}:wmtext"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -3693,6 +3775,8 @@ def init_telegram(cardinal):
         SETTINGS["no_unconfirmed_promises"] = not bool(SETTINGS.get("no_unconfirmed_promises", True)); save_config(); show_replies(call)
     def toggle_confnotify(call):
         SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show_replies(call)
+    def toggle_safetyclean(call):
+        SETTINGS["strip_safety_junk"] = not bool(SETTINGS.get("strip_safety_junk", True)); save_config(); show_replies(call)
     def toggle_thank(call):
         SETTINGS["auto_thank_after_payment"] = not bool(SETTINGS.get("auto_thank_after_payment", True)); save_config(); show_orders_menu(call)
     def toggle_autofulfill(call):
@@ -4338,9 +4422,18 @@ def init_telegram(cardinal):
                     LOT_VISION.pop(str(lid), None)
                 details = _vision_extract_lot_details(imgs)
                 if not details:
-                    bot.send_message(m.chat.id,
-                        f"⚠️ Картинок {len(imgs)}, но vision не вернул фактов.\n\n"
-                        + _vision_debug_for_lot(lid))
+                    with LOCK: dbg = dict(LOT_VISION_DEBUG.get("_last") or {})
+                    http_codes = []
+                    for s in (dbg.get("screens") or []):
+                        m2 = re.search(r"HTTPError:\s*(\d{3})", str(s.get("err", "")))
+                        if m2: http_codes.append(int(m2.group(1)))
+                    if http_codes and SETTINGS.get("lot_vision_explain_errors", True):
+                        dominant = max(set(http_codes), key=http_codes.count)
+                        bot.send_message(m.chat.id, _explain_http_error(dominant))
+                    else:
+                        bot.send_message(m.chat.id,
+                            f"⚠️ Картинок {len(imgs)}, но vision не вернул фактов.\n\n"
+                            + _vision_debug_for_lot(lid))
                     return
                 with LOCK: LOT_VISION[str(lid)] = details
                 _save_lot_vision()
@@ -4626,6 +4719,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(toggle_tone, lambda c: c.data == f"{CB}:tone")
     tg.cbq_handler(toggle_nopromise, lambda c: c.data == f"{CB}:nopromise")
     tg.cbq_handler(toggle_confnotify, lambda c: c.data == f"{CB}:confnotify")
+    tg.cbq_handler(toggle_safetyclean, lambda c: c.data == f"{CB}:tog:safetyclean")
     tg.cbq_handler(toggle_thank, lambda c: c.data == f"{CB}:thank")
     tg.cbq_handler(toggle_autofulfill, lambda c: c.data == f"{CB}:autofulfill")
     tg.cbq_handler(toggle_autofulfill_notify, lambda c: c.data == f"{CB}:autofulfillnotify")
