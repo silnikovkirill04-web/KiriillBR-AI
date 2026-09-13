@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "6.5.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Глубокий vision лотов, web-поиск, ЧС+WL, компактное меню."
+VERSION = "7.0.0"
+DESCRIPTION = "AI-помощник продавца FunPay. Исправленный vision, диагностика, web-поиск, ЧС+WL."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -57,25 +57,22 @@ _HTTP_UA = "Mozilla/5.0 (compatible; KiriillBRAI/1.0)"
 
 _VISION_PROMPT = (
     "Ты — строгий модератор контента и AI-заместитель продавца FunPay. Покупатель прислал фото.\n\n"
-    "ТЕБЕ ЗАПРЕЩЕНО ОТКАЗЫВАТЬСЯ ОПИСЫВАТЬ ФОТО. Ты НЕ отказываешься — ты ВСЕГДА ставишь метку и описываешь.\n\n"
-    "ЗАПРЕЩЁННЫЕ ФРАЗЫ: «я не могу помочь», «не могу описать», «недопустимый контент», "
-    "«нарушает правила», «не могу анализировать», «извините, я не могу».\n\n"
+    "ТЕБЕ ЗАПРЕЩЕНО ОТКАЗЫВАТЬСЯ ОПИСЫВАТЬ ФОТО.\n\n"
     "ПРОВЕРКА 1 — OCR: прочитай ВСЁ на фото. Если есть МАТ/ОСКОРБЛЕНИЯ/18+ — начни с [[TEXT_NSFW]].\n"
     "ПРОВЕРКА 2 — ФОРМЫ: если похоже на половые органы — [[ANATOMY_NSFW]].\n"
     "ПРОВЕРКА 3 — NSFW/SHOCK/SCAT/TRASH — по смыслу.\n"
-    "ФОРМАТ: одна метка в начале (если надо), потом описание 2-5 предложений по-русски. "
-    "Если есть текст (чек, скрин, номер заказа, сумма) — перечисли дословно."
+    "ФОРМАТ: одна метка в начале (если надо), потом описание 2-5 предложений по-русски."
 )
 
 _VISION_LOT_PROMPT = (
     "Ты — экспертный OCR-аналитик игровых лотов FunPay. Твоя задача — СКРУПУЛЁЗНО извлечь ВСЁ, "
     "что видно на скринах, и структурировать в понимание: что за игра, что за предмет, сколько.\n\n"
-    "ТЫ ОБЯЗАН заполнить КАЖДЫЙ пункт шаблона. Если факта нет — пиши «не указано», НЕ пропускай строку.\n\n"
-    "=== ШАБЛОН ОТВЕТА (копируй буквально, заполняй значения) ===\n"
+    "ЗАПОЛНИ КАЖДЫЙ пункт шаблона. Если факта нет — пиши «не указано», НЕ пропускай строку.\n\n"
+    "=== ШАБЛОН ОТВЕТА ===\n"
     "🎮 ИГРА:\n"
     "  • Название игры: ...\n"
     "  • Платформа: (Steam / Roblox / Standoff 2 / CS2 / Telegram / VK / другое)\n"
-    "  • Жанр: (шутер / RPG / симулятор / соцсеть / крипто / другое)\n"
+    "  • Жанр: (шутер / RPG / симулятор / соцсеть / другое)\n"
     "  • Регион сервера: (RU / EU / US / глобальный / не указано)\n\n"
     "👤 ПЕРСОНАЖ / АККАУНТ:\n"
     "  • Никнейм: ...\n"
@@ -90,7 +87,7 @@ _VISION_LOT_PROMPT = (
     "  • Премиум-валюта (гемы/кристаллы/рубины): ...\n"
     "  • Прочие ресурсы: ...\n\n"
     "🎁 ПРЕДМЕТЫ / ИНВЕНТАРЬ:\n"
-    "  • Скины (перечисли ПО ИМЕНИ + редкость + количество каждого): ...\n"
+    "  • Скины (перечисли ПО ИМЕНИ + количество каждого, формат «Название ×N»): ...\n"
     "  • Оружие: ...\n"
     "  • Транспорт: ...\n"
     "  • Одежда/аксессуары: ...\n"
@@ -102,7 +99,7 @@ _VISION_LOT_PROMPT = (
     "  • Бусты и ускорители: ...\n\n"
     "📦 КОЛИЧЕСТВО И НАЛИЧИЕ:\n"
     "  • Всего предметов на скрине: <число>\n"
-    "  • Указано ли количество в наличии на FunPay: (да/нет)\n"
+    "  • Указано ли количество в наличии: (да/нет)\n"
     "  • Есть ли стеки (x2, x5, x10): (да/нет, какие)\n\n"
     "⭐ ПРИМЕЧАТЕЛЬНОЕ:\n"
     "  • Редкие/уникальные предметы: ...\n"
@@ -111,12 +108,11 @@ _VISION_LOT_PROMPT = (
     "=== КОНЕЦ ШАБЛОНА ===\n\n"
     "ПРАВИЛА:\n"
     "1. Читай ВСЕ числа, иконки, названия предметов на скрине.\n"
-    "2. Для каждого предмета указывай: НАЗВАНИЕ + КОЛИЧЕСТВО (если видно).\n"
-    "3. Если предмет повторяется — пиши «Название ×N».\n"
-    "4. Если видишь иконку игры, но не знаешь название — опиши (например, «шутер с оружием»).\n"
-    "5. НЕ выдумывай. Если не видно — «не указано».\n"
-    "6. Только структурированный ответ по шаблону, без вступлений и эмодзи-комментариев.\n"
-    "7. Если на скрине не игра (чек, переписка, документ) — ответь «не игровой скрин»."
+    "2. Для каждого предмета указывай: НАЗВАНИЕ + КОЛИЧЕСТВО (формат «Название ×N»).\n"
+    "3. Если видишь иконку игры, но не знаешь название — опиши (например, «шутер с оружием»).\n"
+    "4. НЕ выдумывай. Если не видно — «не указано».\n"
+    "5. Только структурированный ответ по шаблону, без вступлений.\n"
+    "6. Если на скрине не игра (чек, переписка, документ) — ответь «не игровой скрин»."
 )
 
 DEFAULT_PROMPT = (
@@ -127,18 +123,16 @@ DEFAULT_PROMPT = (
     "- На «я возьму 1 штуку» отвечай «Да, оформляйте 👍».\n"
     "- На «куплю» / «беру» — «Отлично! Оформляйте 😊».\n"
     "- КОРОТКО: 1-3 предложения без длинных нравоучений.\n\n"
-    "ЗАПРЕЩЁННЫЕ ФРАЗЫ (использовать НИКОГДА):\n"
+    "ЗАПРЕЩЁННЫЕ ФРАЗЫ:\n"
     "- «я помогу», «мы поможем», «постараюсь помочь», «мы решим»;\n"
     "- «продавец свяжется», «продавец подключится», «продавец ответит»;\n"
     "- «я передам продавцу», «передам ваш запрос», «сообщу продавцу»;\n"
-    "- «уточню у продавца», «свяжусь с продавцом», «позову продавца».\n"
-    "Вместо этого — просто отвечай по существу или нейтрально.\n\n"
-    "ЭМОДЗИ: 1-2 на сообщение по смыслу (💰 📦 ✅ 🤝 😊 ⚠️), кроме проблемных тем.\n\n"
+    "- «уточню у продавца», «свяжусь с продавцом», «позову продавца».\n\n"
+    "ЭМОДЗИ: 1-2 на сообщение по смыслу (💰 📦 ✅ 🤝 😊 ⚠️).\n\n"
     "СТАТУСЫ ЗАКАЗОВ:\n"
     "- paid → «Да, заказ #XXX оплачен, спасибо! 💰»\n"
     "- confirmed → «Заказ #XXX подтверждён и закрыт ✅»\n"
-    "- refunded → «Заказ #XXX возвращён, деньги вернулись покупателю 💸»\n"
-    "- Статус ТОЛЬКО к указанному номеру.\n\n"
+    "- refunded → «Заказ #XXX возвращён, деньги вернулись покупателю 💸»\n\n"
     "ЗАПРЕЩЕНО:\n"
     "- НЕ оформляй заказы. НЕ пиши «Заказ оформлен», «Я оформлю заказ».\n"
     "- НЕ пиши «измените количество в лоте».\n"
@@ -150,8 +144,7 @@ DEFAULT_PROMPT = (
     "- РАЗБИРАЕШЬ ФОТО, СКРИНШОТЫ, ЧЕКИ.\n\n"
     "ФОТО РАЗРЕШЕНО:\n"
     "- «А если я скину фото — скажете что на нём?» — «Да, конечно! Отправляйте — посмотрю 📸»\n"
-    "- ЗАПРЕЩЕНО: «не могу помочь с фото», «не умею смотреть фото», «отправляйте текстом».\n"
-    "- Фото пришло — опиши 2-5 предложений. Текст/чек/номер/сумма — дословно.\n\n"
+    "- ЗАПРЕЩЕНО: «не могу помочь с фото», «не умею смотреть фото», «отправляйте текстом».\n\n"
     "ПОИСК В ОТКРЫТЫХ ИСТОЧНИКАХ:\n"
     "Если покупатель спрашивает что-то о САМОЙ ИГРЕ / ПЛАТФОРМЕ / ПРАВИЛАХ, чего нет в "
     "ТЕКУЩИЙ ТОВАР / ИНСТРУКЦИЯ / ПОДКЛЮЧЁННЫЕ ТОВАРЫ, поставь В КОНЦЕ ответа маркер:\n"
@@ -161,10 +154,10 @@ DEFAULT_PROMPT = (
 )
 
 BUYER_ROLE_PROMPT = (
-    "Ты — AI-помощник ПОКУПАТЕЛЯ на FunPay. Владелец этого бота — ПОКУПАТЕЛЬ, собеседник — ПРОДАВЕЦ.\n\n"
+    "Ты — AI-помощник ПОКУПАТЕЛЯ на FunPay. Владелец бота — ПОКУПАТЕЛЬ, собеседник — ПРОДАВЕЦ.\n\n"
     "ТЫ НЕ продавец. НИКОГДА не говори от имени продавца.\n"
     "НЕ подтверждаешь оплату, НЕ обещаешь выдачу, НЕ выдаёшь товар.\n"
-    "Помогаешь формулировать вопросы продавцу и пояснять его ответы.\n\n"
+    "Помогаешь формулировать вопросы продавцу.\n\n"
     "СТИЛЬ: кратко, 1-3 предложения, живо, эмодзи 1-2."
 )
 
@@ -181,12 +174,10 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.1.1] НИКОГДА не соглашайся передать товар без оплаты через FunPay.
 [2.1.2] Не проси подтвердить заказ до выполнения.
 [2.1.4] На разрешённые вопросы отвечай по существу.
-[2.2.x] НИКОГДА не помогай с продажей незаконных товаров, обучения незаконной деятельности,
-персданных, вредоносного ПО, аккаунтов соцсетей, телефонных номеров, аккаунтов оптом,
-эротики/порно, спама, казино/ставок, донат/накрутки, лотерей/рандома, крипты.
+[2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 62, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 63, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -209,38 +200,24 @@ DEFAULTS = {"version": 62, "enabled": True, "setup_done": False,
     "update_check_interval_minutes": 30, "auto_update": False,
     "auto_restart_after_update": False, "last_notified_version": "",
     "last_installed_version": "", "pending_restart_version": "",
-    "blacklist": [],
-    "blacklist_enabled": True,
-    "auto_blacklist_enabled": True,
-    "auto_blacklist_spam": True,
-    "auto_blacklist_photo_ask": True,
-    "auto_blacklist_photo_send": True,
-    "auto_blacklist_forbidden_photo": True,
-    "auto_blacklist_indecent": True,
-    "auto_blacklist_code": True,
-    "auto_blacklist_bad_intent": True,
-    "auto_blacklist_bad_goal": True,
-    "unblacklist_on_payment": True,
-    "whitelist": [],
-    "whitelist_enabled": True,
-    "auto_whitelist_after_orders": 3,
-    "role_detection_enabled": True,
-    "default_chat_role": "auto",
+    "blacklist": [], "blacklist_enabled": True,
+    "auto_blacklist_enabled": True, "auto_blacklist_spam": True,
+    "auto_blacklist_photo_ask": True, "auto_blacklist_photo_send": True,
+    "auto_blacklist_forbidden_photo": True, "auto_blacklist_indecent": True,
+    "auto_blacklist_code": True, "auto_blacklist_bad_intent": True,
+    "auto_blacklist_bad_goal": True, "unblacklist_on_payment": True,
+    "whitelist": [], "whitelist_enabled": True, "auto_whitelist_after_orders": 3,
+    "role_detection_enabled": True, "default_chat_role": "auto",
     "buyer_role_prompt": BUYER_ROLE_PROMPT,
-    "lot_instructions": {},
-    "lot_attached_items": {},
-    "notify_only_when_called": True,
-    "lot_images_vision": True,
-    "manual_fulfill_notify": True,
-    "web_search_enabled": True,
-    "web_search_max_results": 5,
-    "lot_vision_extract": True,
-    "lot_vision_on_the_fly": True,
-    "lot_image_min_bytes": 5000,
-    "lot_image_validate_http": True,
-    "lot_deep_analysis": True,
-    "lot_vision_max_images": 5,
-    "lot_vision_merge": True,
+    "lot_instructions": {}, "lot_attached_items": {},
+    "notify_only_when_called": True, "lot_images_vision": True,
+    "manual_fulfill_notify": True, "web_search_enabled": True,
+    "web_search_max_results": 5, "lot_vision_extract": True,
+    "lot_vision_on_the_fly": True, "lot_image_min_bytes": 5000,
+    "lot_image_validate_http": True, "lot_deep_analysis": True,
+    "lot_vision_max_images": 5, "lot_vision_merge": True,
+    "lot_vision_retry": True, "lot_vision_verbose": True,
+    "lot_vision_max_tokens": 1400, "lot_vision_strict_parse": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -266,6 +243,7 @@ BUYER_ORDERS_COUNT = {}
 ORDER_BUYER = {}
 LOT_VISION = {}
 LOT_IMG_DEBUG = {}
+LOT_VISION_DEBUG = {}
 UPDATE_STATE = {"checked_at": 0.0, "status": "not_checked", "error": "",
     "manifest": None, "available": False, "installing": False}
 LOCK = threading.RLock()
@@ -426,19 +404,12 @@ _RE_SEARCH_MARKER = re.compile(r"\[\[\s*SEARCH\s*:\s*(.+?)\s*\]\]", re.I | re.DO
 _IMG_EXT_RE = re.compile(r"https?://[^\s\"'<>\\]+\.(?:jpe?g|png|webp|gif|bmp)", re.I)
 
 _FUNPAY_UI_IMG = re.compile(
-    r"(?:"
-    r"/user/avatar|/avatars?/|avatar[_.\-]|"
-    r"/icons?/|/icon[_.\-]|"
-    r"/emoji|/smiles?/|/smile[_.\-]|"
-    r"/logo|/logos?/|"
-    r"/flags?/|/flag[_.\-]|"
-    r"/sprite|sprite[_.\-]|"
-    r"/placeholder|no[-_]photo|no[-_]image|noimage|"
+    r"(?:/user/avatar|/avatars?/|avatar[_.\-]|/icons?/|/icon[_.\-]|"
+    r"/emoji|/smiles?/|/smile[_.\-]|/logo|/logos?/|/flags?/|/flag[_.\-]|"
+    r"/sprite|sprite[_.\-]|/placeholder|no[-_]photo|no[-_]image|noimage|"
     r"/blank\.|/pixel\.|/spacer\.|/1x1\.|/transparent\.|"
     r"funpay\.com/(?:img|static|css|js|assets|design|templates|fonts)/|"
-    r"/loading\.|/loader\.|/spinner\.|/arrow|/chevron|/close\.|/menu\.|/search\."
-    r")", re.I
-)
+    r"/loading\.|/loader\.|/spinner\.|/arrow|/chevron|/close\.|/menu\.|/search\.)", re.I)
 
 _PROMISE_PHRASES = [
     re.compile(r"\bя\s+(?:помог\w*|постара\w*сь\s+помочь|решу|подскажу|улажу)", re.I),
@@ -464,31 +435,28 @@ def _merge(a, b):
 
 def load_config():
     global SETTINGS
-    if not os.path.exists(CFG_PATH):
-        return
+    if not os.path.exists(CFG_PATH): return
     try:
         with open(CFG_PATH, encoding="utf-8") as f:
             SETTINGS = _merge(DEFAULTS, json.load(f))
-    except (OSError, json.JSONDecodeError):
-        return
+    except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
-                    if cur == "seller":
-                        SETTINGS["default_chat_role"] = "auto"
+                    if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 62:
-            SETTINGS.setdefault("lot_deep_analysis", True)
-            SETTINGS.setdefault("lot_vision_max_images", 5)
-            SETTINGS.setdefault("lot_vision_merge", True)
-            SETTINGS["version"] = 62
+        if cv < 63:
+            SETTINGS.setdefault("lot_vision_retry", True)
+            SETTINGS.setdefault("lot_vision_verbose", True)
+            SETTINGS.setdefault("lot_vision_max_tokens", 1400)
+            SETTINGS.setdefault("lot_vision_strict_parse", True)
+            SETTINGS["version"] = 63
             save_config()
-    except Exception:
-        pass
+    except Exception: pass
 
 def save_config():
     os.makedirs(os.path.dirname(CFG_PATH), exist_ok=True)
@@ -503,7 +471,7 @@ def save_config():
             try: os.path.exists(tmp) and os.remove(tmp)
             except OSError: pass
 
-def _atomic_write(path: str, data):
+def _atomic_write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
@@ -527,119 +495,91 @@ def save_orders_state():
                 "manual_queue": dict(MANUAL_FULFILL_QUEUE),
                 "order_buyer": dict(ORDER_BUYER)}
         _atomic_write(ORDERS_PATH, data)
-    except Exception:
-        logger.debug("save_orders_state failed", exc_info=True)
+    except Exception: logger.debug("save_orders_state failed", exc_info=True)
 
 def load_orders_state():
     global ORDER_STATUS, CHAT_ORDERS, CLOSED_ORDERS, PROCESSED_ORDERS, CHAT_ROLE, MANUAL_FULFILL_QUEUE
-    if not os.path.exists(ORDERS_PATH):
-        return
+    if not os.path.exists(ORDERS_PATH): return
     try:
         with open(ORDERS_PATH, encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return
+    except (OSError, json.JSONDecodeError): return
     now = time.time()
     try:
         saved_at = float(data.get("saved_at", 0) or 0)
-        if saved_at and now - saved_at > 30 * 86400:
-            return
+        if saved_at and now - saved_at > 30 * 86400: return
         for oid, val in (data.get("order_status") or {}).items():
             try:
                 st, ck, ts = val[0], val[1], float(val[2])
-                if now - ts > _ORDER_CLOSED_TTL:
-                    continue
+                if now - ts > _ORDER_CLOSED_TTL: continue
                 ORDER_STATUS[str(oid)] = (str(st), str(ck), ts)
-            except Exception:
-                continue
+            except Exception: continue
         for ck, lst in (data.get("chat_orders") or {}).items():
-            try:
-                CHAT_ORDERS[str(ck)] = [str(x) for x in list(lst)][-10:]
-            except Exception:
-                continue
+            try: CHAT_ORDERS[str(ck)] = [str(x) for x in list(lst)][-10:]
+            except Exception: continue
         for oid, ts in (data.get("closed_orders") or {}).items():
             try:
                 ts = float(ts)
-                if now - ts <= _ORDER_CLOSED_TTL:
-                    CLOSED_ORDERS[str(oid)] = ts
-            except Exception:
-                continue
+                if now - ts <= _ORDER_CLOSED_TTL: CLOSED_ORDERS[str(oid)] = ts
+            except Exception: continue
         for oid, ts in (data.get("processed_orders") or {}).items():
             try:
                 ts = float(ts)
-                if now - ts <= _ORDER_DEDUP_TTL:
-                    PROCESSED_ORDERS[str(oid)] = ts
-            except Exception:
-                continue
+                if now - ts <= _ORDER_DEDUP_TTL: PROCESSED_ORDERS[str(oid)] = ts
+            except Exception: continue
         for ck, rl in (data.get("chat_role") or {}).items():
-            if str(rl) in ("seller", "buyer"):
-                CHAT_ROLE[str(ck)] = str(rl)
+            if str(rl) in ("seller", "buyer"): CHAT_ROLE[str(ck)] = str(rl)
         for oid, rec in (data.get("manual_queue") or {}).items():
             try:
                 if isinstance(rec, dict) and (now - float(rec.get("ts", 0)) < 30 * 86400):
                     MANUAL_FULFILL_QUEUE[str(oid)] = rec
-            except Exception:
-                continue
+            except Exception: continue
         for oid, nick in (data.get("order_buyer") or {}).items():
-            if str(nick).strip():
-                ORDER_BUYER[str(oid)] = str(nick)
-    except Exception:
-        logger.debug("load_orders_state failed", exc_info=True)
+            if str(nick).strip(): ORDER_BUYER[str(oid)] = str(nick)
+    except Exception: logger.debug("load_orders_state failed", exc_info=True)
 
 def save_history_state():
     try:
         with LOCK:
             data = {"saved_at": time.time(), "chats": {}}
             for cid, hist in HISTORY.items():
-                if hist:
-                    data["chats"][str(cid)] = list(hist)[-30:]
+                if hist: data["chats"][str(cid)] = list(hist)[-30:]
         _atomic_write(HISTORY_PATH, data)
-    except Exception:
-        logger.debug("save_history_state failed", exc_info=True)
+    except Exception: logger.debug("save_history_state failed", exc_info=True)
 
 def load_history_state():
     global HISTORY
-    if not os.path.exists(HISTORY_PATH):
-        return
+    if not os.path.exists(HISTORY_PATH): return
     try:
         with open(HISTORY_PATH, encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return
+    except (OSError, json.JSONDecodeError): return
     now = time.time()
     try:
         saved_at = float(data.get("saved_at", 0) or 0)
-        if saved_at and now - saved_at > 30 * 86400:
-            return
+        if saved_at and now - saved_at > 30 * 86400: return
         for cid, hist in (data.get("chats") or {}).items():
-            if not isinstance(hist, list):
-                continue
+            if not isinstance(hist, list): continue
             clean = []
             for item in hist[-_HISTORY_HARD_CAP:]:
-                if not isinstance(item, dict):
-                    continue
-                rl = str(item.get("role") or "")
-                ct = str(item.get("content") or "")
+                if not isinstance(item, dict): continue
+                rl = str(item.get("role") or ""); ct = str(item.get("content") or "")
                 if rl in ("user", "assistant") and ct:
                     clean.append({"role": rl, "content": ct[:3000]})
             if clean:
                 HISTORY[str(cid)] = clean
                 CHAT_HISTORY_BOOTSTRAPPED.add(str(cid))
-    except Exception:
-        logger.debug("load_history_state failed", exc_info=True)
+    except Exception: logger.debug("load_history_state failed", exc_info=True)
 
 def _save_buyer_counts():
     try:
-        with LOCK:
-            data = {"saved_at": time.time(), "counts": dict(BUYER_ORDERS_COUNT)}
+        with LOCK: data = {"saved_at": time.time(), "counts": dict(BUYER_ORDERS_COUNT)}
         _atomic_write(BUYER_COUNT_PATH, data)
-    except Exception:
-        logger.debug("save_buyer_counts failed", exc_info=True)
+    except Exception: logger.debug("save_buyer_counts failed", exc_info=True)
 
 def _load_buyer_counts():
     global BUYER_ORDERS_COUNT
-    if not os.path.exists(BUYER_COUNT_PATH):
-        return
+    if not os.path.exists(BUYER_COUNT_PATH): return
     try:
         with open(BUYER_COUNT_PATH, encoding="utf-8") as f:
             data = json.load(f)
@@ -647,21 +587,17 @@ def _load_buyer_counts():
         if isinstance(counts, dict):
             with LOCK:
                 BUYER_ORDERS_COUNT = {str(k): int(v) for k, v in counts.items() if str(k)}
-    except Exception:
-        logger.debug("load_buyer_counts failed", exc_info=True)
+    except Exception: logger.debug("load_buyer_counts failed", exc_info=True)
 
 def _save_lot_vision():
     try:
-        with LOCK:
-            data = {"saved_at": time.time(), "items": dict(LOT_VISION)}
+        with LOCK: data = {"saved_at": time.time(), "items": dict(LOT_VISION)}
         _atomic_write(LOT_VISION_PATH, data)
-    except Exception:
-        logger.debug("save_lot_vision failed", exc_info=True)
+    except Exception: logger.debug("save_lot_vision failed", exc_info=True)
 
 def _load_lot_vision():
     global LOT_VISION
-    if not os.path.exists(LOT_VISION_PATH):
-        return
+    if not os.path.exists(LOT_VISION_PATH): return
     try:
         with open(LOT_VISION_PATH, encoding="utf-8") as f:
             data = json.load(f)
@@ -669,8 +605,7 @@ def _load_lot_vision():
             with LOCK:
                 LOT_VISION = {str(k): str(v) for k, v in data["items"].items() if str(v).strip()}
             logger.info("lot vision cache: %d лотов", len(LOT_VISION))
-    except Exception:
-        logger.debug("load_lot_vision failed", exc_info=True)
+    except Exception: logger.debug("load_lot_vision failed", exc_info=True)
 
 def is_enabled(c):
     p = c.plugins.get(UUID)
@@ -678,13 +613,11 @@ def is_enabled(c):
 
 def _norm_nick(nick):
     s = str(nick or "").strip().lower()
-    if s.startswith("@"):
-        s = s[1:]
+    if s.startswith("@"): s = s[1:]
     return s.strip()
 
 def get_blacklist():
-    with LOCK:
-        raw = SETTINGS.get("blacklist") or []
+    with LOCK: raw = SETTINGS.get("blacklist") or []
     result = set()
     if isinstance(raw, (list, tuple)):
         for x in raw:
@@ -693,8 +626,7 @@ def get_blacklist():
     return result
 
 def is_blacklisted(*candidates):
-    if not SETTINGS.get("blacklist_enabled", True):
-        return False
+    if not SETTINGS.get("blacklist_enabled", True): return False
     bl = get_blacklist()
     if not bl: return False
     for cand in candidates:
@@ -703,8 +635,7 @@ def is_blacklisted(*candidates):
     return False
 
 def get_whitelist():
-    with LOCK:
-        raw = SETTINGS.get("whitelist") or []
+    with LOCK: raw = SETTINGS.get("whitelist") or []
     result = set()
     if isinstance(raw, (list, tuple)):
         for x in raw:
@@ -713,8 +644,7 @@ def get_whitelist():
     return result
 
 def is_whitelisted(*candidates):
-    if not SETTINGS.get("whitelist_enabled", True):
-        return False
+    if not SETTINGS.get("whitelist_enabled", True): return False
     wl = get_whitelist()
     if not wl: return False
     for cand in candidates:
@@ -729,10 +659,8 @@ def _add_to_whitelist(nick, auto=False):
         cur = list(SETTINGS.get("whitelist") or [])
         cur_norm = {_norm_nick(x) for x in cur}
         if n in cur_norm: return True
-        cur.append(n)
-        SETTINGS["whitelist"] = cur
-    save_config()
-    return True
+        cur.append(n); SETTINGS["whitelist"] = cur
+    save_config(); return True
 
 def _remove_from_whitelist(nick):
     n = _norm_nick(nick)
@@ -742,23 +670,20 @@ def _remove_from_whitelist(nick):
         new = [x for x in cur if _norm_nick(x) != n]
         if len(new) == len(cur): return False
         SETTINGS["whitelist"] = new
-    save_config()
-    return True
+    save_config(); return True
 
-def _bump_buyer_orders(nick) -> int:
+def _bump_buyer_orders(nick):
     n = _norm_nick(nick)
     if not n: return 0
     with LOCK:
         cnt = int(BUYER_ORDERS_COUNT.get(n, 0)) + 1
         BUYER_ORDERS_COUNT[n] = cnt
-    _save_buyer_counts()
-    return cnt
+    _save_buyer_counts(); return cnt
 
 def _extract_nick_from_message(m):
     for attr in ("author", "username", "chat_name", "interlocutor_username", "buyer_username"):
         v = getattr(m, attr, None)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
+        if isinstance(v, str) and v.strip(): return v.strip()
     return ""
 
 def _add_to_blacklist(nick, auto=False):
@@ -768,10 +693,8 @@ def _add_to_blacklist(nick, auto=False):
         cur = list(SETTINGS.get("blacklist") or [])
         cur_norm = {_norm_nick(x) for x in cur}
         if n in cur_norm: return True
-        cur.append(n)
-        SETTINGS["blacklist"] = cur
-    save_config()
-    return True
+        cur.append(n); SETTINGS["blacklist"] = cur
+    save_config(); return True
 
 def _remove_from_blacklist(nick):
     n = _norm_nick(nick)
@@ -781,15 +704,12 @@ def _remove_from_blacklist(nick):
         new = [x for x in cur if _norm_nick(x) != n]
         if len(new) == len(cur): return False
         SETTINGS["blacklist"] = new
-    save_config()
-    return True
+    save_config(); return True
 
 def _auto_whitelist_check(c, buyer):
     if not SETTINGS.get("whitelist_enabled", True): return
-    try:
-        threshold = max(1, int(SETTINGS.get("auto_whitelist_after_orders", 3) or 3))
-    except Exception:
-        threshold = 3
+    try: threshold = max(1, int(SETTINGS.get("auto_whitelist_after_orders", 3) or 3))
+    except Exception: threshold = 3
     cnt = _bump_buyer_orders(buyer)
     if cnt >= threshold and not is_whitelisted(buyer):
         if _add_to_whitelist(buyer, auto=True):
@@ -798,8 +718,7 @@ def _auto_whitelist_check(c, buyer):
                     body=(f"👤 Ник: <b>{utils.escape(_safe_for_notify(buyer, 120))}</b>\n"
                           f"🎉 Успешных заказов: <b>{cnt}</b>\n"
                           f"💡 Авто-добавление после {threshold} заказов."))
-            except Exception:
-                pass
+            except Exception: pass
 
 def _set_chat_role(chat_id, role):
     key = str(chat_id or "")
@@ -808,14 +727,12 @@ def _set_chat_role(chat_id, role):
         prev = CHAT_ROLE.get(key)
         if prev == role: return False
         CHAT_ROLE[key] = role
-    save_orders_state()
-    return True
+    save_orders_state(); return True
 
 def _auto_detect_role(chat_id, lot=None):
     key = str(chat_id or "")
     if not key: return "seller"
-    with LOCK:
-        has_order = bool(CHAT_ORDERS.get(key))
+    with LOCK: has_order = bool(CHAT_ORDERS.get(key))
     if has_order: return "seller"
     if lot is not None and lot.get("id"):
         lid = str(lot.get("id"))
@@ -826,54 +743,45 @@ def _auto_detect_role(chat_id, lot=None):
 def _get_chat_role(chat_id, lot=None):
     key = str(chat_id or "")
     if not key: return ""
-    with LOCK:
-        role = CHAT_ROLE.get(key, "")
+    with LOCK: role = CHAT_ROLE.get(key, "")
     if role: return role
     if not SETTINGS.get("role_detection_enabled", True): return ""
     default = str(SETTINGS.get("default_chat_role") or "auto").strip().lower()
     if default == "auto":
         auto_role = _auto_detect_role(key, lot)
         if auto_role:
-            _set_chat_role(key, auto_role)
-            return auto_role
+            _set_chat_role(key, auto_role); return auto_role
         return "seller"
     if default in ("seller", "buyer"): return default
     return "seller"
 
 def _message_has_photo(m):
     if m is None: return False
-    for attr in ("image_link", "image_url", "image", "photo",
-                 "preview_url", "attachment", "attachments",
-                 "media", "media_url", "file", "files",
+    for attr in ("image_link", "image_url", "image", "photo", "preview_url",
+                 "attachment", "attachments", "media", "media_url", "file", "files",
                  "thumbnail", "thumb", "content_url", "download_url"):
         try:
             v = getattr(m, attr, None)
             if v is None: continue
             if isinstance(v, str) and v.strip(): return True
             if isinstance(v, (list, tuple, dict)) and len(v) > 0: return True
-        except Exception:
-            continue
+        except Exception: continue
     for attr in ("text", "message", "body"):
         try:
             t = str(getattr(m, attr, "") or "")
-            if re.search(r"https?://[^\s]+\.(?:jpe?g|png|webp|gif|bmp|heic)\b", t, re.I):
-                return True
-        except Exception:
-            continue
+            if re.search(r"https?://[^\s]+\.(?:jpe?g|png|webp|gif|bmp|heic)\b", t, re.I): return True
+        except Exception: continue
     try:
         mt = getattr(m, "type", None)
         if mt is not None:
             name = str(getattr(mt, "name", "") or mt).upper()
-            if "IMAGE" in name or "PHOTO" in name or "PICTURE" in name or "MEDIA" in name:
-                return True
-    except Exception:
-        pass
+            if any(x in name for x in ("IMAGE", "PHOTO", "PICTURE", "MEDIA")): return True
+    except Exception: pass
     for attr in ("content_type", "mime", "mime_type"):
         try:
             ct = str(getattr(m, attr, "") or "").lower()
             if ct.startswith("image/"): return True
-        except Exception:
-            continue
+        except Exception: continue
     return False
 
 def _is_indecent_message(text):
@@ -905,8 +813,7 @@ def _is_chat_goal_bad(chat_id):
     if not SETTINGS.get("auto_blacklist_bad_goal", True): return False
     key = str(chat_id or "")
     if not key: return False
-    with LOCK:
-        h = list(HISTORY.get(key, []))
+    with LOCK: h = list(HISTORY.get(key, []))
     if not h: return False
     bad = 0
     for item in h[-20:]:
@@ -942,17 +849,14 @@ def _instant_blacklist(c, m, reason, extra=""):
     _add_to_blacklist(nick, auto=True)
     try:
         chat_id = getattr(m, "chat_id", "")
-        safe_nick = _safe_for_notify(nick, 120)
-        safe_extra = _safe_for_notify(str(extra or ""), 500)
+        safe_nick = _safe_for_notify(nick, 120); safe_extra = _safe_for_notify(str(extra or ""), 500)
         header = "🚨 <b>МГНОВЕННАЯ БЛОКИРОВКА</b>"
         body = (f"👤 Ник: <b>{utils.escape(safe_nick)}</b>\n"
                 f"💬 Чат: <code>{utils.escape(str(chat_id))}</code>\n"
                 f"🧠 Причина: <i>{utils.escape(reason)}</i>")
-        if safe_extra:
-            body += f"\n\n💬 Текст: <code>{utils.escape(safe_extra)}</code>"
+        if safe_extra: body += f"\n\n💬 Текст: <code>{utils.escape(safe_extra)}</code>"
         notify_seller_text(c, header=header, body=body)
-    except Exception:
-        pass
+    except Exception: pass
     return True
 
 def _auto_blacklist_indecent(c, m, text):
@@ -988,27 +892,21 @@ def _track_suspicious(c, m, text):
             rec = SPAM_WATCH.get(chat_key)
             if rec and int(rec.get("photo_sent", 0)) > 0:
                 rec["count"] = 0; rec["similar"] = 1; rec["photo_ask"] = 0
-            else:
-                SPAM_WATCH.pop(chat_key, None)
+            else: SPAM_WATCH.pop(chat_key, None)
         return False
     is_offtopic_msg = bool(s) and is_offtopic(s)
     is_short_garbage = False
     if s and not is_offtopic_msg and not is_photo_ask and not has_photo:
         words = re.findall(r"[а-яa-zё]{3,}", s, re.I)
-        if len(words) == 0 and len(s) < 40 and not _is_short_greeting(s):
-            is_short_garbage = True
-    if not (is_photo_ask or is_offtopic_msg or is_short_garbage or has_photo):
-        return False
+        if len(words) == 0 and len(s) < 40 and not _is_short_greeting(s): is_short_garbage = True
+    if not (is_photo_ask or is_offtopic_msg or is_short_garbage or has_photo): return False
     now = time.time()
     with LOCK:
         rec = SPAM_WATCH.get(chat_key)
         if not rec or now - rec.get("first_ts", 0) > _SPAM_WINDOW:
-            rec = {"count": 0, "first_ts": now, "last_text": s, "similar": 1,
-                   "photo_ask": 0, "photo_sent": 0}
-        if is_photo_ask:
-            rec["photo_ask"] = int(rec.get("photo_ask", 0)) + 1
-        if has_photo:
-            rec["photo_sent"] = int(rec.get("photo_sent", 0)) + 1
+            rec = {"count": 0, "first_ts": now, "last_text": s, "similar": 1, "photo_ask": 0, "photo_sent": 0}
+        if is_photo_ask: rec["photo_ask"] = int(rec.get("photo_ask", 0)) + 1
+        if has_photo: rec["photo_sent"] = int(rec.get("photo_sent", 0)) + 1
         if is_offtopic_msg or is_short_garbage:
             rec["count"] = int(rec.get("count", 0)) + 1
             prev = rec.get("last_text", "") or ""
@@ -1016,16 +914,12 @@ def _track_suspicious(c, m, text):
             if prev and s:
                 try: sim = difflib.SequenceMatcher(None, prev.lower(), s.lower()).ratio()
                 except Exception: sim = 0.0
-            if sim >= 0.85:
-                rec["similar"] = int(rec.get("similar", 1)) + 1
-            else:
-                rec["similar"] = 1
+            if sim >= 0.85: rec["similar"] = int(rec.get("similar", 1)) + 1
+            else: rec["similar"] = 1
         if s: rec["last_text"] = s
         SPAM_WATCH[chat_key] = rec
-        count = int(rec.get("count", 0))
-        similar = int(rec.get("similar", 0))
-        photo_ask = int(rec.get("photo_ask", 0))
-        photo_sent = int(rec.get("photo_sent", 0))
+        count = int(rec.get("count", 0)); similar = int(rec.get("similar", 0))
+        photo_ask = int(rec.get("photo_ask", 0)); photo_sent = int(rec.get("photo_sent", 0))
     trigger = ""
     if SETTINGS.get("auto_blacklist_spam", True):
         if count >= _SPAM_LIMIT: trigger = f"{count} оффтоп за 30 мин"
@@ -1044,8 +938,7 @@ def _track_suspicious(c, m, text):
                 f"💬 Чат: <code>{utils.escape(chat_key)}</code>\n"
                 f"🧠 Причина: <i>{utils.escape(trigger)}</i>")
         notify_seller_text(c, header=header, body=body)
-    except Exception:
-        pass
+    except Exception: pass
     with LOCK: SPAM_WATCH.pop(chat_key, None)
     return True
 
@@ -1078,30 +971,23 @@ def _validate_manifest(data):
     if not isinstance(data, dict): raise ValueError("manifest должен быть JSON-объектом")
     try: schema = int(data.get("schema", 0) or 0)
     except Exception: schema = 0
-    if schema != UPDATE_MANIFEST_SCHEMA:
-        raise ValueError(f"неподдерживаемая схема: {schema}")
-    if str(data.get("uuid") or "").strip() != UUID:
-        raise ValueError("UUID не совпадает")
+    if schema != UPDATE_MANIFEST_SCHEMA: raise ValueError(f"неподдерживаемая схема: {schema}")
+    if str(data.get("uuid") or "").strip() != UUID: raise ValueError("UUID не совпадает")
     version = str(data.get("version") or "").strip()
     download_url = str(data.get("download_url") or "").strip()
     sha256 = str(data.get("sha256") or "").strip().lower()
     if not version or not re.match(r"^v?\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z._-]+)?$", version):
         raise ValueError("некорректная версия в manifest")
-    if not _is_safe_url(download_url):
-        raise ValueError("download_url должен быть HTTPS")
-    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
-        raise ValueError("SHA-256 отсутствует или неверный")
+    if not _is_safe_url(download_url): raise ValueError("download_url должен быть HTTPS")
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256): raise ValueError("SHA-256 отсутствует или неверный")
     res = dict(data)
-    res["version"] = version.lstrip("v")
-    res["download_url"] = download_url
-    res["sha256"] = sha256
-    res["notes"] = str(data.get("notes") or "").strip()[:1800]
+    res["version"] = version.lstrip("v"); res["download_url"] = download_url
+    res["sha256"] = sha256; res["notes"] = str(data.get("notes") or "").strip()[:1800]
     res["mandatory"] = bool(data.get("mandatory", False))
     return res
 
 def _safe_json(r, context=""):
-    try:
-        return r.json()
+    try: return r.json()
     except Exception as e:
         ct = (r.headers.get("Content-Type") or "").lower()
         try: body = r.text[:500]
@@ -1124,8 +1010,7 @@ def fetch_update_manifest(force=False):
     with LOCK:
         cached = UPDATE_STATE.get("manifest")
         checked = float(UPDATE_STATE.get("checked_at", 0.0) or 0.0)
-        if not force and checked and now - checked < 60 and isinstance(cached, dict):
-            return cached, ""
+        if not force and checked and now - checked < 60 and isinstance(cached, dict): return cached, ""
     try:
         r = requests.get(url, timeout=(6, 20), headers={"User-Agent": UPDATE_USER_AGENT,
             "Accept": "application/json", "Cache-Control": "no-cache"})
@@ -1207,8 +1092,7 @@ def install_update(c, manifest=None):
         SETTINGS["pending_restart_version"] = rv
         save_config()
         with LOCK:
-            UPDATE_STATE.update(status="installed_pending_restart", available=False,
-                error="", manifest=manifest)
+            UPDATE_STATE.update(status="installed_pending_restart", available=False, error="", manifest=manifest)
         return True, f"Версия v{rv} установлена. Нужен перезапуск Cardinal."
     except Exception as exc:
         msg = f"{type(exc).__name__}: {exc}"
@@ -1250,9 +1134,7 @@ def notify_update(c, manifest, force=False):
     kb.add(B("🔄 Открыть обновления", callback_data=f"{CB}:m:update"))
     try:
         c.telegram.send_notification(_update_notification_text(manifest), keyboard=kb)
-        SETTINGS["last_notified_version"] = version
-        save_config()
-        return True
+        SETTINGS["last_notified_version"] = version; save_config(); return True
     except Exception: return False
 
 def check_updates_cycle(c, notify=True, force=False):
@@ -1261,8 +1143,7 @@ def check_updates_cycle(c, notify=True, force=False):
     if _version_key(str(manifest.get("version") or "")) <= _version_key(VERSION):
         pending = str(SETTINGS.get("pending_restart_version") or "")
         if pending and _version_key(VERSION) >= _version_key(pending):
-            SETTINGS["pending_restart_version"] = ""
-            save_config()
+            SETTINGS["pending_restart_version"] = ""; save_config()
         return manifest, ""
     if SETTINGS.get("auto_update", False):
         ok, msg = install_update(c, manifest)
@@ -1283,8 +1164,7 @@ def update_worker(c):
     if STOP.wait(5.0): return
     while not STOP.is_set():
         try:
-            if SETTINGS.get("update_checks_enabled", True):
-                check_updates_cycle(c, notify=True, force=True)
+            if SETTINGS.get("update_checks_enabled", True): check_updates_cycle(c, notify=True, force=True)
         except Exception: pass
         try: minutes = int(SETTINGS.get("update_check_interval_minutes", 30) or 30)
         except Exception: minutes = 30
@@ -1304,14 +1184,12 @@ def update_status_line():
     if not SETTINGS.get("update_checks_enabled", True): return "выключены"
     if not _manifest_url(): return "URL manifest не настроен"
     pending = str(SETTINGS.get("pending_restart_version") or "")
-    if pending and _version_key(pending) > _version_key(VERSION):
-        return f"v{pending} установлена · нужен рестарт"
+    if pending and _version_key(pending) > _version_key(VERSION): return f"v{pending} установлена · нужен рестарт"
     with LOCK:
         status = str(UPDATE_STATE.get("status") or "not_checked")
         manifest = UPDATE_STATE.get("manifest")
         err = str(UPDATE_STATE.get("error") or "")
-    if status == "available" and isinstance(manifest, dict):
-        return f"доступна v{manifest.get('version')}"
+    if status == "available" and isinstance(manifest, dict): return f"доступна v{manifest.get('version')}"
     if status == "current": return "актуальна"
     if status == "error": return f"ошибка: {err[:60]}"
     return "ещё не проверялись"
@@ -1590,18 +1468,13 @@ def _is_prod_num(text, m):
 def outbound_violation(text):
     v = str(text or "")
     if not v: return "empty"
-    if _RE_EMAIL.search(v) or _RE_HANDLE.search(v) or _RE_TG_LINK.search(v):
-        return "contacts"
-    if any(not _is_prod_num(v, m) for m in _RE_PHONE.finditer(v)):
-        return "contacts"
+    if _RE_EMAIL.search(v) or _RE_HANDLE.search(v) or _RE_TG_LINK.search(v): return "contacts"
+    if any(not _is_prod_num(v, m) for m in _RE_PHONE.finditer(v)): return "contacts"
     for m in _RE_URL.finditer(v):
-        if not _RE_FUNPAY.match(m.group(0)):
-            return "off_platform"
-    if _RE_SECRET.search(v):
-        return "account_security"
+        if not _RE_FUNPAY.match(m.group(0)): return "off_platform"
+    if _RE_SECRET.search(v): return "account_security"
     for m in _RE_CARD.finditer(v):
-        if not _is_prod_num(v, m):
-            return "confidential"
+        if not _is_prod_num(v, m): return "confidential"
     return ""
 
 def _safe_for_notify(text, limit=1000):
@@ -1643,18 +1516,13 @@ def classify_policy_violation(text):
     if not n: return ""
     if _RE_CONTACT.search(n) and _RE_CONTACT_ASK.search(n) and not _RE_CONTACT_PRODUCT.search(n):
         return "contacts"
-    if _RE_POLICY_OFF_PLATFORM.search(n) or _RE_POLICY_NO_PREPAY.search(n):
-        return "off_platform"
-    if _RE_POLICY_ACCOUNT_TRADE.search(n):
-        return "funpay_rules"
-    if _RE_POLICY_PROHIBITED.search(n):
-        return "funpay_rules"
-    if _RE_SECRET.search(scan):
-        return "account_security"
+    if _RE_POLICY_OFF_PLATFORM.search(n) or _RE_POLICY_NO_PREPAY.search(n): return "off_platform"
+    if _RE_POLICY_ACCOUNT_TRADE.search(n): return "funpay_rules"
+    if _RE_POLICY_PROHIBITED.search(n): return "funpay_rules"
+    if _RE_SECRET.search(scan): return "account_security"
     return ""
 
-def policy_refusal(code):
-    return refusal(code)
+def policy_refusal(code): return refusal(code)
 
 _LANG_RU = re.compile(r"[а-яё]", re.I)
 _LANG_UK = re.compile(r"[іїєґ]", re.I)
@@ -1680,8 +1548,7 @@ def looks_angry(text):
     raw = str(text or "")
     if raw.count("!") >= 3: return True
     letters = [c for c in raw if c.isalpha()]
-    if len(letters) >= 8 and sum(1 for c in letters if c.isupper()) / len(letters) > 0.7:
-        return True
+    if len(letters) >= 8 and sum(1 for c in letters if c.isupper()) / len(letters) > 0.7: return True
     return False
 
 def language_hint(text):
@@ -1713,8 +1580,7 @@ def is_uncertain_answer(text):
     return bool(_build_trigger_re(_UNCERTAIN_PATTERNS).search(n))
 
 def notify_seller(c, m, buyer_text, ai_answer="", reason="", header=""):
-    if not SETTINGS.get("seller_notify", True) or not getattr(c, "telegram", None):
-        return False
+    if not SETTINGS.get("seller_notify", True) or not getattr(c, "telegram", None): return False
     chat_key = str(getattr(m, "chat_id", "") or "")
     cooldown = max(0, int(SETTINGS.get("seller_notify_cooldown", 5))) * 60
     now = time.time()
@@ -1738,8 +1604,7 @@ def notify_seller(c, m, buyer_text, ai_answer="", reason="", header=""):
         callback = f"{CBT.SEND_FP_MESSAGE}:{getattr(m, 'chat_id', '')}:{buyer_name}"
         if len(callback.encode("utf-8")) <= 64:
             keyboard = K().add(B("✉️ Ответить покупателю", callback_data=callback))
-    except Exception:
-        keyboard = None
+    except Exception: keyboard = None
     def _job():
         try: c.telegram.send_notification(body, keyboard=keyboard)
         except Exception: pass
@@ -1781,8 +1646,7 @@ def _extract_order_id_from_text(text):
     return m.group(1).upper() if m else ""
 
 def _register_chat_order(chat_id, order_id):
-    ck = str(chat_id or "")
-    oid = str(order_id or "").strip().upper()
+    ck = str(chat_id or ""); oid = str(order_id or "").strip().upper()
     if not ck or not oid: return
     with LOCK:
         lst = CHAT_ORDERS.setdefault(ck, [])
@@ -1791,19 +1655,16 @@ def _register_chat_order(chat_id, order_id):
         if len(lst) > 10: del lst[:-10]
 
 def _set_order_status(order_id, chat_id, status):
-    oid = str(order_id or "").strip().upper()
-    ck = str(chat_id or "")
+    oid = str(order_id or "").strip().upper(); ck = str(chat_id or "")
     if not oid or status not in ("paid", "confirmed", "refunded"): return
-    with LOCK:
-        ORDER_STATUS[oid] = (status, ck, time.time())
+    with LOCK: ORDER_STATUS[oid] = (status, ck, time.time())
     if ck: _register_chat_order(ck, oid)
     save_orders_state()
 
 def _get_order_status(order_id):
     oid = str(order_id or "").strip().upper()
     if not oid: return ""
-    with LOCK:
-        item = ORDER_STATUS.get(oid)
+    with LOCK: item = ORDER_STATUS.get(oid)
     if not item: return ""
     status, _, ts = item
     if time.time() - ts > _ORDER_CLOSED_TTL: return ""
@@ -1812,8 +1673,7 @@ def _get_order_status(order_id):
 def _orders_for_prompt(chat_id, limit=3):
     ck = str(chat_id or "")
     if not ck: return []
-    now = time.time()
-    items = []
+    now = time.time(); items = []
     with LOCK:
         for oid in CHAT_ORDERS.get(ck, []):
             item = ORDER_STATUS.get(oid)
@@ -1833,12 +1693,10 @@ def _mark_order_processed(order_id):
             if now - ts > _ORDER_DEDUP_TTL: PROCESSED_ORDERS.pop(k, None)
         if key in PROCESSED_ORDERS: return False
         PROCESSED_ORDERS[key] = now
-    save_orders_state()
-    return True
+    save_orders_state(); return True
 
 def _mark_order_closed(order_id, chat_id="", status="confirmed"):
-    key = str(order_id or "").strip().upper()
-    now = time.time()
+    key = str(order_id or "").strip().upper(); now = time.time()
     if key:
         with LOCK:
             CLOSED_ORDERS[key] = now
@@ -1850,22 +1708,18 @@ def _is_order_closed(order_id):
     key = str(order_id or "").strip().upper()
     if not key: return False
     now = time.time()
-    with LOCK:
-        ts = CLOSED_ORDERS.get(key)
+    with LOCK: ts = CLOSED_ORDERS.get(key)
     return bool(ts and now - ts < _ORDER_CLOSED_TTL)
 
 def _register_manual_fulfill(order_id, chat_id, buyer_name, title):
     oid = str(order_id or "").strip().upper()
     if not oid: return
     with LOCK:
-        MANUAL_FULFILL_QUEUE[oid] = {
-            "order_id": oid, "chat_id": str(chat_id or ""),
-            "buyer": str(buyer_name or ""), "title": str(title or ""),
-            "ts": time.time()}
+        MANUAL_FULFILL_QUEUE[oid] = {"order_id": oid, "chat_id": str(chat_id or ""),
+            "buyer": str(buyer_name or ""), "title": str(title or ""), "ts": time.time()}
         cutoff = time.time() - 30 * 86400
         for k in list(MANUAL_FULFILL_QUEUE.keys()):
-            if MANUAL_FULFILL_QUEUE[k].get("ts", 0) < cutoff:
-                MANUAL_FULFILL_QUEUE.pop(k, None)
+            if MANUAL_FULFILL_QUEUE[k].get("ts", 0) < cutoff: MANUAL_FULFILL_QUEUE.pop(k, None)
 
 def _find_lot_for_order(order):
     for attr in ("lot_id", "offer_id"):
@@ -1940,8 +1794,7 @@ def _fulfill_paid_order(c, order):
     if not SETTINGS.get("auto_fulfill_paid_orders", False): return
     chat_id = str(getattr(order, "chat_id", "") or "")
     order_id = _order_short_id(order)
-    if _is_order_closed(order_id) or _get_order_status(order_id) in ("confirmed", "refunded"):
-        return
+    if _is_order_closed(order_id) or _get_order_status(order_id) in ("confirmed", "refunded"): return
     if not chat_id: return
     buyer_name = _order_buyer_name(order)
     now = time.time()
@@ -2151,27 +2004,42 @@ def _trigger_post_order_survey(c, m):
     POOL.submit(_job)
 
 def _extract_url_as_data_url(url: str) -> str:
-    try:
-        u = str(url or "").strip()
-        if not u.lower().startswith(("http://", "https://")): return ""
-        r = requests.get(u, timeout=(8, 25), stream=True,
-                         headers={"User-Agent": _HTTP_UA,
-                                  "Accept": "image/*,*/*;q=0.8",
-                                  "Referer": "https://funpay.com/"})
-        r.raise_for_status()
-        ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if ctype and ctype not in _VISION_ALLOWED_MIME and not ctype.startswith("image/"):
-            return ""
-        chunks = []; total = 0
-        for chunk in r.iter_content(chunk_size=65536):
-            if not chunk: continue
-            total += len(chunk)
-            if total > _VISION_MAX_BYTES: return ""
-            chunks.append(chunk)
-        if not chunks: return ""
-        b64 = base64.b64encode(b"".join(chunks)).decode("ascii")
-        return f"data:{ctype or 'image/jpeg'};base64,{b64}"
-    except Exception: return ""
+    u = str(url or "").strip()
+    if not u.lower().startswith(("http://", "https://")): return ""
+    headers_variants = [
+        {"User-Agent": _HTTP_UA, "Accept": "image/*,*/*;q=0.8", "Referer": "https://funpay.com/"},
+        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+         "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+         "Accept-Language": "ru,en;q=0.9", "Referer": u},
+        {"User-Agent": _HTTP_UA, "Accept": "*/*"},
+    ]
+    last_err = ""
+    for hdr in headers_variants:
+        try:
+            r = requests.get(u, timeout=(8, 25), stream=True, headers=hdr, allow_redirects=True)
+            r.raise_for_status()
+            ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype and not ctype.startswith("image/"):
+                last_err = f"ct={ctype}"; continue
+            chunks = []; total = 0
+            for chunk in r.iter_content(chunk_size=65536):
+                if not chunk: continue
+                total += len(chunk)
+                if total > _VISION_MAX_BYTES:
+                    last_err = f"size>{_VISION_MAX_BYTES}"; chunks = []; break
+                chunks.append(chunk)
+            if not chunks: continue
+            b64 = base64.b64encode(b"".join(chunks)).decode("ascii")
+            if len(b64) < 100: continue
+            if SETTINGS.get("lot_vision_verbose", True):
+                logger.info("vision data-url ok: %d bytes, ct=%s", total, ctype or "?")
+            return f"data:{ctype or 'image/jpeg'};base64,{b64}"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {str(e)[:120]}"
+            continue
+    if SETTINGS.get("lot_vision_verbose", True):
+        logger.warning("vision data-url FAIL url=%s err=%s", u[:120], last_err)
+    return ""
 
 def _extract_message_image(m):
     try:
@@ -2191,8 +2059,7 @@ def _validate_image_url(url: str, min_bytes: int = None) -> tuple:
             try: min_bytes = int(SETTINGS.get("lot_image_min_bytes", 5000))
             except Exception: min_bytes = 5000
         r = requests.head(url, timeout=(5, 10), allow_redirects=True,
-                         headers={"User-Agent": _HTTP_UA,
-                                  "Referer": "https://funpay.com/",
+                         headers={"User-Agent": _HTTP_UA, "Referer": "https://funpay.com/",
                                   "Accept": "image/*,*/*;q=0.8"})
         ct = (r.headers.get("Content-Type") or "").lower().split(";")[0].strip()
         if "image" not in ct: return (False, 0, ct)
@@ -2206,7 +2073,7 @@ def _validate_image_url(url: str, min_bytes: int = None) -> tuple:
     except Exception:
         return (False, 0, "")
 
-def _dedupe_image_variants(urls: list) -> list:
+def _dedupe_image_variants(urls):
     groups = {}
     for u in urls:
         key = re.sub(
@@ -2219,14 +2086,12 @@ def _dedupe_image_variants(urls: list) -> list:
     for _key, items in groups.items():
         best = max(items, key=lambda x: (
             ("upload" in x.lower() or "offer" in x.lower()),
-            "preview" not in x.lower(),
-            "small" not in x.lower(),
-            "thumb" not in x.lower(),
-            len(x)))
+            "preview" not in x.lower(), "small" not in x.lower(),
+            "thumb" not in x.lower(), len(x)))
         result.append(best)
     return result
 
-def _lot_images_from(lot) -> list:
+def _lot_images_from(lot):
     imgs = []; seen = set()
     def _add(u):
         if not u: return
@@ -2235,7 +2100,6 @@ def _lot_images_from(lot) -> list:
         if _FUNPAY_UI_IMG.search(u): return
         if u in seen: return
         seen.add(u); imgs.append(u)
-
     for attr in ("images", "image_links", "preview_images", "photos",
                  "image_urls", "screens", "screenshots", "photo_links",
                  "attachment_urls", "media_urls", "preview_urls",
@@ -2258,7 +2122,6 @@ def _lot_images_from(lot) -> list:
                 else:
                     _add(getattr(x, "url", None)); _add(getattr(x, "link", None))
                     _add(getattr(x, "src", None)); _add(getattr(x, "image", None))
-
     try:
         d = getattr(lot, "__dict__", None)
         if isinstance(d, dict):
@@ -2283,7 +2146,6 @@ def _lot_images_from(lot) -> list:
                                 if isinstance(xx, str):
                                     for m in _IMG_EXT_RE.finditer(xx): _add(m.group(0))
     except Exception: pass
-
     for attr in ("description", "full_description", "title", "text"):
         try: v = getattr(lot, attr, None)
         except Exception: v = None
@@ -2291,7 +2153,7 @@ def _lot_images_from(lot) -> list:
             for m in _IMG_EXT_RE.finditer(v): _add(m.group(0))
     return imgs[:20]
 
-def _lot_images_from_dict(lot_dict) -> list:
+def _lot_images_from_dict(lot_dict):
     imgs = []; seen = set()
     def _add(u):
         if not u: return
@@ -2310,17 +2172,14 @@ def _lot_images_from_dict(lot_dict) -> list:
             for x in v:
                 if isinstance(x, str): _add(x)
                 elif isinstance(x, dict):
-                    for kk in ("url", "link", "src", "image"):
-                        _add(x.get(kk))
+                    for kk in ("url", "link", "src", "image"): _add(x.get(kk))
     return imgs[:20]
 
-def _lot_images_from_html(lot_id: str) -> list:
+def _lot_images_from_html(lot_id):
     lid = str(lot_id or "").strip()
     if not lid.isdigit(): return []
-    urls_to_try = [
-        f"https://funpay.com/lots/offer?id={lid}",
-        f"https://funpay.com/lots/offer/{lid}/",
-    ]
+    urls_to_try = [f"https://funpay.com/lots/offer?id={lid}",
+                   f"https://funpay.com/lots/offer/{lid}/"]
     html = ""
     for url in urls_to_try:
         try:
@@ -2340,18 +2199,15 @@ def _lot_images_from_html(lot_id: str) -> list:
             if html and len(html) > 500: break
         except Exception: continue
     if not html: return []
-
     container = ""
     for pat in (
         r'<div[^>]+class="[^"]*(?:offer[-_]?images|lot[-_]?images|images[-_]?slider|'
         r'offer[-_]?gallery|lot[-_]?gallery|offer__images|lot__images)[^"]*"[^>]*>(.*?)</div>',
         r'<section[^>]+class="[^"]*(?:images|gallery)[^"]*"[^>]*>(.*?)</section>',
-        r'<div[^>]+id="[^"]*(?:images|gallery)[^"]*"[^>]*>(.*?)</div>',
-    ):
+        r'<div[^>]+id="[^"]*(?:images|gallery)[^"]*"[^>]*>(.*?)</div>'):
         m = re.search(pat, html, re.I | re.DOTALL)
         if m and len(m.group(1)) > 100: container = m.group(1); break
     scope = container or html
-
     raw = []; seen = set()
     def _add(u):
         u = str(u or "").strip().rstrip(".,;)\"'")
@@ -2361,7 +2217,6 @@ def _lot_images_from_html(lot_id: str) -> list:
         if _FUNPAY_UI_IMG.search(u): return
         if u in seen: return
         seen.add(u); raw.append(u)
-
     for m in re.finditer(r'<img[^>]+(?:src|data-src|data-original|data-lazy|data-url)="([^"]+)"', scope, re.I):
         _add(m.group(1))
     for m in re.finditer(r'(?:data-lightbox|data-fancybox|data-zoom|data-image)="([^"]+)"', scope, re.I):
@@ -2369,14 +2224,11 @@ def _lot_images_from_html(lot_id: str) -> list:
     for m in re.finditer(r'href="([^"]+\.(?:jpe?g|png|webp|gif|bmp)(?:\?[^"]*)?)"', scope, re.I):
         _add(m.group(1))
     for m in re.finditer(r'<source[^>]+srcset="([^"]+)"', scope, re.I):
-        for part in m.group(1).split(","):
-            _add(part.strip().split(" ")[0])
-
+        for part in m.group(1).split(","): _add(part.strip().split(" ")[0])
     for m in re.finditer(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html, re.I):
         _add(m.group(1))
     for m in re.finditer(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html, re.I):
         _add(m.group(1))
-
     for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.I|re.S):
         try:
             data = json.loads(m.group(1))
@@ -2394,14 +2246,10 @@ def _lot_images_from_html(lot_id: str) -> list:
                     for x in o: walk(x)
             walk(data)
         except Exception: pass
-
     for m in re.finditer(r'data-(?:lazy-src|lazy|original|src|srcset)=["\']([^"\']+)', html, re.I):
-        for part in m.group(1).split(","):
-            _add(part.strip().split(" ")[0])
+        for part in m.group(1).split(","): _add(part.strip().split(" ")[0])
     for m in re.finditer(r'<img[^>]+srcset=["\']([^"\']+)', html, re.I):
-        for part in m.group(1).split(","):
-            _add(part.strip().split(" ")[0])
-
+        for part in m.group(1).split(","): _add(part.strip().split(" ")[0])
     deduped = _dedupe_image_variants(raw)
     if SETTINGS.get("lot_image_validate_http", True) and deduped:
         validated = []
@@ -2413,7 +2261,7 @@ def _lot_images_from_html(lot_id: str) -> list:
             deduped = [u for u, _ in validated]
     return deduped[:10]
 
-def _lot_images_deep(lot, lot_fields_obj=None, lot_dict=None) -> list:
+def _lot_images_deep(lot, lot_fields_obj=None, lot_dict=None):
     if lot_fields_obj is not None:
         try:
             imgs = _lot_images_from(lot_fields_obj)
@@ -2430,90 +2278,191 @@ def _lot_images_deep(lot, lot_fields_obj=None, lot_dict=None) -> list:
     if dict_imgs: return _dedupe_image_variants(dict_imgs)[:10]
     try:
         lid = str(getattr(lot, "id", "") or "")
-        if not lid and isinstance(lot_dict, dict):
-            lid = str(lot_dict.get("id") or "")
+        if not lid and isinstance(lot_dict, dict): lid = str(lot_dict.get("id") or "")
         if lid.isdigit(): return _lot_images_from_html(lid)
     except Exception: pass
     return []
 
-def _vision_extract_lot_details(image_urls: list) -> str:
-    if not image_urls or not SETTINGS.get("lot_vision_extract", True): return ""
+def _vision_extract_lot_details(image_urls):
+    debug = {"images_in": len(image_urls or []), "images_ok": 0, "screens": [],
+             "error": "", "merge_applied": False}
+    if not image_urls or not SETTINGS.get("lot_vision_extract", True):
+        debug["error"] = "no images or extraction disabled"
+        with LOCK: LOT_VISION_DEBUG["_last"] = debug
+        return ""
     base = str(SETTINGS.get("api_url") or "").rstrip("/")
     key = str(SETTINGS.get("api_key") or "").strip()
     if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
     model = str(SETTINGS.get("api_model") or "").strip()
-    if not base or not key or not model: return ""
-
+    if not base or not key or not model:
+        debug["error"] = "api url/key/model missing"
+        with LOCK: LOT_VISION_DEBUG["_last"] = debug
+        return ""
     try: max_imgs = max(1, min(10, int(SETTINGS.get("lot_vision_max_images", 5))))
     except Exception: max_imgs = 5
-
-    all_facts_parts = []
-    for u in image_urls[:max_imgs]:
+    try: max_tokens = max(600, min(2500, int(SETTINGS.get("lot_vision_max_tokens", 1400))))
+    except Exception: max_tokens = 1400
+    try: retry_enabled = bool(SETTINGS.get("lot_vision_retry", True))
+    except Exception: retry_enabled = True
+    all_parts = []
+    refused_markers = ("не игровой", "не является игрой", "не игра", "не могу определить",
+                       "не удалось", "не вижу игру", "это не игровой", "не содержит игров",
+                       "не относится к игре", "не могу распознать")
+    for idx, u in enumerate(image_urls[:max_imgs]):
+        scr = {"idx": idx, "url": u[:120], "du_len": 0, "ok": False, "resp_len": 0,
+               "err": "", "refused": False}
         try:
             du = _extract_url_as_data_url(u)
-            if not du: continue
-            r = requests.post(
-                base + "/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": model,
-                      "messages": [{"role": "user", "content": [
-                          {"type": "text", "text": _VISION_LOT_PROMPT},
-                          {"type": "image_url", "image_url": {"url": du}}]}],
-                      "temperature": 0.0, "max_tokens": 900, "stream": False},
-                timeout=(15, max(45, int(SETTINGS.get("ai_timeout", 120)))))
-            r.raise_for_status()
-            data = _safe_json(r, "lot_vision")
-            text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-            if not text: continue
-            low = text.lower()
-            if "не игровой скрин" in low or "не игровой" in low: continue
-            if len(text) < 60: continue
-            all_facts_parts.append(text[:1500])
+            scr["du_len"] = len(du)
+            if not du:
+                scr["err"] = "data-url empty"; debug["screens"].append(scr); continue
+            attempt = 0; resp_text = ""
+            while attempt < (2 if retry_enabled else 1):
+                attempt += 1
+                try:
+                    r = requests.post(base + "/chat/completions",
+                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                        json={"model": model,
+                              "messages": [{"role": "user", "content": [
+                                  {"type": "text", "text": _VISION_LOT_PROMPT},
+                                  {"type": "image_url", "image_url": {"url": du}}]}],
+                              "temperature": 0.0, "max_tokens": max_tokens, "stream": False},
+                        timeout=(20, max(60, int(SETTINGS.get("ai_timeout", 120)))))
+                    r.raise_for_status()
+                    data = _safe_json(r, "lot_vision")
+                    resp_text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+                    if resp_text: break
+                except Exception as e:
+                    scr["err"] = f"attempt{attempt}: {type(e).__name__}: {str(e)[:120]}"
+                    if attempt < 2: time.sleep(0.8); continue
+            scr["resp_len"] = len(resp_text)
+            if not resp_text:
+                debug["screens"].append(scr); continue
+            low = resp_text.lower()
+            refused = any(m in low for m in refused_markers)
+            scr["refused"] = refused
+            if refused:
+                scr["err"] = "model refused (not a game screenshot)"
+                debug["screens"].append(scr); continue
+            if len(resp_text) < 60:
+                scr["err"] = f"too short ({len(resp_text)})"
+                debug["screens"].append(scr); continue
+            scr["ok"] = True
+            all_parts.append(resp_text[:1800])
+            debug["screens"].append(scr)
+            debug["images_ok"] += 1
         except Exception as e:
-            logger.debug("vision_extract_lot_details step failed: %s", e)
-            continue
-
-    if not all_facts_parts:
+            scr["err"] = f"outer: {type(e).__name__}: {str(e)[:120]}"
+            debug["screens"].append(scr); continue
+    if not all_parts:
+        debug["error"] = "no valid screens parsed"
+        with LOCK: LOT_VISION_DEBUG["_last"] = debug
+        if SETTINGS.get("lot_vision_verbose", True):
+            logger.warning("vision: 0 valid parts. debug=%s",
+                           json.dumps(debug, ensure_ascii=False)[:800])
         return ""
-
-    merged = "=== СКРИН 1 ===\n" + all_facts_parts[0]
-    for i, part in enumerate(all_facts_parts[1:], start=2):
+    if len(all_parts) == 1:
+        debug["error"] = ""
+        with LOCK: LOT_VISION_DEBUG["_last"] = debug
+        if SETTINGS.get("lot_vision_verbose", True):
+            logger.info("vision: 1 screen ok (%d chars)", len(all_parts[0]))
+        return all_parts[0][:2500]
+    merged = "=== СКРИН 1 ===\n" + all_parts[0]
+    for i, part in enumerate(all_parts[1:], start=2):
         merged += f"\n\n=== СКРИН {i} ===\n" + part
-
-    if len(all_facts_parts) > 1 and SETTINGS.get("lot_vision_merge", True):
+    if SETTINGS.get("lot_vision_merge", True):
         try:
             merge_prompt = (
-                "Ниже — результат OCR-анализа нескольких скринов одного лота FunPay. "
-                "Объедини всё в ОДИН структурированный отчёт по тому же шаблону. "
-                "Если на разных скринах указаны разные предметы/числа — суммируй/перечисли все. "
-                "НЕ теряй ни одной цифры или названия. Сохрани эмодзи-заголовки и структуру шаблона.\n\n"
-                + merged
-            )
-            r = requests.post(
-                base + "/chat/completions",
+                "Ниже — OCR-анализ нескольких скринов ОДНОГО лота FunPay. "
+                "Объедини всё в ОДИН отчёт по тому же шаблону (эмодзи-заголовки сохрани). "
+                "Если предметы повторяются — суммируй количества. НЕ теряй ни одной цифры. "
+                "Если в блоке предмет указан с количеством «×N» — сохрани его. "
+                "Отвечай ТОЛЬКО шаблоном, без вступлений.\n\n" + merged)
+            r = requests.post(base + "/chat/completions",
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": model,
-                      "messages": [{"role": "user", "content": merge_prompt}],
-                      "temperature": 0.0, "max_tokens": 1200, "stream": False},
-                timeout=(15, max(45, int(SETTINGS.get("ai_timeout", 120)))))
+                json={"model": model, "messages": [{"role": "user", "content": merge_prompt}],
+                      "temperature": 0.0, "max_tokens": max_tokens, "stream": False},
+                timeout=(20, max(60, int(SETTINGS.get("ai_timeout", 120)))))
             r.raise_for_status()
             data = _safe_json(r, "lot_vision_merge")
-            merged_text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-            if merged_text and len(merged_text) > 80:
-                merged = merged_text[:2500]
+            mt = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            if (mt and len(mt) > 80 and any(m in mt for m in ("🎮", "👤", "🎁", "💰"))
+                    and not any(x in mt.lower() for x in refused_markers)):
+                merged = mt[:2500]; debug["merge_applied"] = True
+            else:
+                debug["error"] = f"merge rejected (len={len(mt)})"
         except Exception as e:
-            logger.debug("vision merge failed: %s", e)
-
+            debug["error"] = f"merge fail: {type(e).__name__}: {str(e)[:120]}"
+    with LOCK: LOT_VISION_DEBUG["_last"] = debug
+    if SETTINGS.get("lot_vision_verbose", True):
+        logger.info("vision: %d parts, merge=%s, final=%d chars",
+                    len(all_parts), debug["merge_applied"], len(merged))
     return merged[:2500]
 
-def _classify_game(lot, vision_text: str = "") -> dict:
-    blob = " ".join([
-        str(lot.get("title") or ""),
-        str(lot.get("subcategory") or ""),
-        str(lot.get("full_description") or lot.get("description") or "")[:500],
-        str(vision_text or "")[:800],
-    ]).lower()
+def _vision_debug_for_lot(lot_id):
+    lid = str(lot_id or "").strip()
+    if not lid: return "❌ Нет lot_id."
+    lines = [f"👁️ <b>Диагностика vision #{utils.escape(lid)}</b>", ""]
+    with LOCK:
+        has_vision = bool(LOT_VISION.get(lid))
+        cached = LOT_VISION.get(lid, "")
+        rec = dict(LOTS.get(lid) or {})
+    lines.append(f"📦 Лот в кэше: <b>{'да' if rec else 'нет'}</b>")
+    if rec:
+        imgs = rec.get("image_urls") or []
+        lines.append(f"🖼️ Картинок в LOT: <b>{len(imgs)}</b>")
+        for u in imgs[:3]:
+            lines.append(f"   · <code>{utils.escape(u[:110])}</code>")
+    lines.append(f"👁️ Vision-фактов в кэше: <b>{'да' if has_vision else 'нет'}</b>")
+    if cached:
+        lines.append(f"📏 Объём фактов: <b>{len(cached)}</b> симв.")
+        lines.append(f"<pre>{utils.escape(cached[:600])}</pre>")
+    with LOCK: last_debug = dict(LOT_VISION_DEBUG.get("_last") or {})
+    if last_debug:
+        lines.append("")
+        lines.append("🔬 <b>Debug последнего запуска:</b>")
+        lines.append(f"· images_in: <b>{last_debug.get('images_in', 0)}</b> · "
+                     f"ok: <b>{last_debug.get('images_ok', 0)}</b>")
+        if last_debug.get("error"):
+            lines.append(f"· ⚠️ error: <code>{utils.escape(str(last_debug['error'])[:200])}</code>")
+        for s in (last_debug.get("screens") or [])[:5]:
+            st = "✅" if s.get("ok") else ("🔇" if s.get("refused") else "❌")
+            lines.append(f"· {st} #{s.get('idx')} du_len=<b>{s.get('du_len', 0)}</b> "
+                         f"resp=<b>{s.get('resp_len', 0)}</b>"
+                         + (f" <code>{utils.escape(str(s.get('err',''))[:120])}</code>" if s.get("err") else ""))
+    return "\n".join(lines)
 
+def _vision_probe_api():
+    base = str(SETTINGS.get("api_url") or "").rstrip("/")
+    key = str(SETTINGS.get("api_key") or "").strip()
+    if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
+    model = str(SETTINGS.get("api_model") or "").strip()
+    if not base or not key or not model: return "❌ Не заданы API URL / key / model."
+    # Минимальный PNG 1x1 белый
+    test_png_b64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+    try:
+        r = requests.post(base + "/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": model,
+                  "messages": [{"role": "user", "content": [
+                      {"type": "text", "text": "Что на картинке? Ответь одним предложением."},
+                      {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_png_b64}"}}]}],
+                  "temperature": 0.0, "max_tokens": 100, "stream": False},
+            timeout=(15, 60))
+        r.raise_for_status()
+        data = _safe_json(r, "vision_probe")
+        ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        if not ans:
+            return "❌ Модель вернула пустой ответ на картинку. Скорее всего модель НЕ vision-совместимая."
+        return f"✅ Модель ответила на картинку:\n\n<code>{utils.escape(ans[:300])}</code>"
+    except Exception as e:
+        return f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}"
+
+def _classify_game(lot, vision_text=""):
+    blob = " ".join([
+        str(lot.get("title") or ""), str(lot.get("subcategory") or ""),
+        str(lot.get("full_description") or lot.get("description") or "")[:500],
+        str(vision_text or "")[:800]]).lower()
     GAMES = [
         ("standoff 2", ["standoff", "стендофф", "стендоф", "so2"]),
         ("cs2", ["cs2", "counter-strike", "кс2", "ксго", "csgo"]),
@@ -2548,155 +2497,131 @@ def _classify_game(lot, vision_text: str = "") -> dict:
         ("netflix", ["netflix", "нетфликс"]),
         ("youtube premium", ["youtube premium", "ютуб премиум"]),
         ("tiktok", ["tiktok", "тикток"]),
-        ("vk", ["vk ", "вк ", "вконтакте"]),
-    ]
-
+        ("vk", ["vk ", "вк ", "вконтакте"])]
     PLATFORM_MAP = {
-        "standoff 2": "мобильный шутер (Android/iOS)",
-        "cs2": "PC шутер (Steam)",
-        "cs 1.6": "PC шутер (Steam)",
-        "valorant": "PC шутер (Riot)",
-        "dota 2": "PC MOBA (Steam)",
-        "roblox": "кроссплатформенная песочница",
-        "minecraft": "кроссплатформенная песочница",
-        "gta 5": "PC/консоль (Rockstar)",
-        "fortnite": "кроссплатформенный шутер (Epic)",
-        "pubg": "кроссплатформенный шутер",
+        "standoff 2": "мобильный шутер (Android/iOS)", "cs2": "PC шутер (Steam)",
+        "cs 1.6": "PC шутер (Steam)", "valorant": "PC шутер (Riot)",
+        "dota 2": "PC MOBA (Steam)", "roblox": "кроссплатформенная песочница",
+        "minecraft": "кроссплатформенная песочница", "gta 5": "PC/консоль (Rockstar)",
+        "fortnite": "кроссплатформенный шутер (Epic)", "pubg": "кроссплатформенный шутер",
         "brawl stars": "мобильная MOBA (Supercell)",
         "genshin impact": "кроссплатформенная RPG (HoYoverse)",
-        "mobile legends": "мобильная MOBA",
-        "free fire": "мобильный шутер",
-        "wot / wot blitz": "танковый шутер",
-        "warthunder": "танковый/авиа симулятор",
-        "apex legends": "PC шутер (EA)",
-        "rust": "PC выживание (Facepunch)",
-        "rainbow six": "PC шутер (Ubisoft)",
-        "overwatch 2": "PC шутер (Blizzard)",
-        "clash of clans": "мобильная стратегия",
-        "clash royale": "мобильная стратегия",
-        "telegram": "мессенджер-аккаунт",
-        "discord": "мессенджер-аккаунт",
-        "steam": "игровая платформа",
-        "epic games": "игровая платформа",
-        "origin / ea": "игровая платформа",
-        "uplay / ubisoft": "игровая платформа",
-        "battlenet": "игровая платформа",
-        "spotify": "музыкальная подписка",
-        "netflix": "видео подписка",
-        "youtube premium": "видео подписка",
-        "tiktok": "соцсеть",
-        "vk": "соцсеть",
-    }
-
+        "mobile legends": "мобильная MOBA", "free fire": "мобильный шутер",
+        "wot / wot blitz": "танковый шутер", "warthunder": "танковый/авиа симулятор",
+        "apex legends": "PC шутер (EA)", "rust": "PC выживание (Facepunch)",
+        "rainbow six": "PC шутер (Ubisoft)", "overwatch 2": "PC шутер (Blizzard)",
+        "clash of clans": "мобильная стратегия", "clash royale": "мобильная стратегия",
+        "telegram": "мессенджер-аккаунт", "discord": "мессенджер-аккаунт",
+        "steam": "игровая платформа", "epic games": "игровая платформа",
+        "origin / ea": "игровая платформа", "uplay / ubisoft": "игровая платформа",
+        "battlenet": "игровая платформа", "spotify": "музыкальная подписка",
+        "netflix": "видео подписка", "youtube premium": "видео подписка",
+        "tiktok": "соцсеть", "vk": "соцсеть"}
     game = ""
     for canonical, aliases in GAMES:
         for a in aliases:
-            if a in blob:
-                game = canonical
-                break
-        if game:
-            break
+            if a in blob: game = canonical; break
+        if game: break
+    return {"game": game or "не определено",
+            "platform": PLATFORM_MAP.get(game, "не определено"),
+            "category": str(lot.get("subcategory") or "не указано")}
 
-    return {
-        "game": game or "не определено",
-        "platform": PLATFORM_MAP.get(game, "не определено"),
-        "category": str(lot.get("subcategory") or "не указано"),
-    }
-
-def _parse_vision_facts(vision_text: str) -> dict:
-    if not vision_text:
-        return {}
-    text = str(vision_text)
-    facts = {}
-
-    def _grab(label_patterns, key):
-        for pat in label_patterns:
-            m = re.search(pat + r"\s*[:：]\s*([^\n•]+)", text, re.I)
-            if m:
-                v = m.group(1).strip().rstrip(".,;")
-                if v and v.lower() not in ("не указано", "не указан", "—", "-", ""):
-                    facts[key] = v
-                    return
-
-    _grab([r"Название игры", r"Игра\b"], "game")
-    _grab([r"Платформа"], "platform")
-    _grab([r"Жанр"], "genre")
-    _grab([r"Регион сервера", r"Регион"], "region")
-    _grab([r"Никнейм", r"Ник"], "nickname")
-    _grab([r"ID[/\s]?тег", r"\bID\b", r"Тег"], "user_id")
-    _grab([r"Уровень"], "level")
-    _grab([r"Ранг[^:]*", r"Звание", r"Дивизион"], "rank")
-    _grab([r"Часов в игре", r"Часы"], "hours")
-    _grab([r"Дата регистрации", r"Регистрация"], "reg_date")
-    _grab([r"Статус[^:]*(?:бан|VAC)", r"VAC", r"Бан"], "vac_status")
-    _grab([r"Игровая валюта", r"Валюта"], "currency")
-    _grab([r"Премиум[- ]?валюта", r"Гемы", r"Кристаллы"], "premium_currency")
-    _grab([r"Battle Pass[^:]*", r"Сезонный пропуск"], "battle_pass")
-    _grab([r"Premium[^:]*", r"\bVIP\b"], "premium")
-
-    items = []
-    for m in re.finditer(r"•\s*([А-ЯA-Z][^\n:]{2,60}?)\s*(?:×|x|\*)\s*(\d+)", text):
-        items.append({"name": m.group(1).strip(), "qty": int(m.group(2))})
-    for m in re.finditer(r"(?:Скины?|Оружие|Транспорт|Питомцы|Маунты|Одежда|Аксессуары|Предметы)\s*[:：]\s*([^\n]+)", text, re.I):
-        chunk = m.group(1).strip()
-        if chunk and chunk.lower() not in ("не указано", "—", "-"):
-            for part in re.split(r"[,;•]", chunk):
-                p = part.strip()
-                if not p or p.lower() in ("не указано", "—", "-"): continue
-                qm = re.search(r"(?:×|x|\*)\s*(\d+)|(\d+)\s*(?:шт|штук)", p, re.I)
+def _parse_vision_facts(vision_text):
+    if not vision_text: return {}
+    try:
+        text = str(vision_text); facts = {}
+        def _grab(patterns, key):
+            for pat in patterns:
+                m = re.search(pat + r"(?:\s*[:：\-—]\s*|\s+)([^\n•]+)", text, re.I)
+                if m:
+                    v = m.group(1).strip().rstrip(".,;")
+                    v = re.sub(r"^[\s\-—:]+", "", v).strip()
+                    if v and v.lower() not in ("не указано", "не указан", "—", "-", "нет", ""):
+                        facts[key] = v; return
+        _grab([r"Название игры", r"Игра\b", r"🎮\s*Игра"], "game")
+        _grab([r"Платформа", r"💻\s*Платформа"], "platform")
+        _grab([r"Жанр", r"🎭\s*Жанр"], "genre")
+        _grab([r"Регион сервера", r"Регион", r"🌍\s*Регион"], "region")
+        _grab([r"Никнейм", r"Ник\b", r"Игровое имя"], "nickname")
+        _grab([r"ID[/\s]?тег", r"\bID\b", r"Тег", r"Account ID"], "user_id")
+        _grab([r"Уровень", r"Ур\.", r"Level"], "level")
+        _grab([r"Ранг", r"Звание", r"Дивизион", r"Rank"], "rank")
+        _grab([r"Часов в игре", r"Часы", r"Hours"], "hours")
+        _grab([r"Дата регистрации", r"Регистрация", r"Создан", r"Created"], "reg_date")
+        _grab([r"Статус", r"VAC", r"Бан", r"Ban"], "vac_status")
+        _grab([r"Игровая валюта", r"Валюта", r"💰\s*Валюта"], "currency")
+        _grab([r"Премиум[- ]?валюта", r"Гемы", r"Кристаллы", r"💎"], "premium_currency")
+        _grab([r"Battle Pass", r"Сезонный пропуск", r"🎟"], "battle_pass")
+        _grab([r"Premium", r"\bVIP\b", r"⭐"], "premium")
+        items = []
+        for m in re.finditer(r"•\s*([А-ЯA-Zа-яa-z][^\n:•]{2,80}?)\s*(?:×|х|x|\*)\s*(\d+)", text):
+            name = m.group(1).strip().rstrip("-—:").strip()
+            if name: items.append({"name": name, "qty": int(m.group(2))})
+        for m in re.finditer(
+            r"(?:Скины?|Оружие|Транспорт|Питомцы|Маунты|Одежда|Аксессуары|Предметы|Инвентарь|🎁[^\n:]*)\s*[:：]\s*([^\n]+)",
+            text, re.I):
+            chunk = m.group(1).strip()
+            if not chunk or chunk.lower() in ("не указано", "—", "-", "нет"): continue
+            for part in re.split(r"[,;•\n]", chunk):
+                p = part.strip().rstrip("-—:").strip()
+                if not p or p.lower() in ("не указано", "—", "-", "нет"): continue
+                qm = re.search(r"(?:×|х|x|\*)\s*(\d+)|(\d+)\s*(?:шт|штук|pcs)", p, re.I)
                 items.append({"name": p, "qty": int(qm.group(1) or qm.group(2)) if qm else 1})
+        total_m = re.search(r"Всего предметов[^:]*:\s*(\d+)", text, re.I)
+        facts["items"] = items
+        facts["items_count"] = len(items)
+        facts["items_total"] = int(total_m.group(1)) if total_m else len(items)
+        facts["raw"] = text
+        return facts
+    except Exception as e:
+        logger.warning("parse_vision_facts error: %s: %s", type(e).__name__, e)
+        return {"raw": str(vision_text)[:2000], "items": [], "items_count": 0, "items_total": 0}
 
-    total_m = re.search(r"Всего предметов[^:]*:\s*(\d+)", text, re.I)
-    facts["items"] = items
-    facts["items_count"] = len(items)
-    facts["items_total"] = int(total_m.group(1)) if total_m else len(items)
-    facts["raw"] = text
-    return facts
-
-def _format_facts_for_prompt(facts: dict, lot: dict) -> str:
-    if not facts:
+def _format_facts_for_prompt(facts, lot):
+    if not facts or not isinstance(facts, dict): return ""
+    try:
+        lines = ["★ СТРУКТУРИРОВАННЫЕ ФАКТЫ ЛОТА (ИСТИНА, НЕ ВЫДУМЫВАЙ ДРУГОЕ) ★"]
+        try: game_info = _classify_game(lot, facts.get("raw", ""))
+        except Exception: game_info = {"game": "не определено", "platform": "не определено"}
+        if facts.get("game") or game_info.get("game") != "не определено":
+            lines.append(f"🎮 Игра: {facts.get('game') or game_info.get('game')}")
+        if facts.get("platform") or game_info.get("platform") != "не определено":
+            lines.append(f"💻 Платформа: {facts.get('platform') or game_info.get('platform')}")
+        if facts.get("genre"): lines.append(f"🎭 Жанр: {facts['genre']}")
+        if facts.get("region"): lines.append(f"🌍 Регион: {facts['region']}")
+        for key, label in (("nickname", "Ник"), ("user_id", "ID/тег"), ("level", "Уровень"),
+                           ("rank", "Ранг"), ("hours", "Часы"), ("reg_date", "Дата рег."),
+                           ("vac_status", "VAC/бан")):
+            if facts.get(key): lines.append(f"• {label}: {facts[key]}")
+        if facts.get("currency"): lines.append(f"💰 Игровая валюта: {facts['currency']}")
+        if facts.get("premium_currency"): lines.append(f"💎 Премиум-валюта: {facts['premium_currency']}")
+        if facts.get("battle_pass"): lines.append(f"🎟 Battle Pass: {facts['battle_pass']}")
+        if facts.get("premium"): lines.append(f"⭐ Premium/VIP: {facts['premium']}")
+        items = facts.get("items") or []
+        if items and isinstance(items, list):
+            lines.append("")
+            lines.append(f"🎁 ПРЕДМЕТЫ В ИНВЕНТАРЕ ({len(items)}):")
+            seen = set()
+            for it in items[:60]:
+                if not isinstance(it, dict): continue
+                name = str(it.get("name") or "").strip()
+                if not name or name.lower() in seen: continue
+                seen.add(name.lower())
+                qty = int(it.get("qty") or 1)
+                lines.append(f"  • {name}" + (f" ×{qty}" if qty > 1 else ""))
+        if facts.get("items_total"):
+            lines.append(""); lines.append(f"📦 ВСЕГО ПРЕДМЕТОВ: {facts['items_total']}")
+        lines.append("★ КОНЕЦ ФАКТОВ ★")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.warning("format_facts error: %s: %s", type(e).__name__, e)
         return ""
-    lines = ["★ СТРУКТУРИРОВАННЫЕ ФАКТЫ ЛОТА (ИСТИНА, НЕ ВЫДУМЫВАЙ ДРУГОЕ) ★"]
-    game_info = _classify_game(lot, facts.get("raw", ""))
-    if facts.get("game") or game_info.get("game") != "не определено":
-        lines.append(f"🎮 Игра: {facts.get('game') or game_info['game']}")
-    if facts.get("platform") or game_info.get("platform") != "не определено":
-        lines.append(f"💻 Платформа: {facts.get('platform') or game_info['platform']}")
-    if facts.get("genre"): lines.append(f"🎭 Жанр: {facts['genre']}")
-    if facts.get("region"): lines.append(f"🌍 Регион: {facts['region']}")
-    for key, label in (("nickname", "Ник"), ("user_id", "ID/тег"), ("level", "Уровень"),
-                       ("rank", "Ранг"), ("hours", "Часы"), ("reg_date", "Дата рег."),
-                       ("vac_status", "VAC/бан")):
-        if facts.get(key): lines.append(f"• {label}: {facts[key]}")
-    if facts.get("currency"): lines.append(f"💰 Игровая валюта: {facts['currency']}")
-    if facts.get("premium_currency"): lines.append(f"💎 Премиум-валюта: {facts['premium_currency']}")
-    if facts.get("battle_pass"): lines.append(f"🎟 Battle Pass: {facts['battle_pass']}")
-    if facts.get("premium"): lines.append(f"⭐ Premium/VIP: {facts['premium']}")
 
-    items = facts.get("items") or []
-    if items:
-        lines.append("")
-        lines.append(f"🎁 ПРЕДМЕТЫ В ИНВЕНТАРЕ ({len(items)} наименований):")
-        seen = set()
-        for it in items[:40]:
-            name = it.get("name", "").strip()
-            if not name or name.lower() in seen: continue
-            seen.add(name.lower())
-            qty = it.get("qty", 1)
-            lines.append(f"  • {name}" + (f" ×{qty}" if qty > 1 else ""))
-    if facts.get("items_total"):
-        lines.append("")
-        lines.append(f"📦 ВСЕГО ПРЕДМЕТОВ: {facts['items_total']}")
-
-    lines.append("★ КОНЕЦ ФАКТОВ ★")
-    return "\n".join(lines)
-
-def _web_search_lite(query: str, max_results: int = 5) -> list:
+def _web_search_lite(query, max_results=5):
     try:
         q = str(query or "").strip()[:250]
         if not q: return []
-        r = requests.post(
-            "https://html.duckduckgo.com/html/",
+        r = requests.post("https://html.duckduckgo.com/html/",
             data={"q": q, "kl": "ru-ru"},
             headers={"User-Agent": _HTTP_UA, "Accept-Language": "ru,en;q=0.8"},
             timeout=_WEB_SEARCH_TIMEOUT, stream=True)
@@ -2727,10 +2652,9 @@ def _web_search_lite(query: str, max_results: int = 5) -> list:
             if len(results) >= max_results: break
         return results
     except Exception as e:
-        logger.debug("web_search failed: %s", e)
-        return []
+        logger.debug("web_search failed: %s", e); return []
 
-def _format_search_results(results: list) -> str:
+def _format_search_results(results):
     if not results: return "(ничего не найдено)"
     return "\n".join(f"{i}. {r.get('title')}\n   {r.get('snippet')}\n   URL: {r.get('url')}"
                      for i, r in enumerate(results, 1))
@@ -2738,8 +2662,7 @@ def _format_search_results(results: list) -> str:
 def _message_role(c, item):
     mt = getattr(item, "type", None)
     if mt is not None and mt is not MessageTypes.NON_SYSTEM: return None
-    if any(bool(getattr(item, x, False)) for x in ("is_employee", "is_support", "is_moderation", "is_arbitration")):
-        return None
+    if any(bool(getattr(item, x, False)) for x in ("is_employee", "is_support", "is_moderation", "is_arbitration")): return None
     acc_id = getattr(getattr(c, "account", None), "id", None)
     author_id = getattr(item, "author_id", None)
     if getattr(item, "by_bot", False) or getattr(item, "by_vertex", False): return "assistant"
@@ -2765,14 +2688,12 @@ def _bootstrap_chat_history(c, m, current_text):
     cutoff = None
     if current_id:
         for i in range(len(messages) - 1, -1, -1):
-            if str(getattr(messages[i], "id", "") or "") == current_id:
-                cutoff = i; break
+            if str(getattr(messages[i], "id", "") or "") == current_id: cutoff = i; break
     if cutoff is None and current_safe:
         for i in range(len(messages) - 1, -1, -1):
             it = messages[i]
             if _message_role(c, it) != "user": continue
-            if str(getattr(it, "text", "") or "").strip() == current_safe:
-                cutoff = i; break
+            if str(getattr(it, "text", "") or "").strip() == current_safe: cutoff = i; break
     if cutoff is None: cutoff = len(messages)
     imported = []
     for item in messages[:cutoff][-100:]:
@@ -2784,17 +2705,14 @@ def _bootstrap_chat_history(c, m, current_text):
     if not imported: return
     with LOCK:
         existing = list(HISTORY.get(chat_key, []))
-        if existing:
-            HISTORY[chat_key] = (list(imported) + existing[-5:])[-_HISTORY_HARD_CAP:]
-        else:
-            HISTORY[chat_key] = imported[-_HISTORY_HARD_CAP:]
+        if existing: HISTORY[chat_key] = (list(imported) + existing[-5:])[-_HISTORY_HARD_CAP:]
+        else: HISTORY[chat_key] = imported[-_HISTORY_HARD_CAP:]
 
 def _recent_assistant_said_about(chat_id, pattern):
     rx = re.compile(pattern, re.I)
     with LOCK: h = list(HISTORY.get(str(chat_id), []))
     for item in h:
-        if item.get("role") == "assistant" and rx.search(item.get("content") or ""):
-            return True
+        if item.get("role") == "assistant" and rx.search(item.get("content") or ""): return True
     return False
 
 _RE_DISCOUNT = re.compile(r"\bскидк\w*|\bдешевле\b|\bторг\w*|\bснизить цен\w*|\bпромокод\w*|\bакци\w*", re.I)
@@ -2818,8 +2736,7 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     if not text or not is_enabled(c): return False
     out = _clean_ai_answer(str(text).strip())
     v = outbound_violation(out)
-    if v and v != "empty":
-        out = refusal(v); notify = False
+    if v and v != "empty": out = refusal(v); notify = False
     out = _strip_fake_order_action(out)
     if not out: out = "Уточните, пожалуйста, что именно нужно."
     try:
@@ -2828,10 +2745,8 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
             _latest = _orders_for_prompt(_chat_id, limit=1)
             if _latest:
                 _loid, _lst = _latest[0]
-                if _lst == "paid":
-                    out = f"Да, заказ #{_loid} оплачен, спасибо! Сейчас подготовлю и выдам товар."
-                elif _lst == "confirmed":
-                    out = f"Заказ #{_loid} подтверждён и закрыт."
+                if _lst == "paid": out = f"Да, заказ #{_loid} оплачен, спасибо! Сейчас подготовлю и выдам товар."
+                elif _lst == "confirmed": out = f"Заказ #{_loid} подтверждён и закрыт."
     except Exception: pass
     final = _apply_watermark(out)
     try:
@@ -2863,8 +2778,7 @@ def handle_deterministic(c, m, text):
         if avail:
             body = "Вот доступные лоты:\n" + "\n".join(f"{i}) {l.get('title')}" for i, l in enumerate(avail, 1))
             body += "\n\nНапишите название или номер нужного."
-        else:
-            body = "Напишите название нужного лота."
+        else: body = "Напишите название нужного лота."
         _say(c, m, body); return True
     if _RE_SELLER_COUNT.search(n):
         with LOCK: cnt = len(LOTS)
@@ -2896,12 +2810,10 @@ def _extract_extra_params(field_obj):
                 if isinstance(item, dict):
                     name = item.get("name") or item.get("title") or item.get("label") or item.get("key")
                     value = item.get("value") if "value" in item else item.get("val")
-                    if name and value not in (None, "", [], {}):
-                        result[str(name)] = value
+                    if name and value not in (None, "", [], {}): result[str(name)] = value
                 elif isinstance(item, (list, tuple)) and len(item) == 2:
                     k, v = item
-                    if k and v not in (None, "", [], {}):
-                        result[str(k)] = v
+                    if k and v not in (None, "", [], {}): result[str(k)] = v
     return result
 
 def _lot_basic(lot):
@@ -2937,13 +2849,10 @@ def _enrich(c, lid):
                 for bad in ("payment_msg_ru", "payment_msg_en", "payment_message"):
                     extra.pop(bad, None)
                 LOTS[lid]["extra_fields"] = extra
-
         cached_dict = dict(LOTS.get(lid) or {})
         try: imgs = _lot_images_deep(cached_dict, lot_fields_obj=f, lot_dict=cached_dict)
         except Exception as e:
-            logger.debug("_lot_images_deep failed lid=%s: %s", lid, e)
-            imgs = []
-
+            logger.debug("_lot_images_deep failed lid=%s: %s", lid, e); imgs = []
         if not imgs:
             try:
                 d2 = cached_dict.get("full_description") or ""
@@ -2951,11 +2860,9 @@ def _enrich(c, lid):
                     u = m.group(0)
                     if not _FUNPAY_UI_IMG.search(u): imgs.append(u)
             except Exception: pass
-
         with LOCK:
             if imgs: LOTS[lid]["image_urls"] = imgs[:12]
             LOT_IMG_DEBUG[str(lid)] = {"count": len(imgs), "samples": imgs[:3], "error": ""}
-
         if imgs and SETTINGS.get("lot_vision_extract", True):
             with LOCK: cached_vision = LOT_VISION.get(str(lid), "")
             if not cached_vision:
@@ -3042,8 +2949,7 @@ def _remember_chat_lot(chat_id, lot):
     lid = str(lot.get("id") or "")
     if not key or not lid: return
     with LOCK:
-        CHAT_LOT[key] = lid
-        CHAT_LOT_AT[key] = time.time()
+        CHAT_LOT[key] = lid; CHAT_LOT_AT[key] = time.time()
 
 def _last_chat_lot(chat_id, ttl_seconds=1800):
     key = str(chat_id or "")
@@ -3107,54 +3013,59 @@ def _get_lot(c, m, text):
 
 def _lot_prompt(lot):
     if not lot: return "Товар не определён."
-    base = (f"Название: {lot.get('title') or '—'}\n"
-        f"Цена: {lot.get('price')} {lot.get('currency') or ''}\n"
-        f"Количество: {lot.get('amount') if lot.get('amount') is not None else '—'}\n"
-        f"Автовыдача: {'да' if lot.get('auto') else 'нет'}\n"
-        f"Категория: {lot.get('subcategory') or '—'}\n"
-        f"Описание: {(lot.get('full_description') or lot.get('description') or '')[:1200]}")
-    extra = lot.get("extra_fields") or {}
-    if isinstance(extra, dict) and extra:
-        lines = []
-        for k, v in extra.items():
-            if v is None or v == "": continue
-            if isinstance(v, (list, tuple)): v = ", ".join(str(x) for x in v[:30])
-            elif isinstance(v, dict): v = ", ".join(f"{kk}={vv}" for kk, vv in list(v.items())[:30])
-            else: v = str(v)
-            if len(v) > 400: v = v[:400] + "…"
-            lines.append(f"- {k}: {v}")
-        if lines: base += "\n\nИГРОВЫЕ ПАРАМЕТРЫ ЛОТА:\n" + "\n".join(lines)
-
-    game_info = _classify_game(lot, "")
-    if game_info.get("game") != "не определено":
-        base += (f"\n\n🎮 ОПРЕДЕЛЕНО ПО НАЗВАНИЮ/ОПИСАНИЮ:\n"
-                 f"  • Игра: {game_info['game']}\n"
-                 f"  • Платформа: {game_info['platform']}\n"
-                 f"  • Категория: {game_info['category']}")
-
-    lid = str(lot.get("id") or "")
-    vision_details = ""
-    if lid:
-        with LOCK: vision_details = LOT_VISION.get(lid, "")
-    if vision_details:
-        facts = _parse_vision_facts(vision_details)
-        formatted = _format_facts_for_prompt(facts, lot) if facts else ""
-        if formatted:
-            base += "\n\n" + formatted
+    try:
+        base = (f"Название: {lot.get('title') or '—'}\n"
+            f"Цена: {lot.get('price')} {lot.get('currency') or ''}\n"
+            f"Количество: {lot.get('amount') if lot.get('amount') is not None else '—'}\n"
+            f"Автовыдача: {'да' if lot.get('auto') else 'нет'}\n"
+            f"Категория: {lot.get('subcategory') or '—'}\n"
+            f"Описание: {(lot.get('full_description') or lot.get('description') or '')[:1200]}")
+        extra = lot.get("extra_fields") or {}
+        if isinstance(extra, dict) and extra:
+            lines = []
+            for k, v in extra.items():
+                if v is None or v == "": continue
+                if isinstance(v, (list, tuple)): v = ", ".join(str(x) for x in v[:30])
+                elif isinstance(v, dict): v = ", ".join(f"{kk}={vv}" for kk, vv in list(v.items())[:30])
+                else: v = str(v)
+                if len(v) > 400: v = v[:400] + "…"
+                lines.append(f"- {k}: {v}")
+            if lines: base += "\n\nИГРОВЫЕ ПАРАМЕТРЫ ЛОТА:\n" + "\n".join(lines)
+        try:
+            game_info = _classify_game(lot, "")
+            if game_info.get("game") != "не определено":
+                base += (f"\n\n🎮 ОПРЕДЕЛЕНО ПО НАЗВАНИЮ/ОПИСАНИЮ:\n"
+                         f"  • Игра: {game_info['game']}\n"
+                         f"  • Платформа: {game_info['platform']}\n"
+                         f"  • Категория: {game_info['category']}")
+        except Exception: pass
+        lid = str(lot.get("id") or "")
+        vision_details = ""
+        if lid:
+            with LOCK: vision_details = LOT_VISION.get(lid, "")
+        if vision_details:
+            try:
+                facts = _parse_vision_facts(vision_details)
+                formatted = _format_facts_for_prompt(facts, lot) if facts else ""
+            except Exception as e:
+                logger.warning("vision facts parse/format fail: %s", e); formatted = ""
+            if formatted: base += "\n\n" + formatted
+            else:
+                base += ("\n\n★ ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА (ИСТИНА, НЕ ВЫДУМЫВАЙ) ★\n"
+                         + vision_details + "\n★ КОНЕЦ ФАКТОВ ★")
         else:
-            base += ("\n\n★ ФАКТЫ, ИЗВЛЕЧЁННЫЕ СО СКРИНОВ ЛОТА (ИСТИНА, НЕ ВЫДУМЫВАЙ) ★\n"
-                     + vision_details + "\n★ КОНЕЦ ФАКТОВ ★")
-    else:
-        imgs = lot.get("image_urls") or []
-        if imgs: base += f"\n\nВ лоте {len(imgs)} изображений (данные со скринов ещё не извлечены)."
-    return base
+            imgs = lot.get("image_urls") or []
+            if imgs: base += f"\n\nВ лоте {len(imgs)} изображений (данные со скринов ещё не извлечены)."
+        return base
+    except Exception as e:
+        logger.warning("lot_prompt error: %s: %s", type(e).__name__, e)
+        return "Товар не определён."
 
 def _chat_status_hint(chat_id):
     orders = _orders_for_prompt(chat_id, limit=3)
     if not orders: return ""
     lines = ["\nЗАКАЗЫ В ЭТОМ ЧАТЕ (свежие первыми, максимум 3):"]
-    for oid, st in orders:
-        lines.append(f"- #{oid} — {st} ({_STATUS_RU.get(st, st)})")
+    for oid, st in orders: lines.append(f"- #{oid} — {st} ({_STATUS_RU.get(st, st)})")
     latest_oid, latest_st = orders[0]
     lines.append(f"\nСАМЫЙ СВЕЖИЙ: #{latest_oid} — {latest_st} ({_STATUS_RU.get(latest_st, latest_st)})")
     lines.append("- paid → «Да, заказ #XXXX оплачен, спасибо!»")
@@ -3172,7 +3083,7 @@ def _role_block(chat_id, lot):
         return "\nРЕЖИМ ЧАТА: SELLER (продавец). Владелец бота — продавец.\n"
     return ""
 
-def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", search_results: str = ""):
+def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", search_results=""):
     seller = str(SETTINGS.get("seller_info") or "").strip()
     memory_note = ("Ты видишь ВСЮ историю чата. Отвечай ТОЛЬКО на последнее сообщение." if full_chat
                    else "Ты видишь последние сообщения чата.")
@@ -3209,8 +3120,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "7) НЕ сравнивай с другими лотами профиля. Отвечай ТОЛЬКО про лот в ТЕКУЩИЙ ТОВАР.\n"
         "8) Не объясняй, откуда взял данные. Просто ответь по факту.\n"
         "9) Когда покупатель спрашивает про фото/скрин лота — открой блок "
-        "СТРУКТУРИРОВАННЫЕ ФАКТЫ и перечисли ЧТО ВИДНО: игру, ник, уровень, предметы с количеством.\n"
-    )
+        "СТРУКТУРИРОВАННЫЕ ФАКТЫ и перечисли ЧТО ВИДНО: игру, ник, уровень, предметы с количеством.\n")
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
     lot_instr = ""
@@ -3224,8 +3134,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
                 for k, v in instrs.items():
                     if _norm_nick(k) == ntitle: lot_instr = str(v or "").strip(); break
     instr_block = ""
-    if lot_instr:
-        instr_block = f"\n\nИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА (приоритет выше общих правил):\n{lot_instr}\n"
+    if lot_instr: instr_block = f"\n\nИНСТРУКЦИЯ ДЛЯ ЭТОГО ЛОТА (приоритет выше общих правил):\n{lot_instr}\n"
     attached_block = ""
     if lot:
         with LOCK: attached = dict(SETTINGS.get("lot_attached_items") or {})
@@ -3281,7 +3190,6 @@ def ask_ai(m, buyer_text, lot):
     full_chat = len(history) > 2
     lang_hint = language_hint(buyer_text)
     tone_hint_text = tone_hint(buyer_text)
-
     image_data_url = _extract_message_image(m)
     lot_image_urls = []
     if (SETTINGS.get("lot_images_vision", True) and lot and isinstance(lot, dict)):
@@ -3301,26 +3209,30 @@ def ask_ai(m, buyer_text, lot):
         if "скрин" not in effective.lower():
             effective = (effective + "\n\n(Ниже — скриншоты из лота. Отвечай на основе ЭТИХ "
                          "изображений и полей лота. Не выдумывай данные, которых на них нет.)")
-
     msgs = [{"role": "system", "content": _sys_prompt(lot, full_chat, chat_id, lang_hint, tone_hint_text)}]
     msgs += history
-    if image_data_url:
+    lot_imgs_ok = [du for du in lot_image_data_urls[:3] if du]
+    if image_data_url and lot_imgs_ok:
+        head_content = [{"type": "text", "text": "Ниже — скрины из лота (используй как факты):"}]
+        for du in lot_imgs_ok: head_content.append({"type": "image_url", "image_url": {"url": du}})
+        msgs.append({"role": "user", "content": head_content})
         msgs.append({"role": "user", "content": [
             {"type": "text", "text": effective},
             {"type": "image_url", "image_url": {"url": image_data_url}}]})
-    elif lot_image_data_urls:
+    elif image_data_url:
+        msgs.append({"role": "user", "content": [
+            {"type": "text", "text": effective},
+            {"type": "image_url", "image_url": {"url": image_data_url}}]})
+    elif lot_imgs_ok:
         content = [{"type": "text", "text": effective}]
-        for du in lot_image_data_urls[:3]:
-            content.append({"type": "image_url", "image_url": {"url": du}})
+        for du in lot_imgs_ok: content.append({"type": "image_url", "image_url": {"url": du}})
         msgs.append({"role": "user", "content": content})
     else:
         msgs.append({"role": "user", "content": effective})
-
     temperature = float(SETTINGS["temperature"])
     max_tokens = int(SETTINGS["num_predict"])
     timeout = SETTINGS["ai_timeout"]
     first = _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens)
-
     if SETTINGS.get("web_search_enabled", True):
         msearch = _RE_SEARCH_MARKER.search(first)
         if msearch:
@@ -3349,8 +3261,7 @@ def ask_ai(m, buyer_text, lot):
     return _RE_SEARCH_MARKER.sub("", first).strip() or first
 
 def handle_message(c, m, text):
-    wl = is_whitelisted(
-        _extract_nick_from_message(m),
+    wl = is_whitelisted(_extract_nick_from_message(m),
         getattr(m, "author", None), getattr(m, "username", None),
         getattr(m, "chat_name", None), getattr(m, "interlocutor_username", None))
     if _is_jailbreak_attempt(text):
@@ -3410,21 +3321,17 @@ def handle_message(c, m, text):
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
     uncertain = is_uncertain_answer(answer)
     header = ""; reason = ""
-    if uncertain:
-        header = "🆘 <b>AI не смог ответить уверенно</b>"; reason = "AI не уверен"
+    if uncertain: header = "🆘 <b>AI не смог ответить уверенно</b>"; reason = "AI не уверен"
     extra_trigger = False
     na = norm(answer)
     if not uncertain and SETTINGS.get("confidence_notify", True):
-        if re.search(r"скидк|бонус|промокод|акци", na) and re.search(
-            r"усмотрени|продавц|не\s+указан", na):
+        if re.search(r"скидк|бонус|промокод|акци", na) and re.search(r"усмотрени|продавц|не\s+указан", na):
             extra_trigger = True
-            header = "🆘 <b>AI упомянул скидку/бонус</b>"
-            reason = "AI ответил про скидку/бонус"
+            header = "🆘 <b>AI упомянул скидку/бонус</b>"; reason = "AI ответил про скидку/бонус"
     notify = bool((uncertain or extra_trigger) and SETTINGS.get("confidence_notify", True))
     if notify and SETTINGS.get("notify_only_when_called", True):
         buyer_calls = bool(_RE_CALL_SELLER.search(text or ""))
-        problem_topic = bool(re.search(
-            r"возврат|спор|жалоб|претенз|обман|кидал|скам|refund|chargeback",
+        problem_topic = bool(re.search(r"возврат|спор|жалоб|претенз|обман|кидал|скам|refund|chargeback",
             norm(text), re.I))
         if not (buyer_calls or problem_topic): notify = False
     _say(c, m, answer, notify=notify, notify_header=header, reason=reason, buyer_text=text)
@@ -3476,11 +3383,9 @@ def on_message(c, e):
     if getattr(m, "author_id", 0) in (0, getattr(c.account, "id", None)): return
     if getattr(m, "by_bot", False) or getattr(m, "by_vertex", False): return
     if getattr(m, "type", None) is not MessageTypes.NON_SYSTEM: return
-    if any(bool(getattr(m, x, False)) for x in ("is_employee", "is_support", "is_moderation", "is_arbitration", "is_autoreply")):
-        return
+    if any(bool(getattr(m, x, False)) for x in ("is_employee", "is_support", "is_moderation", "is_arbitration", "is_autoreply")): return
     if getattr(m, "chat_name", None) in getattr(c, "blacklist", []): return
-    if is_blacklisted(
-        _extract_nick_from_message(m), getattr(m, "author", None),
+    if is_blacklisted(_extract_nick_from_message(m), getattr(m, "author", None),
         getattr(m, "username", None), getattr(m, "chat_name", None),
         getattr(m, "interlocutor_username", None)): return
     try:
@@ -3533,8 +3438,7 @@ def init_telegram(cardinal):
         with LOCK:
             n_chats = len(HISTORY)
             n_msgs = sum(len(h) for h in HISTORY.values())
-            n_status = len(ORDER_STATUS)
-            n_manual = len(MANUAL_FULFILL_QUEUE)
+            n_status = len(ORDER_STATUS); n_manual = len(MANUAL_FULFILL_QUEUE)
             n_role_s = sum(1 for r in CHAT_ROLE.values() if r == "seller")
             n_role_b = sum(1 for r in CHAT_ROLE.values() if r == "buyer")
             n_vision = len(LOT_VISION)
@@ -3594,12 +3498,30 @@ def init_telegram(cardinal):
                B("🧠 Модель", callback_data=f"{CB}:model"))
         kb.row(B("⏱ Timeout", callback_data=f"{CB}:timeout"), B("📏 Бюджет", callback_data=f"{CB}:budget"),
                B("🧪 Тест", callback_data=f"{CB}:test"))
-        kb.add(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"))
+        kb.row(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"),
+               B("👁️ Тест vision", callback_data=f"{CB}:vision_probe"),
+               B(f"🔁 Retry {utils.bool_to_text(SETTINGS.get('lot_vision_retry', True))}", callback_data=f"{CB}:tog:visionretry"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
             bot.answer_callback_query(call.id)
         except Exception: pass
+
+    def vision_probe_cb(call):
+        bot.answer_callback_query(call.id, "Проверяю vision…")
+        def job():
+            try:
+                res = _vision_probe_api()
+                bot.send_message(call.message.chat.id, res,
+                    reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
+            except Exception as e:
+                try: bot.send_message(call.message.chat.id, f"❌ {type(e).__name__}: {str(e)[:300]}")
+                except Exception: pass
+        POOL.submit(job)
+
+    def toggle_visionretry(call):
+        SETTINGS["lot_vision_retry"] = not bool(SETTINGS.get("lot_vision_retry", True))
+        save_config(); show_api(call)
 
     def show_replies(call):
         text = (f"📝 <b>Промпт и ответы</b>\n\n"
@@ -3691,18 +3613,22 @@ def init_telegram(cardinal):
             f"👁️ Vision извлекать: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_extract', True))}</b>\n"
             f"⚡ Vision на лету: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_on_the_fly', True))}</b>\n"
             f"🔀 Merge скринов: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_merge', True))}</b>\n"
+            f"🔁 Retry: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_retry', True))}</b>\n"
+            f"📢 Логи vision: <b>{utils.bool_to_text(SETTINGS.get('lot_vision_verbose', True))}</b>\n"
+            f"🎯 Max tokens: <b>{SETTINGS.get('lot_vision_max_tokens', 1400)}</b>\n"
             f"📸 Макс. скринов: <b>{SETTINGS.get('lot_vision_max_images', 5)}</b>\n"
-            f"🎭 Роли: <b>{utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}</b>\n"
-            f"Режим по умолчанию: <b>{_role_ru(SETTINGS.get('default_chat_role'))}</b>")
+            f"🎭 Детект ролей: <b>{utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}</b>")
         kb = K(row_width=2)
         kb.row(B(f"🔍 HEAD {utils.bool_to_text(SETTINGS.get('lot_image_validate_http', True))}", callback_data=f"{CB}:tog:headimg"),
                B(f"📏 {SETTINGS.get('lot_image_min_bytes', 5000)}", callback_data=f"{CB}:cycle:minbytes"))
         kb.row(B(f"👁️ Извлекать {utils.bool_to_text(SETTINGS.get('lot_vision_extract', True))}", callback_data=f"{CB}:tog:visionextract"),
                B(f"⚡ На лету {utils.bool_to_text(SETTINGS.get('lot_vision_on_the_fly', True))}", callback_data=f"{CB}:tog:visionfly"))
         kb.row(B(f"🔀 Merge {utils.bool_to_text(SETTINGS.get('lot_vision_merge', True))}", callback_data=f"{CB}:tog:visionmerge"),
-               B(f"📸 Скринов {SETTINGS.get('lot_vision_max_images', 5)}", callback_data=f"{CB}:cycle:visionimgs"))
-        kb.row(B(f"🎭 Детект ролей {utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}", callback_data=f"{CB}:role_toggle"),
-               B(f"🎭 Режим: {_role_ru(SETTINGS.get('default_chat_role'))}", callback_data=f"{CB}:role_default"))
+               B(f"🔁 Retry {utils.bool_to_text(SETTINGS.get('lot_vision_retry', True))}", callback_data=f"{CB}:tog:visionretry"))
+        kb.row(B(f"📢 Логи {utils.bool_to_text(SETTINGS.get('lot_vision_verbose', True))}", callback_data=f"{CB}:tog:visionverbose"),
+               B(f"🎯 Tokens {SETTINGS.get('lot_vision_max_tokens', 1400)}", callback_data=f"{CB}:cycle:visiontokens"))
+        kb.row(B(f"📸 Скринов {SETTINGS.get('lot_vision_max_images', 5)}", callback_data=f"{CB}:cycle:visionimgs"),
+               B(f"🎭 Детект {utils.bool_to_text(SETTINGS.get('role_detection_enabled', True))}", callback_data=f"{CB}:role_toggle"))
         kb.add(B("🎭 Назначить роль чату", callback_data=f"{CB}:role_set_chat"))
         kb.add(B("🧹 Сбросить роли", callback_data=f"{CB}:roles_reset"))
         kb.add(B("◀️ К лотам", callback_data=f"{CB}:m:lots"))
@@ -3808,9 +3734,16 @@ def init_telegram(cardinal):
     def toggle_visionmerge(call):
         SETTINGS["lot_vision_merge"] = not bool(SETTINGS.get("lot_vision_merge", True))
         save_config(); show_lots_settings(call)
+    def toggle_visionverbose(call):
+        SETTINGS["lot_vision_verbose"] = not bool(SETTINGS.get("lot_vision_verbose", True))
+        save_config(); show_lots_settings(call)
     def cycle_visionimgs(call):
         cur = int(SETTINGS.get("lot_vision_max_images", 5))
         SETTINGS["lot_vision_max_images"] = {3: 5, 5: 8, 8: 10, 10: 3}.get(cur, 5)
+        save_config(); show_lots_settings(call)
+    def cycle_visiontokens(call):
+        cur = int(SETTINGS.get("lot_vision_max_tokens", 1400))
+        SETTINGS["lot_vision_max_tokens"] = {900: 1400, 1400: 2000, 2000: 2500, 2500: 900}.get(cur, 1400)
         save_config(); show_lots_settings(call)
     def toggle_manual(call):
         SETTINGS["manual_fulfill_notify"] = not bool(SETTINGS.get("manual_fulfill_notify", True))
@@ -4065,7 +3998,7 @@ def init_telegram(cardinal):
                B("🗑", callback_data=f"{CB}:bl_clear"))
         kb.row(B(f"🚫 Вкл {utils.bool_to_text(SETTINGS.get('blacklist_enabled', True))}", callback_data=f"{CB}:bl_toggle"),
                B(f"🤖 Авто {utils.bool_to_text(SETTINGS.get('auto_blacklist_enabled', True))}", callback_data=f"{CB}:bl_auto_toggle"),
-               B("⚙️ Авто-блок", callback_data=f"{CB}:bl_auto_menu"))
+               B("⚙️ Авто", callback_data=f"{CB}:bl_auto_menu"))
         kb.add(B(f"♻️ Разбан {utils.bool_to_text(SETTINGS.get('unblacklist_on_payment', True))}", callback_data=f"{CB}:unbl_onpay"))
         kb.add(B("◀️ Назад", callback_data=f"{CB}:m:bl"))
         try:
@@ -4291,8 +4224,7 @@ def init_telegram(cardinal):
                          f"Прочитано: <b>{done}</b>"]
                 if no_imgs_lids:
                     lines.append(f"\n⚠️ Без картинок: <b>{len(no_imgs_lids)}</b>")
-                    for x in no_imgs_lids[:5]:
-                        lines.append(f"· лот <code>{utils.escape(str(x))}</code>")
+                    for x in no_imgs_lids[:5]: lines.append(f"· лот <code>{utils.escape(str(x))}</code>")
                     if len(no_imgs_lids) > 5: lines.append(f"… и ещё {len(no_imgs_lids) - 5}")
                     lines.append("\n💡 «🔎 Диагностика» покажет причину.")
                 if total == 0: lines.append("\n❌ <b>Лоты не загружены.</b> Нажми «🔄 Обновить».")
@@ -4347,22 +4279,21 @@ def init_telegram(cardinal):
                 try: imgs_obj_dedup = _dedupe_image_variants(imgs_obj)
                 except Exception: imgs_obj_dedup = imgs_obj
                 lines.append(f"\n🖼 Из объекта: <b>{len(imgs_obj)}</b> (дедуп: <b>{len(imgs_obj_dedup)}</b>)")
-                for u in imgs_obj_dedup[:3]:
-                    lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                for u in imgs_obj_dedup[:3]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
                 try: imgs_html = _lot_images_from_html(lid)
                 except Exception: pass
                 lines.append(f"\n🌐 Из HTML: <b>{len(imgs_html)}</b>")
-                for u in imgs_html[:3]:
-                    lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                for u in imgs_html[:3]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
                 try:
                     imgs_final = _lot_images_deep(cached, lot_fields_obj=fields_obj, lot_dict=cached)
                 except Exception:
                     imgs_final = imgs_obj_dedup or imgs_html
                 lines.append(f"\n🎯 Финальный набор: <b>{len(imgs_final)}</b>")
-                for u in imgs_final[:5]:
-                    lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                for u in imgs_final[:5]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
                 with LOCK: vision_cached = bool(LOT_VISION.get(lid))
                 lines.append(f"\n👁️ Vision в кэше: <b>{'да' if vision_cached else 'нет'}</b>")
+                lines.append("")
+                lines.append(_vision_debug_for_lot(lid))
                 if not imgs_final:
                     lines.append("\n💡 Причины:\n· у лота нет картинок\n· FunPayAPI не отдал поля\n"
                                  "· HTML требует авторизации\n· все картинки меньше min_bytes")
@@ -4408,7 +4339,8 @@ def init_telegram(cardinal):
                 details = _vision_extract_lot_details(imgs)
                 if not details:
                     bot.send_message(m.chat.id,
-                        f"⚠️ Картинок {len(imgs)}, но vision не вернул фактов.")
+                        f"⚠️ Картинок {len(imgs)}, но vision не вернул фактов.\n\n"
+                        + _vision_debug_for_lot(lid))
                     return
                 with LOCK: LOT_VISION[str(lid)] = details
                 _save_lot_vision()
@@ -4488,22 +4420,18 @@ def init_telegram(cardinal):
                 save_config(); bot.answer_callback_query(call.id, "✅"); open_updates(call); return
             if action == "check":
                 manifest, err = check_updates_cycle(cardinal, notify=False, force=True)
-                if manifest is None:
-                    bot.answer_callback_query(call.id, (err or "Ошибка")[:180], show_alert=True)
+                if manifest is None: bot.answer_callback_query(call.id, (err or "Ошибка")[:180], show_alert=True)
                 elif _version_key(str(manifest.get("version") or "")) > _version_key(VERSION):
                     bot.answer_callback_query(call.id, f"Доступна v{manifest.get('version')}!", show_alert=True)
-                else:
-                    bot.answer_callback_query(call.id, f"v{VERSION} актуальна.", show_alert=True)
+                else: bot.answer_callback_query(call.id, f"v{VERSION} актуальна.", show_alert=True)
                 open_updates(call); return
             if action == "install":
                 with LOCK: manifest = UPDATE_STATE.get("manifest")
                 ok, msg = install_update(cardinal, manifest if isinstance(manifest, dict) else None)
-                bot.answer_callback_query(call.id, msg[:180], show_alert=True)
-                open_updates(call); return
+                bot.answer_callback_query(call.id, msg[:180], show_alert=True); open_updates(call); return
             if action == "restart":
                 pending = str(SETTINGS.get("pending_restart_version") or "")
-                if not pending:
-                    bot.answer_callback_query(call.id, "Нет обновления.", show_alert=True); return
+                if not pending: bot.answer_callback_query(call.id, "Нет обновления.", show_alert=True); return
                 bot.answer_callback_query(call.id, "Перезапускаю…", show_alert=True)
                 _restart_cardinal(1.5); return
             if action == "interval":
@@ -4573,15 +4501,13 @@ def init_telegram(cardinal):
         if "|" not in raw:
             bot.reply_to(m, "❌ Нужен формат <code>lot_id|текст</code>",
                 reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:lins:list"))); return
-        key, val = raw.split("|", 1)
-        key, val = key.strip(), val.strip()
+        key, val = raw.split("|", 1); key, val = key.strip(), val.strip()
         if not key or not val:
             bot.reply_to(m, "❌ Пустой ключ или текст."); return
         nk = key if key.isdigit() else _norm_nick(key)
         with LOCK:
             instrs = dict(SETTINGS.get("lot_instructions") or {})
-            instrs[nk] = val[:2000]
-            SETTINGS["lot_instructions"] = instrs
+            instrs[nk] = val[:2000]; SETTINGS["lot_instructions"] = instrs
         save_config()
         bot.reply_to(m, f"✅ Сохранено для <code>{utils.escape(nk)}</code>.",
             reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:lins:list")))
@@ -4604,13 +4530,11 @@ def init_telegram(cardinal):
         with LOCK:
             instrs = dict(SETTINGS.get("lot_instructions") or {})
             if target in instrs:
-                instrs.pop(target, None)
-                SETTINGS["lot_instructions"] = instrs
+                instrs.pop(target, None); SETTINGS["lot_instructions"] = instrs
                 save_config()
                 bot.reply_to(m, "🗑 Удалено.",
                     reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:lins:list")))
-            else:
-                bot.reply_to(m, "ℹ️ Не найдено.")
+            else: bot.reply_to(m, "ℹ️ Не найдено.")
 
     def show_lot_items(call):
         with LOCK: items_map = dict(SETTINGS.get("lot_attached_items") or {})
@@ -4623,8 +4547,7 @@ def init_telegram(cardinal):
             for k, lst in list(items_map.items())[:15]:
                 lines.append(f"· <code>{utils.escape(str(k)[:40])}</code> ({len(lst) if isinstance(lst, list) else 0}):")
                 if isinstance(lst, list):
-                    for it in lst[:5]:
-                        lines.append(f"   – {utils.escape(str(it)[:120])}")
+                    for it in lst[:5]: lines.append(f"   – {utils.escape(str(it)[:120])}")
             text = "\n".join(lines)
         show_text(call, text, back_cb=f"{CB}:m:lots")
     def ask_lot_item_add(call):
@@ -4640,8 +4563,7 @@ def init_telegram(cardinal):
         if "|" not in raw:
             bot.reply_to(m, "❌ Формат <code>lot_id|товар</code>",
                 reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:litem:list"))); return
-        key, val = raw.split("|", 1)
-        key, val = key.strip(), val.strip()
+        key, val = raw.split("|", 1); key, val = key.strip(), val.strip()
         if not key or not val:
             bot.reply_to(m, "❌ Пустой ключ или товар."); return
         nk = key if key.isdigit() else _norm_nick(key)
@@ -4650,8 +4572,7 @@ def init_telegram(cardinal):
             lst = items_map.get(nk)
             if not isinstance(lst, list): lst = []
             if val not in lst: lst.append(val[:300])
-            items_map[nk] = lst[:50]
-            SETTINGS["lot_attached_items"] = items_map
+            items_map[nk] = lst[:50]; SETTINGS["lot_attached_items"] = items_map
         save_config()
         bot.reply_to(m, f"✅ Добавлено для <code>{utils.escape(nk)}</code>: <i>{utils.escape(val[:120])}</i>",
             reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:litem:list")))
@@ -4674,13 +4595,11 @@ def init_telegram(cardinal):
         with LOCK:
             items_map = dict(SETTINGS.get("lot_attached_items") or {})
             if target in items_map:
-                items_map.pop(target, None)
-                SETTINGS["lot_attached_items"] = items_map
+                items_map.pop(target, None); SETTINGS["lot_attached_items"] = items_map
                 save_config()
                 bot.reply_to(m, "🗑 Удалено.",
                     reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:litem:list")))
-            else:
-                bot.reply_to(m, "ℹ️ Не найдено.")
+            else: bot.reply_to(m, "ℹ️ Не найдено.")
 
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(show_api, lambda c: c.data == f"{CB}:m:api")
@@ -4720,7 +4639,11 @@ def init_telegram(cardinal):
     tg.cbq_handler(toggle_visionfly, lambda c: c.data == f"{CB}:tog:visionfly")
     tg.cbq_handler(toggle_visionextract, lambda c: c.data == f"{CB}:tog:visionextract")
     tg.cbq_handler(toggle_visionmerge, lambda c: c.data == f"{CB}:tog:visionmerge")
+    tg.cbq_handler(toggle_visionretry, lambda c: c.data == f"{CB}:tog:visionretry")
+    tg.cbq_handler(toggle_visionverbose, lambda c: c.data == f"{CB}:tog:visionverbose")
     tg.cbq_handler(cycle_visionimgs, lambda c: c.data == f"{CB}:cycle:visionimgs")
+    tg.cbq_handler(cycle_visiontokens, lambda c: c.data == f"{CB}:cycle:visiontokens")
+    tg.cbq_handler(vision_probe_cb, lambda c: c.data == f"{CB}:vision_probe")
     tg.cbq_handler(toggle_manual, lambda c: c.data == f"{CB}:tog:manual")
     tg.cbq_handler(toggle_websearch, lambda c: c.data == f"{CB}:tog:websearch")
     tg.cbq_handler(cycle_webres, lambda c: c.data == f"{CB}:cycle:webres")
@@ -4812,10 +4735,8 @@ def init_telegram(cardinal):
 
 def post_init(c):
     if not os.path.exists(CFG_PATH): load_config()
-    _load_buyer_counts()
-    _load_lot_vision()
-    load_orders_state()
-    load_history_state()
+    _load_buyer_counts(); _load_lot_vision()
+    load_orders_state(); load_history_state()
     try: load_recent_orders(c, limit=10)
     except Exception: logger.debug("load_recent_orders failed", exc_info=True)
     try: sync_lots(c, enrich=False)
