@@ -4051,13 +4051,13 @@ def init_telegram(cardinal):
             f"🌍 Язык: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b> · "
             f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
             f"🚫 Без обещаний: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b>\n"
-        f"🔔 О неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
-        f"🧹 Метки модерации: <b>{utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}</b>\n"
-        f"🛡 HTML-safe: <b>{utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}</b> · "
-        f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
-        f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
-        f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
-        f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
+            f"🔔 О неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
+            f"🧹 Метки модерации: <b>{utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}</b>\n"
+            f"🛡 HTML-safe: <b>{utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}</b> · "
+            f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
+            f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
+            f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
+            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
         kb = K(row_width=2)
         kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
         kb.row(B("🏪 Продавец", callback_data=f"{CB}:seller"),
@@ -4226,6 +4226,7 @@ def init_telegram(cardinal):
             bot.answer_callback_query(call.id)
         except Exception: pass
 
+    # ---------- Простые тоглы главного и второстепенных меню ----------
     def toggle(call):
         SETTINGS["enabled"] = not SETTINGS["enabled"]; save_config(); show(call)
     def toggle_wm(call):
@@ -4294,6 +4295,26 @@ def init_telegram(cardinal):
     def toggle_visionverbose(call):
         SETTINGS["lot_vision_verbose"] = not bool(SETTINGS.get("lot_vision_verbose", True))
         save_config(); show_lots_settings(call)
+
+    # ⬇⬇⬇ ГЛАВНОЕ ИСПРАВЛЕНИЕ: toggle_visionretry больше не NameError ⬇⬇⬇
+    def toggle_visionretry(call):
+        SETTINGS["lot_vision_retry"] = not bool(SETTINGS.get("lot_vision_retry", True))
+        save_config()
+        try:
+            bot.answer_callback_query(
+                call.id, f"Retry: {'вкл' if SETTINGS['lot_vision_retry'] else 'выкл'}")
+        except Exception:
+            pass
+        # Кнопка присутствует и в меню API, и в меню лотов — вернёмся туда, откуда пришли.
+        # Мы не можем отличить по callback_data (одинаковый), поэтому пробуем показать API-меню,
+        # а если не получится (например, сообщение было от меню лотов) — меню лотов.
+        try:
+            show_api(call)
+        except Exception:
+            try: show_lots_settings(call)
+            except Exception: pass
+    # ⬆⬆⬆ конец фикса ⬆⬆⬆
+
     def cycle_visionimgs(call):
         cur = int(SETTINGS.get("lot_vision_max_images", 5))
         SETTINGS["lot_vision_max_images"] = {3: 5, 5: 8, 8: 10, 10: 3}.get(cur, 5)
@@ -4337,7 +4358,8 @@ def init_telegram(cardinal):
             for i, n in enumerate(sorted(raw, key=lambda x: str(x).lower())[:40], 1):
                 cnt = BUYER_ORDERS_COUNT.get(_norm_nick(n), 0)
                 lines.append(f"{i}. <code>{utils.escape(str(n))}</code> · заказов: <b>{cnt}</b>")
-        else: lines.append("<i>Список пуст.</i>")
+        else:
+            lines.append("<i>Список пуст.</i>")
         kb = K(row_width=3)
         kb.row(B("➕", callback_data=f"{CB}:wl_add"), B("➖", callback_data=f"{CB}:wl_del"),
                B("🗑", callback_data=f"{CB}:wl_clear"))
@@ -4416,6 +4438,7 @@ def init_telegram(cardinal):
         try: bot.answer_callback_query(call.id, "🗑 Очищено")
         except Exception: pass
         show_whitelist(call)
+
     def wipe_counts(call):
         global BUYER_ORDERS_COUNT
         with LOCK: BUYER_ORDERS_COUNT.clear()
@@ -4431,7 +4454,7 @@ def init_telegram(cardinal):
         except Exception: pass
         show_misc(call)
 
-    # ---------- Thank / Survey texts ----------
+    # ---------- Thank / Survey ----------
     def ask_thank_text(call):
         msg = bot.send_message(call.message.chat.id, "Текст благодарности после оплаты:", reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_THANK_TEXT); bot.answer_callback_query(call.id)
@@ -4469,7 +4492,8 @@ def init_telegram(cardinal):
         show_misc(call)
     def list_chats(call):
         with LOCK: items = list(HISTORY.items())
-        if not items: text = "💬 Диалогов нет."
+        if not items:
+            text = "💬 Диалогов нет."
         else:
             lines = ["💬 <b>Диалоги</b>", ""]
             for cid, hist in items[:30]:
@@ -4485,10 +4509,12 @@ def init_telegram(cardinal):
             "Источник: <a href='https://funpay.com/trade/info'>funpay.com/trade/info</a>\n\n"
             f"<pre>{utils.escape(FUNPAY_RULES_SNAPSHOT[:3500])}</pre>")
         show_text(call, text, back_cb=f"{CB}:m:misc")
+
     def ask(state, prompt):
         def cb(call):
             msg = bot.send_message(call.message.chat.id, prompt, reply_markup=CLEAR_STATE_BTN())
-            tg.set_state(call.message.chat.id, msg.id, call.from_user.id, state); bot.answer_callback_query(call.id)
+            tg.set_state(call.message.chat.id, msg.id, call.from_user.id, state)
+            bot.answer_callback_query(call.id)
         return cb
     def make_setter(field, validate=None, transform=None, back_cb=f"{CB}:main"):
         def setter(m):
@@ -4510,7 +4536,8 @@ def init_telegram(cardinal):
         kb.add(B("❌ Отмена", callback_data=f"{CB}:m:replies"))
         msg = bot.send_message(call.message.chat.id,
             "📝 <b>Пришлите текст промпта.</b> Можно несколькими сообщениями.", reply_markup=kb)
-        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_PROMPT); bot.answer_callback_query(call.id)
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_PROMPT)
+        bot.answer_callback_query(call.id)
     def prompt_collect(m):
         text = (m.text or "").strip()
         if not text: return
@@ -4533,7 +4560,8 @@ def init_telegram(cardinal):
         bot.answer_callback_query(call.id, f"✅ Сохранено ({len(text)} симв.)", show_alert=True)
         show_replies(call)
     def prompt_reset(call):
-        PROMPT_BUFFER["text"] = ""; bot.answer_callback_query(call.id, "🗑 Буфер очищен.")
+        PROMPT_BUFFER["text"] = ""
+        bot.answer_callback_query(call.id, "🗑 Буфер очищен.")
 
     # ---------- Blacklist ----------
     def show_blacklist(call):
@@ -4546,7 +4574,8 @@ def init_telegram(cardinal):
         if raw:
             for i, n in enumerate(sorted(raw, key=lambda x: str(x).lower())[:40], 1):
                 lines.append(f"{i}. <code>{utils.escape(str(n))}</code>")
-        else: lines.append("<i>Список пуст.</i>")
+        else:
+            lines.append("<i>Список пуст.</i>")
         kb = K(row_width=3)
         kb.row(B("➕", callback_data=f"{CB}:bl_add"), B("➖", callback_data=f"{CB}:bl_del"),
                B("🗑", callback_data=f"{CB}:bl_clear"))
@@ -4615,8 +4644,8 @@ def init_telegram(cardinal):
                 + "\n".join(f"• <code>{utils.escape(x)}</code>" for x in added)) if added else "ℹ️ Все были."
         bot.reply_to(m, body, reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:bl")))
     def ask_blacklist_del(call):
-        msg = bot.send_message(call.message.chat.id, "Ники для удаления. <code>all</code> — очистит.",
-            reply_markup=CLEAR_STATE_BTN())
+        msg = bot.send_message(call.message.chat.id,
+            "Ники для удаления. <code>all</code> — очистит.", reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_BLACKLIST + "_del")
         try: bot.answer_callback_query(call.id)
         except Exception: pass
@@ -4673,7 +4702,7 @@ def init_telegram(cardinal):
     blacklist_photo_toggle = _mk_toggle("Фото-вопрос", "auto_blacklist_photo_ask", True)
     blacklist_photo_send_toggle = _mk_toggle("Фото×3", "auto_blacklist_photo_send", True)
 
-    # ---------- API test / vision test ----------
+    # ---------- API test ----------
     def test_api(call):
         bot.answer_callback_query(call.id, "Проверяю…")
         try:
@@ -4689,8 +4718,10 @@ def init_telegram(cardinal):
                 f"❌ <code>{utils.escape(f'{type(e).__name__}: {e}'[:500])}</code>")
 
     def ask_test_photo(call):
-        msg = bot.send_message(call.message.chat.id, "📷 Отправьте фото — передам в AI vision.", reply_markup=CLEAR_STATE_BTN())
-        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_TEST_PHOTO); bot.answer_callback_query(call.id)
+        msg = bot.send_message(call.message.chat.id,
+            "📷 Отправьте фото — передам в AI vision.", reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_TEST_PHOTO)
+        bot.answer_callback_query(call.id)
     def handle_test_photo(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         if not getattr(m, "photo", None):
@@ -4732,6 +4763,7 @@ def init_telegram(cardinal):
             except Exception: pass
         threading.Thread(target=job, daemon=True).start()
 
+    # ---------- Lots refresh / vision ----------
     def refresh_lots(call):
         bot.answer_callback_query(call.id, "Запущено…")
         msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую…")
@@ -4765,7 +4797,8 @@ def init_telegram(cardinal):
                                 imgs = fresh
                                 with LOCK: LOTS[lid]["image_urls"] = fresh[:12]
                         except Exception: pass
-                    if not imgs: no_imgs_lids.append(lid); continue
+                    if not imgs:
+                        no_imgs_lids.append(lid); continue
                     with_imgs += 1
                     try:
                         with LOCK: LOT_VISION.pop(str(lid), None)
@@ -4782,10 +4815,13 @@ def init_telegram(cardinal):
                          f"С картинками: <b>{with_imgs}</b>", f"Прочитано: <b>{done}</b>"]
                 if no_imgs_lids:
                     lines.append(f"\n⚠️ Без картинок: <b>{len(no_imgs_lids)}</b>")
-                    for x in no_imgs_lids[:5]: lines.append(f"· лот <code>{utils.escape(str(x))}</code>")
-                    if len(no_imgs_lids) > 5: lines.append(f"… и ещё {len(no_imgs_lids) - 5}")
+                    for x in no_imgs_lids[:5]:
+                        lines.append(f"· лот <code>{utils.escape(str(x))}</code>")
+                    if len(no_imgs_lids) > 5:
+                        lines.append(f"… и ещё {len(no_imgs_lids) - 5}")
                     lines.append("\n💡 «🔎 Диагностика» покажет причину.")
-                if total == 0: lines.append("\n❌ <b>Лоты не загружены.</b> Нажми «🔄 Обновить».")
+                if total == 0:
+                    lines.append("\n❌ <b>Лоты не загружены.</b> Нажми «🔄 Обновить».")
                 bot.edit_message_text("\n".join(lines), msg.chat.id, msg.id,
                     reply_markup=K().add(B("🔎 Диагностика", callback_data=f"{CB}:diag_lot"))
                     .add(B("◀️ Назад", callback_data=f"{CB}:m:lots")))
@@ -4837,17 +4873,20 @@ def init_telegram(cardinal):
                 try: imgs_obj_dedup = _dedupe_image_variants(imgs_obj)
                 except Exception: imgs_obj_dedup = imgs_obj
                 lines.append(f"\n🖼 Из объекта: <b>{len(imgs_obj)}</b> (дедуп: <b>{len(imgs_obj_dedup)}</b>)")
-                for u in imgs_obj_dedup[:3]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                for u in imgs_obj_dedup[:3]:
+                    lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
                 try: imgs_html = _lot_images_from_html(lid)
                 except Exception: pass
                 lines.append(f"\n🌐 Из HTML: <b>{len(imgs_html)}</b>")
-                for u in imgs_html[:3]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                for u in imgs_html[:3]:
+                    lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
                 try:
                     imgs_final = _lot_images_deep(cached, lot_fields_obj=fields_obj, lot_dict=cached)
                 except Exception:
                     imgs_final = imgs_obj_dedup or imgs_html
                 lines.append(f"\n🎯 Финальный набор: <b>{len(imgs_final)}</b>")
-                for u in imgs_final[:5]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                for u in imgs_final[:5]:
+                    lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
                 with LOCK: vision_cached = bool(LOT_VISION.get(lid))
                 lines.append(f"\n👁️ Vision в кэше: <b>{'да' if vision_cached else 'нет'}</b>")
                 lines.append("")
@@ -4864,10 +4903,8 @@ def init_telegram(cardinal):
                             plain_chunk = re.sub(r"<[^>]+>", "", chunk)
                             bot.send_message(m.chat.id, plain_chunk, parse_mode=None)
                         except Exception:
-                            try:
-                                bot.send_message(m.chat.id, plain_chunk)
-                            except Exception:
-                                pass
+                            try: bot.send_message(m.chat.id, plain_chunk)
+                            except Exception: pass
             except Exception as e:
                 try: bot.send_message(m.chat.id, f"❌ {type(e).__name__}: {str(e)[:300]}")
                 except Exception: pass
@@ -4950,7 +4987,8 @@ def init_telegram(cardinal):
         if isinstance(manifest, dict):
             lines.append("")
             lines.append(f"На сервере: <b>v{utils.escape(str(manifest.get('version') or '?'))}</b>")
-            if manifest.get("mandatory"): lines.append("🚨 <b>Важное обновление.</b>")
+            if manifest.get("mandatory"):
+                lines.append("🚨 <b>Важное обновление.</b>")
             notes = str(manifest.get("notes") or "").strip()
             if notes: lines.append(f"📝 {utils.escape(notes[:1200])}")
         if status == "error" and err:
@@ -4961,7 +4999,8 @@ def init_telegram(cardinal):
         kb = K(row_width=2)
         kb.row(B(f"🔎 Автопр. {utils.bool_to_text(SETTINGS.get('update_checks_enabled', True))}", callback_data=f"{CB}:upd:checks"),
                B(f"⚡ Автоуст. {utils.bool_to_text(SETTINGS.get('auto_update', False))}", callback_data=f"{CB}:upd:auto"))
-        kb.add(B(f"♻️ Автоперезапуск {utils.bool_to_text(SETTINGS.get('auto_restart_after_update', False))}", callback_data=f"{CB}:upd:autorestart"))
+        kb.add(B(f"♻️ Автоперезапуск {utils.bool_to_text(SETTINGS.get('auto_restart_after_update', False))}",
+                 callback_data=f"{CB}:upd:autorestart"))
         kb.row(B("🔄 Проверить", callback_data=f"{CB}:upd:check"),
                B(f"⏱ {SETTINGS.get('update_check_interval_minutes', 30)}м", callback_data=f"{CB}:upd:interval"))
         with LOCK:
@@ -4997,10 +5036,12 @@ def init_telegram(cardinal):
                 save_config(); bot.answer_callback_query(call.id, "✅"); open_updates(call); return
             if action == "check":
                 manifest, err = check_updates_cycle(cardinal, notify=False, force=True)
-                if manifest is None: bot.answer_callback_query(call.id, (err or "Ошибка")[:180], show_alert=True)
+                if manifest is None:
+                    bot.answer_callback_query(call.id, (err or "Ошибка")[:180], show_alert=True)
                 elif _version_key(str(manifest.get("version") or "")) > _version_key(VERSION):
                     bot.answer_callback_query(call.id, f"Доступна v{manifest.get('version')}!", show_alert=True)
-                else: bot.answer_callback_query(call.id, f"v{VERSION} актуальна.", show_alert=True)
+                else:
+                    bot.answer_callback_query(call.id, f"v{VERSION} актуальна.", show_alert=True)
                 open_updates(call); return
             if action == "install":
                 with LOCK: manifest = UPDATE_STATE.get("manifest")
@@ -5008,7 +5049,8 @@ def init_telegram(cardinal):
                 bot.answer_callback_query(call.id, msg[:180], show_alert=True); open_updates(call); return
             if action == "restart":
                 pending = str(SETTINGS.get("pending_restart_version") or "")
-                if not pending: bot.answer_callback_query(call.id, "Нет обновления.", show_alert=True); return
+                if not pending:
+                    bot.answer_callback_query(call.id, "Нет обновления.", show_alert=True); return
                 bot.answer_callback_query(call.id, "Перезапускаю…", show_alert=True)
                 _restart_cardinal(1.5); return
             if action == "interval":
@@ -5017,6 +5059,7 @@ def init_telegram(cardinal):
                 bot.answer_callback_query(call.id); return
         except Exception: pass
         open_updates(call)
+
     def cmd_ai(m):
         bot.send_message(m.chat.id, main_text(), reply_markup=main_kb())
     def set_update_interval(m):
@@ -5118,7 +5161,8 @@ def init_telegram(cardinal):
                 save_config()
                 bot.reply_to(m, "🗑 Удалено.",
                     reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:lins:list")))
-            else: bot.reply_to(m, "ℹ️ Не найдено.")
+            else:
+                bot.reply_to(m, "ℹ️ Не найдено.")
 
     def show_lot_items(call):
         with LOCK: items_map = dict(SETTINGS.get("lot_attached_items") or {})
@@ -5131,7 +5175,8 @@ def init_telegram(cardinal):
             for k, lst in list(items_map.items())[:15]:
                 lines.append(f"· <code>{utils.escape(str(k)[:40])}</code> ({len(lst) if isinstance(lst, list) else 0}):")
                 if isinstance(lst, list):
-                    for it in lst[:5]: lines.append(f"   – {utils.escape(str(it)[:120])}")
+                    for it in lst[:5]:
+                        lines.append(f"   – {utils.escape(str(it)[:120])}")
             text = "\n".join(lines)
         kb = K(row_width=3)
         kb.row(B("➕", callback_data=f"{CB}:litem:add"), B("➖", callback_data=f"{CB}:litem:del"),
@@ -5189,9 +5234,10 @@ def init_telegram(cardinal):
                 save_config()
                 bot.reply_to(m, "🗑 Удалено.",
                     reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:litem:list")))
-            else: bot.reply_to(m, "ℹ️ Не найдено.")
+            else:
+                bot.reply_to(m, "ℹ️ Не найдено.")
 
-    # ---------- Setters for API URL/Key with preset detection ----------
+    # ---------- Custom setters for API URL / Key ----------
     def set_api_url(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         v = _normalize_openai_base_url((m.text or "").strip())
@@ -5306,22 +5352,19 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask_lot_item_add, lambda c: c.data == f"{CB}:litem:add")
     tg.cbq_handler(ask_lot_item_del, lambda c: c.data == f"{CB}:litem:del")
     tg.cbq_handler(ask_role_chat, lambda c: c.data == f"{CB}:role_set_chat")
-    # --- API-specific handlers (new in 13.3.4) ---
     tg.cbq_handler(show_providers, lambda c: c.data == f"{CB}:provider")
     tg.cbq_handler(pick_provider, lambda c: c.data.startswith(f"{CB}:apipreset:"))
     tg.cbq_handler(show_free_api, lambda c: c.data == f"{CB}:freeapi")
     tg.cbq_handler(pick_free_api, lambda c: c.data.startswith(f"{CB}:freeapipick:"))
     tg.cbq_handler(api_status, lambda c: c.data == f"{CB}:api_status")
     tg.cbq_handler(api_clearkey, lambda c: c.data == f"{CB}:api_clearkey")
-    tg.cbq_handler(vision_probe_cb, lambda c: c.data == f"{CB}:vision_probe")
-    # --- ask/message-state ---
     tg.cbq_handler(ask(ST_URL, "Введите base URL API:"), lambda c: c.data == f"{CB}:url")
-    tg.cbq_handler(ask(ST_KEY, "Введите API key (или env:NAME):"), lambda c: c.data == f"{CB}:key")
+    tg.cbq_handler(ask(ST_KEY, "Введите API key (можно <code>env:NAME</code>):"), lambda c: c.data == f"{CB}:key")
     tg.cbq_handler(ask(ST_MODEL, "Введите ID модели:"), lambda c: c.data == f"{CB}:model")
     tg.cbq_handler(ask(ST_SELLER, "Пришлите данные о продавце:"), lambda c: c.data == f"{CB}:seller")
     tg.cbq_handler(ask(ST_TIMEOUT, "AI timeout 30–600 сек:"), lambda c: c.data == f"{CB}:timeout")
     tg.cbq_handler(ask(ST_BUDGET, "Бюджет истории 2000–40000:"), lambda c: c.data == f"{CB}:budget")
-    tg.cbq_handler(ask(ST_WM_TEXT, "Введите текст знака:"), lambda c: c.data == f"{CB}:wmtext")
+    tg.cbq_handler(ask(ST_WM_TEXT, "Введите текст знака (или «-» чтобы убрать):"), lambda c: c.data == f"{CB}:wmtext")
     tg.cbq_handler(ask(ST_NOTIFY_COOLDOWN, "Cooldown 0–60 мин:"), lambda c: c.data == f"{CB}:cooldown")
     tg.cbq_handler(test_api, lambda c: c.data == f"{CB}:test")
     tg.cbq_handler(refresh_lots, lambda c: c.data == f"{CB}:lots")
@@ -5362,6 +5405,7 @@ def init_telegram(cardinal):
     tg.msg_handler(handle_vision_one, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_VISION_ONE))
     tg.msg_handler(handle_test_photo, content_types=["photo"],
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TEST_PHOTO))
+
     tg.msg_handler(cmd_ai, commands=["ai"])
     cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
 
