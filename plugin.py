@@ -1,6 +1,6 @@
 """KiriillBR AI — AI-заместитель продавца FunPay Cardinal."""
 from __future__ import annotations
-import ast, base64, difflib, hashlib, json, logging, os, re, shutil, sys, threading, time
+import ast, base64, difflib, hashlib, io, json, logging, os, re, shutil, sys, threading, time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
@@ -15,9 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "13.3.4"
-DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (OpenAI, OpenRouter, Groq, Gemini, "
-               "DeepSeek, Together, Mistral и любой OpenAI-compatible), Vision, web-поиск, ЧС+WL.")
+VERSION = "13.4.0"
+DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (25+ эндпоинтов), Vision, web-поиск, ЧС+WL.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -55,22 +54,73 @@ _WEB_SEARCH_TIMEOUT = (6, 15)
 _WEB_SEARCH_MAX_BYTES = 512 * 1024
 _HTTP_UA = "Mozilla/5.0 (compatible; KiriillBRAI/1.0)"
 
+# ═══════════════════════════════════════════════════════════════════════
+#  РАСШИРЕННЫЙ СПИСОК API-ЭНДПОИНТОВ (OpenAI-compatible)
+#  Все принимают POST {url}/chat/completions и GET {url}/models
+# ═══════════════════════════════════════════════════════════════════════
 API_PRESETS: dict[str, tuple[str, str]] = {
-    "openai":      ("OpenAI", "https://api.openai.com/v1"),
-    "openrouter":  ("OpenRouter", "https://openrouter.ai/api/v1"),
-    "groq":        ("Groq", "https://api.groq.com/openai/v1"),
-    "gemini":      ("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
-    "deepseek":    ("DeepSeek", "https://api.deepseek.com"),
-    "together":    ("Together AI", "https://api.together.ai/v1"),
-    "mistral":     ("Mistral", "https://api.mistral.ai/v1"),
-    "xai":         ("xAI Grok", "https://api.x.ai/v1"),
-    "fireworks":   ("Fireworks AI", "https://api.fireworks.ai/inference/v1"),
-    "perplexity":  ("Perplexity", "https://api.perplexity.ai"),
-    "anyscale":    ("Anyscale", "https://api.endpoints.anyscale.com/v1"),
-    "deepinfra":   ("DeepInfra", "https://api.deepinfra.com/v1/openai"),
-    "cerebras":    ("Cerebras", "https://api.cerebras.ai/v1"),
-    "sambanova":   ("SambaNova", "https://api.sambanova.ai/v1"),
-    "custom":      ("Свой OpenAI-compatible API", ""),
+    # --- OpenAI ---
+    "openai":            ("OpenAI", "https://api.openai.com/v1"),
+    "openai_azure":      ("Azure OpenAI (свой resource)", "https://YOUR-RESOURCE.openai.azure.com/openai/v1"),
+    # --- OpenRouter ---
+    "openrouter":        ("OpenRouter", "https://openrouter.ai/api/v1"),
+    "openrouter_alt":    ("OpenRouter (alias)", "https://openrouter.ai/api/v1"),
+    # --- Groq ---
+    "groq":              ("Groq", "https://api.groq.com/openai/v1"),
+    # --- Google Gemini (OpenAI-совместимый) ---
+    "gemini":            ("Google Gemini (v1beta/openai)", "https://generativelanguage.googleapis.com/v1beta/openai"),
+    "gemini_v1":         ("Google Gemini (v1/openai)", "https://generativelanguage.googleapis.com/v1/openai"),
+    "gemini_alt":        ("Google Gemini (генерик)", "https://generativelanguage.googleapis.com/v1beta"),
+    # --- DeepSeek ---
+    "deepseek":          ("DeepSeek", "https://api.deepseek.com"),
+    "deepseek_v1":       ("DeepSeek (v1)", "https://api.deepseek.com/v1"),
+    # --- Together ---
+    "together":          ("Together AI", "https://api.together.ai/v1"),
+    "together_xyz":      ("Together AI (legacy xyz)", "https://api.together.xyz/v1"),
+    # --- Mistral ---
+    "mistral":           ("Mistral", "https://api.mistral.ai/v1"),
+    # --- xAI ---
+    "xai":               ("xAI Grok", "https://api.x.ai/v1"),
+    # --- Fireworks ---
+    "fireworks":         ("Fireworks AI", "https://api.fireworks.ai/inference/v1"),
+    # --- Perplexity ---
+    "perplexity":        ("Perplexity", "https://api.perplexity.ai"),
+    # --- Anyscale ---
+    "anyscale":          ("Anyscale", "https://api.endpoints.anyscale.com/v1"),
+    # --- DeepInfra ---
+    "deepinfra":         ("DeepInfra", "https://api.deepinfra.com/v1/openai"),
+    # --- Cerebras ---
+    "cerebras":          ("Cerebras", "https://api.cerebras.ai/v1"),
+    # --- SambaNova ---
+    "sambanova":         ("SambaNova", "https://api.sambanova.ai/v1"),
+    # --- Alibaba Qwen (DashScope) ---
+    "qwen":              ("Alibaba Qwen / DashScope", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    "qwen_intl":         ("Alibaba Qwen (international)", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+    # --- Moonshot Kimi ---
+    "moonshot":          ("Moonshot Kimi", "https://api.moonshot.cn/v1"),
+    # --- Zhipu GLM ---
+    "zhipu":             ("Zhipu GLM", "https://open.bigmodel.cn/api/paas/v4"),
+    # --- 01.ai (Yi) ---
+    "yi":                ("01.AI Yi", "https://api.lingyiwanwu.com/v1"),
+    # --- Baichuan ---
+    "baichuan":          ("Baichuan", "https://api.baichuan-ai.com/v1"),
+    # --- Novita ---
+    "novita":            ("Novita AI", "https://api.novita.ai/v3/openai"),
+    # --- Hyperbolic ---
+    "hyperbolic":        ("Hyperbolic", "https://api.hyperbolic.xyz/v1"),
+    # --- Lambda Labs ---
+    "lambda":            ("Lambda Labs", "https://api.lambdalabs.com/v1"),
+    # --- Lepton ---
+    "lepton":            ("Lepton AI", "https://<your-endpoint>.lepton.run/api/v1"),
+    # --- Local сервера ---
+    "ollama":            ("Ollama (локально)", "http://localhost:11434/v1"),
+    "lm_studio":         ("LM Studio (локально)", "http://localhost:1234/v1"),
+    "vllm":              ("vLLM (локально)", "http://localhost:8000/v1"),
+    "textgen_webui":     ("Text Generation WebUI", "http://localhost:5000/v1"),
+    "llama_cpp":         ("llama.cpp server", "http://localhost:8080/v1"),
+    "koboldcpp":         ("KoboldCpp", "http://localhost:5001/v1"),
+    # --- Кастом ---
+    "custom":            ("Свой OpenAI-compatible API", ""),
 }
 
 FREE_API_OPTIONS: dict[str, dict[str, str]] = {
@@ -207,7 +257,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 73, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 74, "enabled": True, "setup_done": False,
     "api_provider": "openai_compatible",
     "api_preset": "openrouter",
     "api_url": "https://openrouter.ai/api/v1",
@@ -568,14 +618,14 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 73:
+        if cv < 74:
             SETTINGS.setdefault("lot_fallback_enabled", True)
             SETTINGS.setdefault("api_preset", "openrouter")
             SETTINGS.setdefault("api_provider", "openai_compatible")
@@ -588,7 +638,7 @@ def load_config():
                     detected = key
                     break
             SETTINGS["api_preset"] = detected
-            SETTINGS["version"] = 73
+            SETTINGS["version"] = 74
             save_config()
     except Exception: pass
 
@@ -2589,9 +2639,10 @@ def _explain_http_error(status_code, body_snippet=""):
                 "Возьми vision-модель: gpt-4o-mini, gemini-2.0-flash, claude-3.5-sonnet.")
     if status_code == 403: return "🚫 <b>Доступ запрещён (HTTP 403).</b>"
     if status_code == 404:
-        return ("❓ <b>Модель не найдена (HTTP 404).</b>\n\n"
-                "Список моделей: смотри на сайте провайдера.\n\n"
-                "Попробуй открыть меню 🌐 API → 📦 Список моделей")
+        return ("❓ <b>Модель или URL не найдены (HTTP 404).</b>\n\n"
+                "Проверь: 🌐 API → «🌐 URL» (или «🏷 Провайдер») и «🧠 Модель».\n"
+                "Например, для Gemini — <code>gemini-2.5-flash</code>, а URL должен "
+                "заканчиваться на <code>/v1beta/openai</code>.")
     if status_code >= 500: return f"🔧 <b>Сервер провайдера упал (HTTP {status_code}).</b>"
     return f"❌ Ошибка API: HTTP {status_code}"
 
@@ -3167,18 +3218,15 @@ def _get_viewing(c, m):
     viewing = getattr(m, "buyer_viewing", None)
     if viewing and getattr(viewing, "is_viewing_lot", False):
         return viewing
-
     buyer_id = (getattr(m, "interlocutor_id", None)
                 or getattr(m, "author_id", None)
                 or getattr(m, "interlocutor_username", None))
     if not buyer_id:
         return None
-
     key = str(buyer_id); now = time.time()
     with LOCK: cached = VIEWING_CACHE.get(key)
     if cached and now - cached[0] < 30:
         return cached[1]
-
     viewing = None
     for method_name in ("get_buyer_viewing", "get_user_viewing", "get_viewing", "get_viewing_by_user"):
         method = getattr(c.account, method_name, None)
@@ -3192,7 +3240,6 @@ def _get_viewing(c, m):
         except Exception as e:
             logger.debug("_get_viewing.%s(%s) failed: %s", method_name, buyer_id, e)
             continue
-
     if viewing is None:
         try:
             get_chat = getattr(c.account, "get_chat", None)
@@ -3210,11 +3257,10 @@ def _get_viewing(c, m):
                         viewing = None
         except Exception as e:
             logger.debug("_get_viewing chat.looking_link fallback failed: %s", e)
-
     with LOCK:
         VIEWING_CACHE[key] = (now, viewing)
     if viewing is None:
-        logger.info("_get_viewing: покупатель %s сейчас НЕ смотрит лот (или API не отдал)", buyer_id)
+        logger.info("_get_viewing: покупатель %s сейчас НЕ смотрит лот", buyer_id)
     else:
         logger.info("_get_viewing: покупатель %s смотрит lot_id=%s",
                     buyer_id, getattr(viewing, "lot_id", "?"))
@@ -3243,7 +3289,6 @@ def _last_chat_lot(chat_id, ttl_seconds=1800):
 def _get_lot(c, m, text):
     n = norm(text)
     chat_key = str(getattr(m, "chat_id", "") or "")
-
     prev = _last_chat_lot(chat_key, ttl_seconds=3600)
     if prev:
         ranked = find_lots(text, 3)
@@ -3253,7 +3298,6 @@ def _get_lot(c, m, text):
             if len(ranked) == 1 or score - second >= 0.05 or score >= 0.8:
                 _remember_chat_lot(chat_key, best); return best
         return prev
-
     ranked = find_lots(text, 3)
     if ranked:
         best, score = ranked[0]
@@ -3261,11 +3305,9 @@ def _get_lot(c, m, text):
             second = ranked[1][1] if len(ranked) > 1 else 0.0
             if len(ranked) == 1 or score - second >= 0.04 or score >= 0.8:
                 _remember_chat_lot(chat_key, best); return best
-
     if _RE_CONTEXT_LOT.search(n):
         prev2 = _last_chat_lot(chat_key)
         if prev2: return prev2
-
     viewing = _get_viewing(c, m)
     if viewing and getattr(viewing, "is_viewing_lot", False):
         lid = str(getattr(viewing, "lot_id", ""))
@@ -3290,7 +3332,6 @@ def _get_lot(c, m, text):
                 "auto": False, "subcategory": "", "server": "", "extra_fields": {},
                 "payment_message": "", "image_urls": []}
             _remember_chat_lot(chat_key, synthetic); return synthetic
-
     if SETTINGS.get("lot_fallback_enabled", True) and _RE_PURCHASE_TOPIC.search(n):
         with LOCK: items = list(LOTS.values())
         if items:
@@ -3470,7 +3511,7 @@ def _api_headers(key: str) -> dict[str, str]:
     headers = {"Content-Type": "application/json", "Accept": "application/json",
                "Authorization": f"Bearer {key}"}
     preset = _current_preset()
-    if preset == "openrouter":
+    if preset.startswith("openrouter"):
         headers["HTTP-Referer"] = "https://funpay.com/"
         headers["X-Title"] = f"KiriillBR AI {VERSION}"
     return headers
@@ -3500,7 +3541,6 @@ def ask_ai(m, buyer_text, lot):
     lang_hint = language_hint(buyer_text)
     tone_hint_text = tone_hint(buyer_text)
     buyer_text_clean = str(buyer_text or "")
-
     image_data_url = _extract_message_image(m)
     buyer_asks_lot_screens = bool(_RE_LOT_SCREEN_ASK.search(buyer_text_clean)) or bool(_RE_PHOTO_ASK.search(buyer_text_clean))
     lot_image_urls = []
@@ -3538,15 +3578,12 @@ def ask_ai(m, buyer_text, lot):
         msgs.append({"role": "user", "content": content})
     else:
         msgs.append({"role": "user", "content": effective})
-
     temperature = float(SETTINGS["temperature"])
     max_tokens = int(SETTINGS["num_predict"])
     timeout = SETTINGS["ai_timeout"]
     first = _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens)
-
     if first:
         first = first.replace("\r", "")
-
     if SETTINGS.get("strip_safety_junk", True) and first:
         for _ in range(10):
             try:
@@ -3555,13 +3592,11 @@ def ask_ai(m, buyer_text, lot):
                 break
             if new == first or not new: break
             first = new
-
     if not first or not first.strip():
         if image_data_url:
             first = "Не могу разобрать, что на фото. Опишите текстом, что нужно."
         else:
             first = _offline_lot_fallback(buyer_text_clean, lot)
-
     if SETTINGS.get("web_search_enabled", True):
         msearch = _RE_SEARCH_MARKER.search(first)
         if msearch:
@@ -3605,17 +3640,14 @@ def _offline_lot_fallback(text, lot):
     if not lot:
         return str(SETTINGS.get("unknown_reply")
                    or "Какой лот вас интересует? Напишите название или ID 🙂")
-
     title = str(lot.get("title") or lot.get("description") or "этот товар").strip()
     price = lot.get("price")
     currency = str(lot.get("currency") or "").strip()
     amount = lot.get("amount")
-
     if re.search(r"\bцен|стоит|стоимость|почем|сколько\s+стоит|сколько\s+стоят", n):
         if price is not None:
             return f"Цена лота «{title}» — {price} {currency}".strip() + "."
         return f"Для лота «{title}» цена не указана."
-
     if re.search(r"\bналич|\bесть\b|доступ|остал|количеств|сколько\s+штук", n):
         if amount is None:
             return f"Лот «{title}» доступен. Можете оформлять ✅"
@@ -3626,12 +3658,10 @@ def _offline_lot_fallback(text, lot):
             return f"Сейчас товар «{title}» закончился."
         except Exception:
             return f"Лот «{title}» доступен. Можете оформлять ✅"
-
     if re.search(r"автовыдач|авто\s*выдач|сразу\s+придет|сразу\s+получу|моментальн", n):
         if lot.get("auto"):
             return f"Да, на лоте «{title}» включена автовыдача — данные придут автоматически после оплаты ⚡"
         return f"Автовыдача на лоте «{title}» не указана."
-
     parts = [f"Лот «{title}»"]
     if price is not None:
         parts.append(f"Цена: {price} {currency}".strip())
@@ -3912,11 +3942,76 @@ def init_telegram(cardinal):
         kb.row(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"),
                B("👁️ Тест vision", callback_data=f"{CB}:vision_probe"),
                B(f"🔁 Retry {utils.bool_to_text(SETTINGS.get('lot_vision_retry', True))}", callback_data=f"{CB}:tog:visionretry"))
+        kb.add(B("📋 Все API-ссылки", callback_data=f"{CB}:api_links"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
             bot.answer_callback_query(call.id)
         except Exception: pass
+
+    def show_api_links(call):
+        lines = [f"🔗 <b>Все API-ссылки KiriillBR AI v{VERSION}</b>", ""]
+        lines.append("🌐 <b>Провайдеры (base URL для POST /chat/completions)</b>")
+        current = _current_preset()
+        for key, (label, url) in API_PRESETS.items():
+            mark = "✅ " if key == current else "• "
+            lines.append(f"{mark}<b>{utils.escape(label)}</b> — <code>{key}</code>")
+            lines.append(f"   <code>{utils.escape(url or '(свой URL — введи вручную)')}</code>")
+        lines.append("")
+        lines.append("🆓 <b>Бесплатные пресеты</b>")
+        for key, opt in FREE_API_OPTIONS.items():
+            lines.append(f"• <b>{utils.escape(opt['label'])}</b>")
+            lines.append(f"   provider: <code>{utils.escape(opt['provider'])}</code>")
+            lines.append(f"   model: <code>{utils.escape(opt['model'])}</code>")
+            lines.append(f"   env: <code>{utils.escape(opt['env'])}</code>")
+            lines.append(f"   🔑 {utils.escape(opt['key_url'])}")
+        lines.append("")
+        lines.append("⚙️ <b>Текущие</b>")
+        lines.append(f"🏷 preset: <code>{utils.escape(_current_preset())}</code>")
+        lines.append(f"🌐 url: <code>{utils.escape(_normalize_openai_base_url(str(SETTINGS.get('api_url') or '')))}</code>")
+        lines.append(f"🧠 model: <code>{utils.escape(str(SETTINGS.get('api_model') or '—'))}</code>")
+        lines.append(f"🔑 key: <code>{utils.escape(_mask_api_key())}</code>")
+        text = "\n".join(lines)
+        kb = K(row_width=1)
+        kb.add(B("📄 Скачать .txt", callback_data=f"{CB}:api_links_file"))
+        kb.add(B("◀️ Назад", callback_data=f"{CB}:m:api"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id,
+                                  reply_markup=kb, disable_web_page_preview=True)
+            bot.answer_callback_query(call.id)
+        except Exception:
+            for chunk in [text[i:i+3500] for i in range(0, len(text), 3500)]:
+                try: bot.send_message(call.message.chat.id, chunk, disable_web_page_preview=True)
+                except Exception: pass
+            try: bot.answer_callback_query(call.id)
+            except Exception: pass
+
+    def api_links_file(call):
+        bot.answer_callback_query(call.id, "Готовлю файл…")
+        def job():
+            try:
+                buf = io.StringIO()
+                buf.write(f"KiriillBR AI v{VERSION} — API links\n")
+                buf.write("=" * 60 + "\n\n")
+                buf.write("ПРОВАЙДЕРЫ:\n")
+                for key, (label, url) in API_PRESETS.items():
+                    buf.write(f"- {label} ({key}): {url or '(custom)'}\n")
+                buf.write("\nБЕСПЛАТНЫЕ:\n")
+                for key, opt in FREE_API_OPTIONS.items():
+                    buf.write(f"- {opt['label']}\n  provider: {opt['provider']}\n"
+                              f"  model: {opt['model']}\n  env: {opt['env']}\n"
+                              f"  key_url: {opt['key_url']}\n  hint: {opt['hint']}\n")
+                buf.write("\nТЕКУЩЕЕ:\n")
+                buf.write(f"preset: {_current_preset()}\n")
+                buf.write(f"url:    {_normalize_openai_base_url(str(SETTINGS.get('api_url') or ''))}\n")
+                buf.write(f"model:  {SETTINGS.get('api_model') or ''}\n")
+                buf.write(f"key:    {_mask_api_key()}\n")
+                data = buf.getvalue().encode("utf-8")
+                bot.send_document(call.message.chat.id, ("kiriillbr_api_links.txt", data))
+            except Exception as e:
+                try: bot.send_message(call.message.chat.id, f"❌ {type(e).__name__}: {str(e)[:200]}")
+                except Exception: pass
+        threading.Thread(target=job, daemon=True).start()
 
     def show_providers(call):
         current = _current_preset()
@@ -3932,6 +4027,7 @@ def init_telegram(cardinal):
             short = label if len(label) <= 22 else label[:21] + "…"
             kb.add(B(mark + short, callback_data=f"{CB}:apipreset:{key}"))
         kb.add(B("🆓 Бесплатные API-модели", callback_data=f"{CB}:freeapi"))
+        kb.add(B("📋 Все API-ссылки", callback_data=f"{CB}:api_links"))
         kb.add(B("◀️ Назад", callback_data=f"{CB}:m:api"))
         try:
             bot.edit_message_text("\n\n".join(lines), call.message.chat.id, call.message.id, reply_markup=kb)
@@ -4226,7 +4322,6 @@ def init_telegram(cardinal):
             bot.answer_callback_query(call.id)
         except Exception: pass
 
-    # ---------- Простые тоглы главного и второстепенных меню ----------
     def toggle(call):
         SETTINGS["enabled"] = not SETTINGS["enabled"]; save_config(); show(call)
     def toggle_wm(call):
@@ -4296,20 +4391,15 @@ def init_telegram(cardinal):
         SETTINGS["lot_vision_verbose"] = not bool(SETTINGS.get("lot_vision_verbose", True))
         save_config(); show_lots_settings(call)
 
-    # ⬇⬇⬇ ГЛАВНОЕ ИСПРАВЛЕНИЕ: toggle_visionretry больше не NameError ⬇⬇⬇
+    # ⬇⬇⬇ ГЛАВНОЕ ИСПРАВЛЕНИЕ (NameError убран) ⬇⬇⬇
     def toggle_visionretry(call):
         SETTINGS["lot_vision_retry"] = not bool(SETTINGS.get("lot_vision_retry", True))
         save_config()
         try:
-            bot.answer_callback_query(
-                call.id, f"Retry: {'вкл' if SETTINGS['lot_vision_retry'] else 'выкл'}")
-        except Exception:
-            pass
-        # Кнопка присутствует и в меню API, и в меню лотов — вернёмся туда, откуда пришли.
-        # Мы не можем отличить по callback_data (одинаковый), поэтому пробуем показать API-меню,
-        # а если не получится (например, сообщение было от меню лотов) — меню лотов.
-        try:
-            show_api(call)
+            bot.answer_callback_query(call.id,
+                f"Retry: {'вкл' if SETTINGS['lot_vision_retry'] else 'выкл'}")
+        except Exception: pass
+        try: show_api(call)
         except Exception:
             try: show_lots_settings(call)
             except Exception: pass
@@ -4346,7 +4436,6 @@ def init_telegram(cardinal):
         SETTINGS["lot_image_min_bytes"] = {1000: 5000, 5000: 10000, 10000: 20000, 20000: 1000}.get(cur, 5000)
         save_config(); show_lots_settings(call)
 
-    # ---------- Whitelist ----------
     def show_whitelist(call):
         with LOCK: raw = list(SETTINGS.get("whitelist") or [])
         try: thr = int(SETTINGS.get("auto_whitelist_after_orders", 3))
@@ -4454,7 +4543,6 @@ def init_telegram(cardinal):
         except Exception: pass
         show_misc(call)
 
-    # ---------- Thank / Survey ----------
     def ask_thank_text(call):
         msg = bot.send_message(call.message.chat.id, "Текст благодарности после оплаты:", reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_THANK_TEXT); bot.answer_callback_query(call.id)
@@ -4527,7 +4615,6 @@ def init_telegram(cardinal):
             bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=back_cb)))
         return setter
 
-    # ---------- Prompt editor ----------
     def ask_prompt_start(call):
         PROMPT_BUFFER["text"] = ""
         kb = K(row_width=1)
@@ -4563,7 +4650,6 @@ def init_telegram(cardinal):
         PROMPT_BUFFER["text"] = ""
         bot.answer_callback_query(call.id, "🗑 Буфер очищен.")
 
-    # ---------- Blacklist ----------
     def show_blacklist(call):
         with LOCK: raw = list(SETTINGS.get("blacklist") or [])
         lines = ["🚫 <b>Чёрный список</b>", "",
@@ -4702,7 +4788,6 @@ def init_telegram(cardinal):
     blacklist_photo_toggle = _mk_toggle("Фото-вопрос", "auto_blacklist_photo_ask", True)
     blacklist_photo_send_toggle = _mk_toggle("Фото×3", "auto_blacklist_photo_send", True)
 
-    # ---------- API test ----------
     def test_api(call):
         bot.answer_callback_query(call.id, "Проверяю…")
         try:
@@ -4763,7 +4848,6 @@ def init_telegram(cardinal):
             except Exception: pass
         threading.Thread(target=job, daemon=True).start()
 
-    # ---------- Lots refresh / vision ----------
     def refresh_lots(call):
         bot.answer_callback_query(call.id, "Запущено…")
         msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую…")
@@ -4896,15 +4980,10 @@ def init_telegram(cardinal):
                                  "· HTML требует авторизации\n· все картинки меньше min_bytes")
                 text = "\n".join(lines)
                 for chunk in [text[i:i+3500] for i in range(0, len(text), 3500)]:
-                    try:
-                        bot.send_message(m.chat.id, chunk, parse_mode="HTML")
+                    try: bot.send_message(m.chat.id, chunk, parse_mode="HTML")
                     except Exception:
-                        try:
-                            plain_chunk = re.sub(r"<[^>]+>", "", chunk)
-                            bot.send_message(m.chat.id, plain_chunk, parse_mode=None)
-                        except Exception:
-                            try: bot.send_message(m.chat.id, plain_chunk)
-                            except Exception: pass
+                        try: bot.send_message(m.chat.id, re.sub(r"<[^>]+>", "", chunk))
+                        except Exception: pass
             except Exception as e:
                 try: bot.send_message(m.chat.id, f"❌ {type(e).__name__}: {str(e)[:300]}")
                 except Exception: pass
@@ -4966,7 +5045,6 @@ def init_telegram(cardinal):
                 except Exception: pass
         POOL.submit(job)
 
-    # ---------- Updates ----------
     def updates_text():
         with LOCK:
             manifest = UPDATE_STATE.get("manifest")
@@ -5095,7 +5173,6 @@ def init_telegram(cardinal):
         try: bot.answer_callback_query(call.id)
         except Exception: pass
 
-    # ---------- Lot instructions / items ----------
     def show_lot_instr(call):
         with LOCK: instrs = dict(SETTINGS.get("lot_instructions") or {})
         if not instrs:
@@ -5237,7 +5314,6 @@ def init_telegram(cardinal):
             else:
                 bot.reply_to(m, "ℹ️ Не найдено.")
 
-    # ---------- Custom setters for API URL / Key ----------
     def set_api_url(m):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         v = _normalize_openai_base_url((m.text or "").strip())
@@ -5263,7 +5339,7 @@ def init_telegram(cardinal):
         bot.reply_to(m, f"✅ Ключ сохранён: <code>{utils.escape(_mask_api_key())}</code>",
             reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
 
-    # ---------- Handler registrations ----------
+    # ---------- Регистрация обработчиков ----------
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(show_api, lambda c: c.data == f"{CB}:m:api")
     tg.cbq_handler(show_replies, lambda c: c.data == f"{CB}:m:replies")
@@ -5358,6 +5434,8 @@ def init_telegram(cardinal):
     tg.cbq_handler(pick_free_api, lambda c: c.data.startswith(f"{CB}:freeapipick:"))
     tg.cbq_handler(api_status, lambda c: c.data == f"{CB}:api_status")
     tg.cbq_handler(api_clearkey, lambda c: c.data == f"{CB}:api_clearkey")
+    tg.cbq_handler(show_api_links, lambda c: c.data == f"{CB}:api_links")
+    tg.cbq_handler(api_links_file, lambda c: c.data == f"{CB}:api_links_file")
     tg.cbq_handler(ask(ST_URL, "Введите base URL API:"), lambda c: c.data == f"{CB}:url")
     tg.cbq_handler(ask(ST_KEY, "Введите API key (можно <code>env:NAME</code>):"), lambda c: c.data == f"{CB}:key")
     tg.cbq_handler(ask(ST_MODEL, "Введите ID модели:"), lambda c: c.data == f"{CB}:model")
