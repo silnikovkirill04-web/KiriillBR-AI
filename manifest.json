@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
-  "version": "8.1.1",
+  "version": "8.9.1",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
   "sha256": "586190fbc3492a724cf4cb2445e7e9511a5d700d6e19d59e102d302e2c66b360",
   "mandatory": true,
