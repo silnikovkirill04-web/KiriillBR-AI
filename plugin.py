@@ -15,8 +15,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "9.0.0"
-DESCRIPTION = "AI-помощник продавца FunPay. Vision, web-поиск, ЧС+WL, анти-leet, HTML-safe."
+VERSION = "13.3.3"
+DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (OpenAI, OpenRouter, Groq, Gemini, "
+               "DeepSeek, Together, Mistral и любой OpenAI-compatible), Vision, web-поиск, ЧС+WL.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -53,6 +54,69 @@ _VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
 _WEB_SEARCH_TIMEOUT = (6, 15)
 _WEB_SEARCH_MAX_BYTES = 512 * 1024
 _HTTP_UA = "Mozilla/5.0 (compatible; KiriillBRAI/1.0)"
+
+# === Пресеты AI-провайдеров (все OpenAI-compatible) ===
+API_PRESETS: dict[str, tuple[str, str]] = {
+    "openai":      ("OpenAI", "https://api.openai.com/v1"),
+    "openrouter":  ("OpenRouter", "https://openrouter.ai/api/v1"),
+    "groq":        ("Groq", "https://api.groq.com/openai/v1"),
+    "gemini":      ("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
+    "deepseek":    ("DeepSeek", "https://api.deepseek.com"),
+    "together":    ("Together AI", "https://api.together.ai/v1"),
+    "mistral":     ("Mistral", "https://api.mistral.ai/v1"),
+    "xai":         ("xAI Grok", "https://api.x.ai/v1"),
+    "fireworks":   ("Fireworks AI", "https://api.fireworks.ai/inference/v1"),
+    "perplexity":  ("Perplexity", "https://api.perplexity.ai"),
+    "anyscale":    ("Anyscale", "https://api.endpoints.anyscale.com/v1"),
+    "deepinfra":   ("DeepInfra", "https://api.deepinfra.com/v1/openai"),
+    "cerebras":    ("Cerebras", "https://api.cerebras.ai/v1"),
+    "sambanova":   ("SambaNova", "https://api.sambanova.ai/v1"),
+    "custom":      ("Свой OpenAI-compatible API", ""),
+}
+
+# Быстрые бесплатные варианты — все используют тот же OpenAI-compatible транспорт
+FREE_API_OPTIONS: dict[str, dict[str, str]] = {
+    "openrouter_free": {
+        "label": "OpenRouter · Free Router",
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "env": "OPENROUTER_API_KEY",
+        "key_url": "https://openrouter.ai/keys",
+        "hint": "автовыбор доступной бесплатной модели; дневная квота",
+    },
+    "groq_20b": {
+        "label": "Groq · GPT-OSS 20B",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "env": "GROQ_API_KEY",
+        "key_url": "https://console.groq.com/keys",
+        "hint": "быстрая модель, Free Plan с rate limits",
+    },
+    "groq_120b": {
+        "label": "Groq · GPT-OSS 120B",
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b",
+        "env": "GROQ_API_KEY",
+        "key_url": "https://console.groq.com/keys",
+        "hint": "крупная модель в Groq Free Plan",
+    },
+    "gemini_25_flash": {
+        "label": "Gemini · 2.5 Flash",
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "env": "GEMINI_API_KEY",
+        "key_url": "https://aistudio.google.com/apikey",
+        "hint": "стабильная Flash-модель с бесплатными input/output токенами",
+    },
+    "gemini_20_flash": {
+        "label": "Gemini · 2.0 Flash",
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "env": "GEMINI_API_KEY",
+        "key_url": "https://aistudio.google.com/apikey",
+        "hint": "быстрая Flash-модель Free Tier",
+    },
+}
 
 _LEET_MAP = str.maketrans({
     "0": "о", "1": "и", "3": "е", "4": "ч", "6": "б", "7": "т", "8": "в", "9": "я",
@@ -145,12 +209,15 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 68, "enabled": True, "setup_done": False,
-    "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
+DEFAULTS = {"version": 73, "enabled": True, "setup_done": False,
+    "api_provider": "openai_compatible",
+    "api_preset": "openrouter",
+    "api_url": "https://openrouter.ai/api/v1",
+    "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
     "system_prompt": DEFAULT_PROMPT, "seller_info": "",
-    "unknown_reply": "Уточните, пожалуйста, что именно нужно.",
+    "unknown_reply": "Какой лот вас интересует? Напишите название или ID 🙂",
     "lot_refresh_minutes": 30, "orders_refresh_sec": 30, "watermark": True,
     "watermark_text": "Помощник продавца  🛍( Искуственный интеллект 👾)",
     "seller_notify": True, "seller_notify_cooldown": 5,
@@ -190,6 +257,7 @@ DEFAULTS = {"version": 68, "enabled": True, "setup_done": False,
     "history_compress_old": True, "deleet_enabled": True,
     "sanitize_html_output": True, "balance_html_output": True,
     "deleet_pure_normalize": True,
+    "lot_fallback_enabled": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -433,6 +501,66 @@ def _merge(a, b):
         return r
     return b
 
+def _normalize_openai_base_url(value: str) -> str:
+    url = str(value or "").strip().rstrip("/")
+    if not url:
+        return ""
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    url = re.sub(r"/(?:chat/completions|models)/?$", "", url, flags=re.I).rstrip("/")
+    return url
+
+def _current_preset() -> str:
+    return str(SETTINGS.get("api_preset") or "openrouter")
+
+def _current_provider_label() -> str:
+    preset = _current_preset()
+    return API_PRESETS.get(preset, API_PRESETS["custom"])[0]
+
+def _api_key_resolved() -> str:
+    raw = str(SETTINGS.get("api_key") or "").strip()
+    if raw.lower().startswith("env:"):
+        name = raw[4:].strip()
+        return str(os.environ.get(name, "")).strip() if name else ""
+    return raw
+
+def _mask_api_key(value: str | None = None) -> str:
+    raw = str(SETTINGS.get("api_key") if value is None else value or "").strip()
+    if not raw:
+        return "не задан"
+    if raw.lower().startswith("env:"):
+        name = raw[4:].strip()
+        return f"env:{name}" if name else "env:не задано"
+    if len(raw) <= 8:
+        return "••••••••"
+    return f"{raw[:3]}••••{raw[-4:]}"
+
+def current_free_api_option() -> str:
+    preset = _current_preset()
+    model = str(SETTINGS.get("api_model") or "").strip()
+    for key, option in FREE_API_OPTIONS.items():
+        if option["provider"] == preset and option["model"] == model:
+            return key
+    return ""
+
+def apply_free_api_option(key: str) -> dict[str, str]:
+    option = FREE_API_OPTIONS.get(str(key or ""))
+    if not option:
+        raise KeyError("Неизвестный preset")
+    provider = option["provider"]
+    if provider not in API_PRESETS:
+        raise KeyError("Неизвестный провайдер")
+    previous_provider = _current_preset()
+    current_key = str(SETTINGS.get("api_key") or "").strip()
+    SETTINGS["api_provider"] = "openai_compatible"
+    SETTINGS["api_preset"] = provider
+    SETTINGS["api_url"] = API_PRESETS[provider][1]
+    SETTINGS["api_model"] = option["model"]
+    SETTINGS["setup_done"] = True
+    if previous_provider != provider or not current_key:
+        SETTINGS["api_key"] = f"env:{option['env']}"
+    return option
+
 def load_config():
     global SETTINGS
     if not os.path.exists(CFG_PATH): return
@@ -442,18 +570,28 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 68:
-            for _k in ("auto_fulfill_paid_orders", "auto_fulfill_delay_sec",
-                       "auto_fulfill_notify_seller", "manual_fulfill_notify"):
-                SETTINGS.pop(_k, None)
-            SETTINGS["version"] = 68
+        if cv < 73:
+            SETTINGS.setdefault("lot_fallback_enabled", True)
+            SETTINGS.setdefault("api_preset", "openrouter")
+            SETTINGS.setdefault("api_provider", "openai_compatible")
+            if str(SETTINGS.get("unknown_reply") or "").startswith("Уточните, пожалуйста"):
+                SETTINGS["unknown_reply"] = DEFAULTS["unknown_reply"]
+            # Авто-детект пресета по URL
+            cur_url = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
+            detected = "custom"
+            for key, (_, preset_url) in API_PRESETS.items():
+                if preset_url and _normalize_openai_base_url(preset_url) == cur_url:
+                    detected = key
+                    break
+            SETTINGS["api_preset"] = detected
+            SETTINGS["version"] = 73
             save_config()
     except Exception: pass
 
@@ -2055,7 +2193,6 @@ def _extract_url_as_data_url(url: str) -> str:
     return ""
 
 def _extract_message_image(m):
-    """Многоуровневое извлечение URL картинки из сообщения FunPayAPI."""
     if m is None: return ""
     candidates = []
     def _collect(v):
@@ -2071,7 +2208,6 @@ def _extract_message_image(m):
         elif v is not None:
             for kk in ("url", "link", "src", "image", "preview"):
                 _collect(getattr(v, kk, None))
-
     for attr in ("image_link", "image_url", "image", "photo", "preview_url",
                  "media_url", "attachment_url", "thumbnail", "thumb",
                  "content_url", "download_url"):
@@ -2335,9 +2471,8 @@ def _vision_extract_lot_details(image_urls):
         debug["error"] = "no images or extraction disabled"
         with LOCK: LOT_VISION_DEBUG["_last"] = debug
         return ""
-    base = str(SETTINGS.get("api_url") or "").rstrip("/")
-    key = str(SETTINGS.get("api_key") or "").strip()
-    if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
+    base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
+    key = _api_key_resolved()
     model = str(SETTINGS.get("api_model") or "").strip()
     if not base or not key or not model:
         debug["error"] = "api url/key/model missing"
@@ -2366,8 +2501,7 @@ def _vision_extract_lot_details(image_urls):
                 attempt += 1
                 try:
                     r = requests.post(base + "/chat/completions",
-                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                        json={"model": model,
+                        headers=_api_headers(key), json={"model": model,
                               "messages": [{"role": "user", "content": [
                                   {"type": "text", "text": _VISION_LOT_PROMPT},
                                   {"type": "image_url", "image_url": {"url": du}}]}],
@@ -2423,7 +2557,7 @@ def _vision_extract_lot_details(image_urls):
                 "Если предметы повторяются — суммируй количества. НЕ теряй ни одной цифры. "
                 "Отвечай ТОЛЬКО шаблоном, без вступлений.\n\n" + merged)
             r = requests.post(base + "/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                headers=_api_headers(key),
                 json={"model": model, "messages": [{"role": "user", "content": merge_prompt}],
                       "temperature": 0.0, "max_tokens": max_tokens, "stream": False},
                 timeout=(20, max(60, int(SETTINGS.get("ai_timeout", 120)))))
@@ -2447,9 +2581,8 @@ def _explain_http_error(status_code, body_snippet=""):
     body = str(body_snippet or "").lower()
     if status_code == 402:
         return ("💳 <b>Закончились средства на API-провайдере (HTTP 402).</b>\n\n"
-                "Что делать:\n• Пополни баланс на openrouter.ai/credits, ИЛИ\n"
-                "• Смени модель на бесплатную с суффиксом <code>:free</code>\n"
-                "  например <code>google/gemini-2.0-flash-lite-preview-02-05:free</code>")
+                "Что делать:\n• Пополни баланс у провайдера, ИЛИ\n"
+                "• Смени модель на бесплатную (например, с суффиксом <code>:free</code>)")
     if status_code == 401:
         return "🔑 <b>Неверный API-ключ (HTTP 401).</b>\n\nПроверь ключ: 🌐 API → 🔑 Key"
     if status_code == 429:
@@ -2460,10 +2593,8 @@ def _explain_http_error(status_code, body_snippet=""):
     if status_code == 403: return "🚫 <b>Доступ запрещён (HTTP 403).</b>"
     if status_code == 404:
         return ("❓ <b>Модель не найдена (HTTP 404).</b>\n\n"
-                "Список: openrouter.ai/models → Modality: Text+Image → Text.\n\n"
-                "Попробуй:\n• <code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n"
-                "• <code>qwen/qwen2.5-vl-72b-instruct:free</code>\n"
-                "• <code>openai/gpt-4o-mini</code>")
+                "Список моделей: смотри на сайте провайдера.\n\n"
+                "Попробуй открыть меню 🌐 API → 📦 Список моделей")
     if status_code >= 500: return f"🔧 <b>Сервер провайдера упал (HTTP {status_code}).</b>"
     return f"❌ Ошибка API: HTTP {status_code}"
 
@@ -2510,15 +2641,14 @@ def _vision_debug_for_lot(lot_id):
     return "\n".join(lines)
 
 def _vision_probe_api():
-    base = str(SETTINGS.get("api_url") or "").rstrip("/")
-    key = str(SETTINGS.get("api_key") or "").strip()
-    if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
+    base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
+    key = _api_key_resolved()
     model = str(SETTINGS.get("api_model") or "").strip()
     if not base or not key or not model: return "❌ Не заданы API URL / key / model."
     test_png_b64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
     try:
         r = requests.post(base + "/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            headers=_api_headers(key),
             json={"model": model,
                   "messages": [{"role": "user", "content": [
                       {"type": "text", "text": "Ответь одним словом: что видишь?"},
@@ -2533,9 +2663,7 @@ def _vision_probe_api():
         ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
         if not ans:
             return ("❌ Модель вернула пустой ответ на картинку.\n\n"
-                    "Скорее всего модель НЕ vision. Возьми:\n"
-                    "<code>google/gemini-2.0-flash-lite-preview-02-05:free</code>\n"
-                    "<code>openai/gpt-4o-mini</code>")
+                    "Скорее всего модель НЕ vision. Возьми vision-модель.")
         return f"✅ Модель ответила на картинку:\n\n<code>{utils.escape(ans[:300])}</code>"
     except Exception as e:
         return f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}"
@@ -2817,7 +2945,9 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     v = outbound_violation(out)
     if v and v != "empty": out = refusal(v); notify = False
     out = _strip_fake_order_action(out)
-    if not out: out = "Уточните, пожалуйста, что именно нужно."
+    if not out or out.strip() in ("Уточните, пожалуйста, что именно нужно.",
+                                   "Уточните, что именно нужно."):
+        out = "Какой лот вас интересует? Напишите название или ID 🙂"
     try:
         _chat_id = str(getattr(m, "chat_id", "") or "")
         if _chat_id and _RE_REFUND_WORD.search(out):
@@ -3038,15 +3168,59 @@ def _history_for_api(chat_id, exclude_last_user=""):
 
 def _get_viewing(c, m):
     viewing = getattr(m, "buyer_viewing", None)
-    if viewing and getattr(viewing, "is_viewing_lot", False): return viewing
-    buyer_id = getattr(m, "interlocutor_id", None)
-    if not buyer_id: return None
+    if viewing and getattr(viewing, "is_viewing_lot", False):
+        return viewing
+
+    buyer_id = (getattr(m, "interlocutor_id", None)
+                or getattr(m, "author_id", None)
+                or getattr(m, "interlocutor_username", None))
+    if not buyer_id:
+        return None
+
     key = str(buyer_id); now = time.time()
     with LOCK: cached = VIEWING_CACHE.get(key)
-    if cached and now - cached[0] < 45: return cached[1]
-    try: viewing = c.account.get_buyer_viewing(buyer_id)
-    except Exception: viewing = None
-    with LOCK: VIEWING_CACHE[key] = (now, viewing)
+    if cached and now - cached[0] < 30:
+        return cached[1]
+
+    viewing = None
+    for method_name in ("get_buyer_viewing", "get_user_viewing", "get_viewing", "get_viewing_by_user"):
+        method = getattr(c.account, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            v = method(buyer_id)
+            if v:
+                viewing = v
+                break
+        except Exception as e:
+            logger.debug("_get_viewing.%s(%s) failed: %s", method_name, buyer_id, e)
+            continue
+
+    if viewing is None:
+        try:
+            get_chat = getattr(c.account, "get_chat", None)
+            chat_id = getattr(m, "chat_id", None)
+            if callable(get_chat) and chat_id:
+                full = get_chat(chat_id, with_history=False)
+                link = getattr(full, "looking_link", None) or ""
+                text = getattr(full, "looking_text", None) or ""
+                if link or text:
+                    try:
+                        vv = BuyerViewing(0, link, text, None)
+                        if getattr(vv, "is_viewing_lot", False) or text:
+                            viewing = vv
+                    except Exception:
+                        viewing = None
+        except Exception as e:
+            logger.debug("_get_viewing chat.looking_link fallback failed: %s", e)
+
+    with LOCK:
+        VIEWING_CACHE[key] = (now, viewing)
+    if viewing is None:
+        logger.info("_get_viewing: покупатель %s сейчас НЕ смотрит лот (или API не отдал)", buyer_id)
+    else:
+        logger.info("_get_viewing: покупатель %s смотрит lot_id=%s",
+                    buyer_id, getattr(viewing, "lot_id", "?"))
     return viewing
 
 def _remember_chat_lot(chat_id, lot):
@@ -3072,6 +3246,7 @@ def _last_chat_lot(chat_id, ttl_seconds=1800):
 def _get_lot(c, m, text):
     n = norm(text)
     chat_key = str(getattr(m, "chat_id", "") or "")
+
     prev = _last_chat_lot(chat_key, ttl_seconds=3600)
     if prev:
         ranked = find_lots(text, 3)
@@ -3081,6 +3256,7 @@ def _get_lot(c, m, text):
             if len(ranked) == 1 or score - second >= 0.05 or score >= 0.8:
                 _remember_chat_lot(chat_key, best); return best
         return prev
+
     ranked = find_lots(text, 3)
     if ranked:
         best, score = ranked[0]
@@ -3088,9 +3264,11 @@ def _get_lot(c, m, text):
             second = ranked[1][1] if len(ranked) > 1 else 0.0
             if len(ranked) == 1 or score - second >= 0.04 or score >= 0.8:
                 _remember_chat_lot(chat_key, best); return best
+
     if _RE_CONTEXT_LOT.search(n):
         prev2 = _last_chat_lot(chat_key)
         if prev2: return prev2
+
     viewing = _get_viewing(c, m)
     if viewing and getattr(viewing, "is_viewing_lot", False):
         lid = str(getattr(viewing, "lot_id", ""))
@@ -3115,6 +3293,20 @@ def _get_lot(c, m, text):
                 "auto": False, "subcategory": "", "server": "", "extra_fields": {},
                 "payment_message": "", "image_urls": []}
             _remember_chat_lot(chat_key, synthetic); return synthetic
+
+    if SETTINGS.get("lot_fallback_enabled", True) and _RE_PURCHASE_TOPIC.search(n):
+        with LOCK: items = list(LOTS.values())
+        if items:
+            scored = sorted(items, key=lambda L: (
+                -int(bool(L.get("image_urls"))),
+                -int(bool(L.get("full_description"))),
+                -int(bool(L.get("payment_message"))),
+            ))
+            best = scored[0]
+            logger.info("_get_lot FALLBACK: '%s' → lot_id=%s (%s)",
+                        text[:60], best.get("id"), str(best.get("title") or "")[:40])
+            _remember_chat_lot(chat_key, best)
+            return best
     return None
 
 def _lot_prompt(lot):
@@ -3191,8 +3383,23 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
     seller = str(SETTINGS.get("seller_info") or "").strip()
     memory_note = ("Ты видишь ВСЮ историю чата. Отвечай ТОЛЬКО на последнее сообщение." if full_chat
                    else "Ты видишь последние сообщения чата.")
-    viewing_note = ("В блоке ТЕКУЩИЙ ТОВАР уже передан лот. Отвечай сразу по нему." if lot
-                    else "Точного лота нет — задай ОДИН короткий уточняющий вопрос.")
+    if lot:
+        viewing_note = "В блоке ТЕКУЩИЙ ТОВАР уже передан лот. Отвечай сразу по нему, не переспрашивая."
+    else:
+        with LOCK: items = list(LOTS.values())[:8]
+        if items:
+            lines = ["Активные лоты продавца (используй как подсказку, если покупатель не назвал лот):"]
+            for i, l in enumerate(items, 1):
+                t = str(l.get("title") or "—")[:80]
+                p = l.get("price"); cu = l.get("currency") or ""
+                lines.append(f"{i}. {t} — {p} {cu}".strip())
+            viewing_note = ("Точного лота нет. Если покупатель спрашивает про цену/наличие — выбери "
+                            "подходящий лот из списка ниже и ответь ЦЕНОЙ. Если непонятно — задай ОДИН "
+                            "короткий вопрос «Какой лот вас интересует?» (НЕ пиши «Уточните, что именно нужно»).\n\n"
+                            + "\n".join(lines))
+        else:
+            viewing_note = ("Точного лота нет. Спроси: «Какой лот вас интересует?» "
+                            "(НЕ пиши «Уточните, что именно нужно»).")
     extra = ""
     if lang_hint: extra += f"\nЯЗЫК ОТВЕТА:\n{lang_hint}\n"
     if tone_hint_text: extra += f"\nТОН ОТВЕТА:\n{tone_hint_text}\n"
@@ -3205,7 +3412,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "1) ОТВЕЧАЙ СТРОГО НА ЗАДАННЫЙ ВОПРОС. Не вываливай все факты подряд.\n"
         "   Спросили «какой уровень?» — только про уровень. «Что по цене?» — ЦЕНУ.\n"
         "2) ИСТОЧНИК ИСТИНЫ — только ТЕКУЩИЙ ТОВАР, ОПРЕДЕЛЕНО, ФАКТЫ СО СКРИНОВ, "
-        "ПОДКЛЮЧЁННЫЕ ТОВАРЫ, ИНСТРУКЦИЯ.\n"
+        "ПОДКЛЮЧЁННЫЕ ТОВАРЫ, ИНСТРУКЦИЯ, СПИСОК АКТИВНЫХ ЛОТОВ.\n"
         "3) НИКОГДА не придумывай числа — если нет в фактах, значит нет.\n"
         "4) «AK-47 Redline ×2» называй ИМЕННО так, не заменяй на «есть скины».\n"
         "5) На «какие предметы?» — перечисли ВСЕ с количествами.\n"
@@ -3216,7 +3423,9 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "10) Если покупатель НЕ присылал фото и НЕ просил описать картинки — НИКОГДА не "
         "описывай изображения. На «что по цене?» отвечай ЦЕНОЙ.\n"
         "11) НИКОГДА не выводи технические метки: User Safety, Response Safety, "
-        "Content Policy, Moderation, Rating, Safe/Unsafe. Только ответ покупателю.\n")
+        "Content Policy, Moderation, Rating, Safe/Unsafe. Только ответ покупателю.\n"
+        "12) НИКОГДА не отвечай «Уточните, пожалуйста, что именно нужно». Если непонятно — "
+        "спроси конкретно: «Какой лот вас интересует?» или «Вас интересует цена или наличие?».\n")
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
     lot_instr = ""
@@ -3260,9 +3469,18 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "Дополнительно:\n- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар.\n"
         "- Название платформы внутри товара — НЕ контакт.")
 
+def _api_headers(key: str) -> dict[str, str]:
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "Authorization": f"Bearer {key}"}
+    preset = _current_preset()
+    if preset == "openrouter":
+        headers["HTTP-Referer"] = "https://funpay.com/"
+        headers["X-Title"] = f"KiriillBR AI {VERSION}"
+    return headers
+
 def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens):
     r = requests.post(base + "/chat/completions",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers=_api_headers(key),
         json={"model": model, "messages": msgs, "temperature": temperature,
               "max_tokens": max_tokens, "stream": False},
         timeout=(10, max(30, int(timeout))))
@@ -3273,10 +3491,9 @@ def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens):
     return text
 
 def ask_ai(m, buyer_text, lot):
-    base = str(SETTINGS.get("api_url") or "").rstrip("/")
+    base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
     if not base: raise RuntimeError("API URL не задан.")
-    key = str(SETTINGS.get("api_key") or "").strip()
-    if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
+    key = _api_key_resolved()
     if not key: raise RuntimeError("API key не задан.")
     model = str(SETTINGS.get("api_model") or "").strip()
     if not model: raise RuntimeError("API-модель не выбрана.")
@@ -3346,7 +3563,7 @@ def ask_ai(m, buyer_text, lot):
         if image_data_url:
             first = "Не могу разобрать, что на фото. Опишите текстом, что нужно."
         else:
-            first = str(SETTINGS.get("unknown_reply", "Уточните, пожалуйста, что именно нужно."))
+            first = _offline_lot_fallback(buyer_text_clean, lot)
 
     if SETTINGS.get("web_search_enabled", True):
         msearch = _RE_SEARCH_MARKER.search(first)
@@ -3385,6 +3602,43 @@ def ask_ai(m, buyer_text, lot):
                 except Exception: pass
             return _RE_SEARCH_MARKER.sub("", first).strip() or first
     return _RE_SEARCH_MARKER.sub("", first).strip() or first
+
+def _offline_lot_fallback(text, lot):
+    n = norm(text)
+    if not lot:
+        return str(SETTINGS.get("unknown_reply")
+                   or "Какой лот вас интересует? Напишите название или ID 🙂")
+
+    title = str(lot.get("title") or lot.get("description") or "этот товар").strip()
+    price = lot.get("price")
+    currency = str(lot.get("currency") or "").strip()
+    amount = lot.get("amount")
+
+    if re.search(r"\bцен|стоит|стоимость|почем|сколько\s+стоит|сколько\s+стоят", n):
+        if price is not None:
+            return f"Цена лота «{title}» — {price} {currency}".strip() + "."
+        return f"Для лота «{title}» цена не указана."
+
+    if re.search(r"\bналич|\bесть\b|доступ|остал|количеств|сколько\s+штук", n):
+        if amount is None:
+            return f"Лот «{title}» доступен. Можете оформлять ✅"
+        try:
+            amt = float(amount)
+            if amt > 0:
+                return f"Да, товар в наличии — {amt:g} шт. Можете оформлять ✅"
+            return f"Сейчас товар «{title}» закончился."
+        except Exception:
+            return f"Лот «{title}» доступен. Можете оформлять ✅"
+
+    if re.search(r"автовыдач|авто\s*выдач|сразу\s+придет|сразу\s+получу|моментальн", n):
+        if lot.get("auto"):
+            return f"Да, на лоте «{title}» включена автовыдача — данные придут автоматически после оплаты ⚡"
+        return f"Автовыдача на лоте «{title}» не указана."
+
+    parts = [f"Лот «{title}»"]
+    if price is not None:
+        parts.append(f"Цена: {price} {currency}".strip())
+    return ". ".join(parts) + "."
 
 def handle_message(c, m, text):
     wl = is_whitelisted(_extract_nick_from_message(m),
@@ -3439,10 +3693,23 @@ def handle_message(c, m, text):
     try:
         answer = ask_ai(m, text, lot)
     except Exception as e:
-        logger.warning("AI fail: %s: %s", type(e).__name__, e)
-        _say(c, m, str(SETTINGS["unknown_reply"]), notify=True,
-            notify_header="🆘 <b>AI-провайдер не ответил</b>",
-            reason="API недоступен", buyer_text=text); return
+        err_text = f"{type(e).__name__}: {e}"
+        resp = getattr(e, "response", None)
+        if resp is not None:
+            try:
+                body = resp.text[:600].replace("\n", " ")
+            except Exception:
+                body = ""
+            err_text = f"HTTP {resp.status_code} · {err_text} · body={body!r}"
+        logger.error("AI fail: %s", err_text)
+        if _message_has_photo(m) and not (text or "").strip():
+            _say(c, m, "📸 Не удалось обработать фото. Отправьте ещё раз или напишите текстом.")
+        else:
+            fallback = _offline_lot_fallback(text, lot)
+            _say(c, m, fallback, notify=True,
+                 notify_header="🆘 <b>AI-провайдер не ответил</b>",
+                 reason=f"API: {err_text[:200]}", buyer_text=text)
+        return
     if _is_forbidden_photo_response(answer, text):
         if not wl: _instant_blacklist(c, m, "Запрещённое фото или отказ AI от описания", answer)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
@@ -3578,11 +3845,13 @@ def init_telegram(cardinal):
             n_role_b = sum(1 for r in CHAT_ROLE.values() if r == "buyer")
             n_vision = len(LOT_VISION)
             n_with_imgs = sum(1 for v in LOTS.values() if v.get("image_urls"))
+        preset_label = _current_provider_label()
         head = f"🤖 <b>{NAME} v{VERSION}</b> · <b>{CREDITS}</b>\n\n"
         head += f"🟢 Автоответ: <b>{utils.bool_to_text(SETTINGS['enabled'])}</b> · "
         head += f"🔔 Увед: <b>{utils.bool_to_text(SETTINGS.get('seller_notify', True))}</b>\n"
-        head += f"🌐 <code>{utils.escape(str(SETTINGS.get('api_model') or '—'))}</code> · "
-        head += f"🔑 {'✅' if SETTINGS.get('api_key') else '❌'}\n"
+        head += f"🌐 <b>{utils.escape(preset_label)}</b> · "
+        head += f"<code>{utils.escape(str(SETTINGS.get('api_model') or '—'))}</code> · "
+        head += f"🔑 {'✅' if _api_key_resolved() else '❌'}\n"
         head += f"🛍 Лотов: <b>{len(LOTS)}</b>/🖼️<b>{n_with_imgs}</b> · 👁️<b>{n_vision}</b>\n"
         head += f"📌 Заказов: <b>{n_status}</b>\n"
         head += f"💬 Память: <b>{n_chats}</b> / <b>{n_msgs}</b> сообщ.\n"
@@ -3622,25 +3891,150 @@ def init_telegram(cardinal):
             except Exception: pass
 
     def show_api(call):
+        preset_label = _current_provider_label()
+        key_state = "задан" if _api_key_resolved() else "не задан"
         text = (f"🌐 <b>API и модель</b>\n\n"
+            f"🏷 Провайдер: <b>{utils.escape(preset_label)}</b>\n"
             f"🌐 URL: <code>{utils.escape(str(SETTINGS.get('api_url') or '—'))}</code>\n"
-            f"🔑 Ключ: <b>{'задан' if SETTINGS.get('api_key') else 'не задан'}</b>\n"
+            f"🔑 Ключ: <b>{utils.escape(_mask_api_key())}</b> · {key_state}\n"
             f"🧠 Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or 'не выбрана'))}</code>\n"
             f"⏱ Timeout: <b>{SETTINGS.get('ai_timeout', 120)}с</b> · 📏 Бюджет: <b>{SETTINGS.get('history_char_budget', 12000)}</b>\n"
             f"🌡 T: <b>{SETTINGS.get('temperature', 0.25)}</b>")
         kb = K(row_width=3)
-        kb.row(B("🌐 URL", callback_data=f"{CB}:url"), B("🔑 Key", callback_data=f"{CB}:key"),
+        kb.row(B("🏷 Провайдер", callback_data=f"{CB}:provider"),
+               B("🧪 Тест", callback_data=f"{CB}:test"),
+               B("🔄 /models", callback_data=f"{CB}:api_status"))
+        kb.row(B("🌐 URL", callback_data=f"{CB}:url"),
+               B("🔑 Key", callback_data=f"{CB}:key"),
                B("🧠 Модель", callback_data=f"{CB}:model"))
-        kb.row(B("⏱ Timeout", callback_data=f"{CB}:timeout"), B("📏 Бюджет", callback_data=f"{CB}:budget"),
-               B("🧪 Тест", callback_data=f"{CB}:test"))
+        kb.row(B("📦 Список моделей", callback_data=f"{CB}:apimodels:0"),
+               B("🆓 Free-модели", callback_data=f"{CB}:freeapi"),
+               B("🧹 Удалить key", callback_data=f"{CB}:api_clearkey"))
+        kb.row(B("⏱ Timeout", callback_data=f"{CB}:timeout"),
+               B("📏 Бюджет", callback_data=f"{CB}:budget"),
+               B("🌡 T", callback_data=f"{CB}:temperature"))
         kb.row(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"),
-               B("👁️ Тест vision", callback_data=f"{CB}:vision_probe"),
-               B(f"🔁 Retry {utils.bool_to_text(SETTINGS.get('lot_vision_retry', True))}", callback_data=f"{CB}:tog:visionretry"))
+               B("👁️ Тест vision", callback_data=f"{CB}:vision_probe"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
             bot.answer_callback_query(call.id)
         except Exception: pass
+
+    def show_providers(call):
+        current = _current_preset()
+        lines = [f"🏷 <b>Выбор AI-провайдера</b>\n\nТекущий: <b>{utils.escape(_current_provider_label())}</b>\n",
+                 "Все провайдеры ниже используют стандартный OpenAI-compatible API "
+                 "(<code>/chat/completions</code>). Выбирай по ключу, который у тебя есть.\n"]
+        for key, (label, url) in API_PRESETS.items():
+            mark = "✅ " if key == current else ""
+            lines.append(f"{mark}<b>{utils.escape(label)}</b>\n<code>{utils.escape(url or '(свой URL)')}</code>")
+        kb = K(row_width=2)
+        for key, (label, _url) in API_PRESETS.items():
+            mark = "✅ " if key == current else ""
+            short = label if len(label) <= 22 else label[:21] + "…"
+            kb.add(B(mark + short, callback_data=f"{CB}:apipreset:{key}"))
+        kb.add(B("🆓 Бесплатные API-модели", callback_data=f"{CB}:freeapi"))
+        kb.add(B("◀️ Назад", callback_data=f"{CB}:m:api"))
+        try:
+            bot.edit_message_text("\n\n".join(lines), call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception: pass
+
+    def pick_provider(call):
+        key = call.data.split(":")[-1]
+        if key not in API_PRESETS:
+            bot.answer_callback_query(call.id, "Неизвестный провайдер", show_alert=True)
+            return
+        label, url = API_PRESETS[key]
+        SETTINGS["api_provider"] = "openai_compatible"
+        SETTINGS["api_preset"] = key
+        if url:
+            SETTINGS["api_url"] = url
+        save_config()
+        bot.answer_callback_query(call.id, f"Выбрано: {label}")
+        show_api(call)
+
+    def show_free_api(call):
+        selected = current_free_api_option()
+        current = FREE_API_OPTIONS.get(selected) if selected else None
+        current_text = (
+            f"\n\nСейчас: <b>{utils.escape(current['label'])}</b>\n"
+            f"API: <code>{utils.escape(_normalize_openai_base_url(str(SETTINGS.get('api_url') or '')))}</code>\n"
+            f"Модель: <code>{utils.escape(str(SETTINGS.get('api_model') or ''))}</code>\n"
+            f"Ключ: <code>{utils.escape(_mask_api_key())}</code>"
+            if current else
+            "\n\nСейчас быстрый бесплатный вариант не выбран."
+        )
+        options_text = "\n".join(
+            f"• <b>{utils.escape(option['label'])}</b> — {utils.escape(option['hint'])}."
+            for option in FREE_API_OPTIONS.values()
+        )
+        text = (
+            "🆓 <b>Бесплатные API-модели</b>\n\n"
+            "Выбери модель — плагин автоматически выставит совместимый API URL и model ID. "
+            "При переходе на другой сервис старый ключ не переносится: вместо него ставится "
+            "безопасная ссылка <code>env:...</code>. Затем получи ключ и добавь его в переменную "
+            "окружения или нажми «🔑 Ввести API key».\n\n"
+            f"{options_text}"
+            f"{current_text}\n\n"
+            "⚠️ Условия и лимиты free-tier у каждого провайдера свои."
+        )
+        kb = K(row_width=1)
+        for key, option in FREE_API_OPTIONS.items():
+            mark = "✅ " if key == selected else ""
+            kb.add(B(mark + option["label"], callback_data=f"{CB}:freeapipick:{key}"))
+        if selected:
+            option = FREE_API_OPTIONS[selected]
+            kb.add(B("🔑 Получить API key", url=option["key_url"]))
+        kb.row(B("🔑 Ввести API key", callback_data=f"{CB}:key"),
+               B("🧪 Тест", callback_data=f"{CB}:test"))
+        kb.add(B("◀️ Назад", callback_data=f"{CB}:m:api"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception: pass
+
+    def pick_free_api(call):
+        key = call.data.split(":")[-1]
+        try:
+            option = apply_free_api_option(key)
+        except KeyError:
+            bot.answer_callback_query(call.id, "Неизвестный free preset", show_alert=True)
+            return
+        save_config()
+        bot.answer_callback_query(call.id, f"Выбрано: {option['label'][:40]}")
+        show_free_api(call)
+
+    def api_status(call):
+        bot.answer_callback_query(call.id, "Проверяю /models…")
+        base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
+        key = _api_key_resolved()
+        if not base or not key:
+            bot.send_message(call.message.chat.id, "❌ URL или ключ не заданы."); return
+        try:
+            r = requests.get(base + "/models",
+                headers=_api_headers(key), timeout=(8, 30))
+            r.raise_for_status()
+            data = r.json()
+            items = data.get("data") or []
+            names = []
+            for item in items:
+                n = item.get("id") or item.get("name")
+                if n: names.append(str(n))
+            preview = ", ".join(names[:15]) if names else "(пусто)"
+            bot.send_message(call.message.chat.id,
+                f"✅ /models доступен. Найдено моделей: <b>{len(names)}</b>\n\n"
+                f"Первые: <code>{utils.escape(preview)}</code>")
+        except Exception as e:
+            bot.send_message(call.message.chat.id,
+                f"❌ /models не отвечает: <code>{utils.escape(f'{type(e).__name__}: {e}'[:400])}</code>")
+
+    def api_clearkey(call):
+        SETTINGS["api_key"] = ""
+        save_config()
+        bot.answer_callback_query(call.id, "API key удалён")
+        show_api(call)
 
     def vision_probe_cb(call):
         bot.answer_callback_query(call.id, "Проверяю vision…")
@@ -3654,10 +4048,6 @@ def init_telegram(cardinal):
                 except Exception: pass
         POOL.submit(job)
 
-    def toggle_visionretry(call):
-        SETTINGS["lot_vision_retry"] = not bool(SETTINGS.get("lot_vision_retry", True))
-        save_config(); show_api(call)
-
     def show_replies(call):
         text = (f"📝 <b>Промпт и ответы</b>\n\n"
             f"💧 Вод. знак: <b>{utils.bool_to_text(SETTINGS.get('watermark', True))}</b>\n"
@@ -3670,7 +4060,8 @@ def init_telegram(cardinal):
             f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
             f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
             f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
-            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
+            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>\n"
+            f"🎯 Fallback лот: <b>{utils.bool_to_text(SETTINGS.get('lot_fallback_enabled', True))}</b>")
         kb = K(row_width=2)
         kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
         kb.row(B("🏪 Продавец", callback_data=f"{CB}:seller"),
@@ -3687,7 +4078,8 @@ def init_telegram(cardinal):
                B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"))
         kb.row(B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"),
                B("✏️ Текст вод. знака", callback_data=f"{CB}:wmtext"))
-        kb.add(B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
+        kb.row(B(f"🎯 Fallback лот {utils.bool_to_text(SETTINGS.get('lot_fallback_enabled', True))}", callback_data=f"{CB}:tog:fallback"),
+               B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -3907,6 +4299,11 @@ def init_telegram(cardinal):
     def toggle_visionverbose(call):
         SETTINGS["lot_vision_verbose"] = not bool(SETTINGS.get("lot_vision_verbose", True))
         save_config(); show_lots_settings(call)
+    def toggle_visionretry(call):
+        SETTINGS["lot_vision_retry"] = not bool(SETTINGS.get("lot_vision_retry", True))
+        save_config()
+        try: show_api(call)
+        except Exception: show_lots_settings(call)
     def cycle_visionimgs(call):
         cur = int(SETTINGS.get("lot_vision_max_images", 5))
         SETTINGS["lot_vision_max_images"] = {3: 5, 5: 8, 8: 10, 10: 3}.get(cur, 5)
@@ -3937,6 +4334,9 @@ def init_telegram(cardinal):
         cur = int(SETTINGS.get("lot_image_min_bytes", 5000))
         SETTINGS["lot_image_min_bytes"] = {1000: 5000, 5000: 10000, 10000: 20000, 20000: 1000}.get(cur, 5000)
         save_config(); show_lots_settings(call)
+    def toggle_fallback(call):
+        SETTINGS["lot_fallback_enabled"] = not bool(SETTINGS.get("lot_fallback_enabled", True))
+        save_config(); show_replies(call)
 
     def show_whitelist(call):
         with LOCK: raw = list(SETTINGS.get("whitelist") or [])
@@ -4285,257 +4685,82 @@ def init_telegram(cardinal):
     def test_api(call):
         bot.answer_callback_query(call.id, "Проверяю…")
         try:
-            base = str(SETTINGS.get("api_url") or "").rstrip("/")
-            key = str(SETTINGS.get("api_key") or "")
-            if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
+            base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
+            key = _api_key_resolved()
             model = str(SETTINGS.get("api_model") or "")
             if not base or not key or not model:
                 bot.send_message(call.message.chat.id, "❌ Заполните URL, ключ и модель."); return
             ans = _call_ai_api(base, key, model, [{"role": "user", "content": "Ответь OK"}], 30, 0, 16)
-            bot.send_message(call.message.chat.id, f"✅ Ответ API: <code>{utils.escape(ans[:120])}</code>")
-        except Exception as e:
             bot.send_message(call.message.chat.id,
-                f"❌ <code>{utils.escape(f'{type(e).__name__}: {e}'[:500])}</code>")
-
-    def ask_test_photo(call):
-        msg = bot.send_message(call.message.chat.id, "📷 Отправьте фото — передам в AI vision.", reply_markup=CLEAR_STATE_BTN())
-        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_TEST_PHOTO); bot.answer_callback_query(call.id)
-    def handle_test_photo(m):
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        if not getattr(m, "photo", None):
-            bot.reply_to(m, "❌ Не фото."); return
-        try:
-            fi = bot.get_file(m.photo[-1].file_id)
-            fb = bot.download_file(fi.file_path)
+                f"✅ Ответ провайдера <b>{utils.escape(_current_provider_label())}</b>:\n"
+                f"<code>{utils.escape(ans[:120])}</code>")
         except Exception as e:
-            bot.reply_to(m, f"❌ {utils.escape(str(e)[:200])}"); return
-        if not fb or len(fb) > _VISION_MAX_BYTES:
-            bot.reply_to(m, "❌ Пустой/слишком большой."); return
-        base = str(SETTINGS.get("api_url") or "").rstrip("/")
-        key = str(SETTINGS.get("api_key") or "").strip()
-        if key.lower().startswith("env:"): key = os.environ.get(key[4:].strip(), "")
-        model = str(SETTINGS.get("api_model") or "").strip()
-        if not base or not key or not model:
-            bot.reply_to(m, "❌ Заполните API URL, ключ, модель."); return
-        b64 = base64.b64encode(fb).decode("ascii")
-        data_url = f"data:image/jpeg;base64,{b64}"
+            resp = getattr(e, "response", None)
+            extra = ""
+            if resp is not None:
+                try: extra = f"\nHTTP {resp.status_code}: <code>{utils.escape(resp.text[:300])}</code>"
+                except Exception: extra = ""
+            bot.send_message(call.message.chat.id,
+                f"❌ <code>{utils.escape(f'{type(e).__name__}: {e}'[:300])}</code>{extra}")
+
+    def show_api_models(call):
+        try: page = int(call.data.split(":")[-1])
+        except Exception: page = 0
+        base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
+        key = _api_key_resolved()
+        if not base or not key:
+            show_text(call, "❌ URL или ключ не заданы.", back_cb=f"{CB}:m:api"); return
         try:
-            r = requests.post(base + "/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": model, "messages": [{"role": "user", "content": [
-                    {"type": "text", "text": _VISION_PROMPT},
-                    {"type": "image_url", "image_url": {"url": data_url}}]}],
-                    "temperature": 0.2, "max_tokens": 800},
-                timeout=(10, max(30, int(SETTINGS.get("ai_timeout", 120) or 120))))
+            r = requests.get(base + "/models", headers=_api_headers(key), timeout=(8, 30))
             r.raise_for_status()
-            data = _safe_json(r, "test_photo")
-            ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip() or "(пусто)"
-            bot.reply_to(m, f"🖼 <b>Ответ AI:</b>\n\n{utils.escape(ans[:3500])}",
-                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
+            data = r.json()
+            items = data.get("data") or []
+            names = []
+            for item in items:
+                n = item.get("id") or item.get("name")
+                if n: names.append(str(n))
         except Exception as e:
-            bot.reply_to(m, f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}")
-    def notify_test(call):
-        bot.answer_callback_query(call.id, "Отправляю…")
-        def job():
-            try: cardinal.telegram.send_notification("🆘 <b>Тестовое уведомление</b>")
-            except Exception: pass
-        threading.Thread(target=job, daemon=True).start()
-    def refresh_lots(call):
-        bot.answer_callback_query(call.id, "Запущено…")
-        msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую…")
-        def job():
-            cnt = sync_lots(cardinal, enrich=False)
-            try:
-                bot.edit_message_text(f"✅ Синхронизировано: {cnt}.", msg.chat.id, msg.id,
-                    reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:lots")))
-            except Exception: pass
-        POOL.submit(job)
-
-    def vision_refresh(call):
-        bot.answer_callback_query(call.id, "👁 Собираю лоты…")
-        msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую и читаю скрины…")
-        def job():
-            try:
-                try: sync_lots(cardinal, enrich=False)
-                except Exception as e: logger.debug("sync_lots failed: %s", e)
-                with LOCK: lids = list(LOTS.keys())
-                total = len(lids); with_imgs = 0; done = 0
-                no_imgs_lids = []
-                for lid in lids:
-                    if STOP.is_set(): break
-                    with LOCK:
-                        rec = dict(LOTS.get(lid) or {})
-                        imgs = list(rec.get("image_urls") or [])
-                    if not imgs:
-                        try:
-                            fresh = _lot_images_deep(rec, lot_dict=rec)
-                            if fresh:
-                                imgs = fresh
-                                with LOCK: LOTS[lid]["image_urls"] = fresh[:12]
-                        except Exception: pass
-                    if not imgs: no_imgs_lids.append(lid); continue
-                    with_imgs += 1
-                    try:
-                        with LOCK: LOT_VISION.pop(str(lid), None)
-                        details = _vision_extract_lot_details(imgs)
-                        if details:
-                            with LOCK: LOT_VISION[str(lid)] = details
-                            done += 1
-                        time.sleep(0.4)
-                    except Exception as e:
-                        logger.debug("vision_refresh lid=%s: %s", lid, e)
-                        continue
-                _save_lot_vision()
-                lines = ["✅ <b>Готово</b>", f"Всего лотов: <b>{total}</b>",
-                         f"С картинками: <b>{with_imgs}</b>", f"Прочитано: <b>{done}</b>"]
-                if no_imgs_lids:
-                    lines.append(f"\n⚠️ Без картинок: <b>{len(no_imgs_lids)}</b>")
-                    for x in no_imgs_lids[:5]: lines.append(f"· лот <code>{utils.escape(str(x))}</code>")
-                    if len(no_imgs_lids) > 5: lines.append(f"… и ещё {len(no_imgs_lids) - 5}")
-                    lines.append("\n💡 «🔎 Диагностика» покажет причину.")
-                if total == 0: lines.append("\n❌ <b>Лоты не загружены.</b> Нажми «🔄 Обновить».")
-                bot.edit_message_text("\n".join(lines), msg.chat.id, msg.id,
-                    reply_markup=K().add(B("🔎 Диагностика", callback_data=f"{CB}:diag_lot"))
-                    .add(B("◀️ Назад", callback_data=f"{CB}:m:lots")))
-            except Exception as e:
-                try: bot.edit_message_text(f"❌ {type(e).__name__}: {str(e)[:300]}", msg.chat.id, msg.id)
-                except Exception: pass
-        POOL.submit(job)
-
-    def ask_diag_lot(call):
-        msg = bot.send_message(call.message.chat.id,
-            "🔎 Пришлите <code>lot_id</code> (цифры) — покажу что есть в объекте лота и какие картинки найдены.",
-            reply_markup=CLEAR_STATE_BTN())
-        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_DIAG_LOT)
-        try: bot.answer_callback_query(call.id)
+            show_text(call, f"❌ /models недоступен: <code>{utils.escape(f'{type(e).__name__}: {e}'[:400])}</code>",
+                      back_cb=f"{CB}:m:api"); return
+        if not names:
+            show_text(call, "❌ /models вернул пустой список.", back_cb=f"{CB}:m:api"); return
+        per = 7
+        start = page * per
+        kb = K()
+        for idx, name in enumerate(names[start:start + per], start=start):
+            mark = "✅ " if name == SETTINGS.get("api_model") else ""
+            short = name if len(name) <= 42 else name[:41] + "…"
+            kb.add(B(mark + short, callback_data=f"{CB}:apimodelpick:{idx}"))
+        nav = []
+        if page > 0: nav.append(B("⬅️", callback_data=f"{CB}:apimodels:{page-1}"))
+        if start + per < len(names): nav.append(B("➡️", callback_data=f"{CB}:apimodels:{page+1}"))
+        if nav: kb.row(*nav)
+        kb.add(B("◀️ Назад", callback_data=f"{CB}:m:api"))
+        try:
+            bot.edit_message_text(f"📦 <b>Модели {_current_provider_label()}</b> ({len(names)})",
+                call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
         except Exception: pass
 
-    def handle_diag_lot(m):
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        lid = re.sub(r"[^\d]", "", (m.text or "").strip())
-        if not lid:
-            bot.reply_to(m, "❌ Пришлите цифровой <code>lot_id</code>."); return
-        bot.reply_to(m, f"🔎 Анализирую лот <code>{utils.escape(lid)}</code>…")
-        def job():
-            try:
-                lines = [f"🔎 <b>Диагностика лота #{utils.escape(lid)}</b>\n"]
-                with LOCK:
-                    in_cache = lid in LOTS
-                    cached = dict(LOTS.get(lid) or {})
-                lines.append(f"📦 В кэше: <b>{'да' if in_cache else 'нет'}</b>")
-                if in_cache:
-                    lines.append(f"   · название: <code>{utils.escape(str(cached.get('title') or '—')[:80])}</code>")
-                    lines.append(f"   · цена: <b>{cached.get('price')}</b>")
-                    iu = cached.get("image_urls") or []
-                    lines.append(f"   · image_urls в кэше: <b>{len(iu)}</b>")
-                fields_obj = None
-                try:
-                    fields_obj = cardinal.account.get_lot_fields(int(lid))
-                    lines.append(f"\n🧩 <b>get_lot_fields</b>: <b>да</b>")
-                    fd = getattr(fields_obj, "__dict__", None)
-                    if isinstance(fd, dict):
-                        keys = sorted([k for k in fd.keys() if not k.startswith("__")])
-                        lines.append(f"   · полей: <b>{len(keys)}</b>")
-                        lines.append(f"   · ключи: <code>{utils.escape(', '.join(keys[:40]))}</code>")
-                except Exception as e:
-                    lines.append(f"\n🧩 <b>get_lot_fields</b>: ❌ <code>{utils.escape(f'{type(e).__name__}: {e}'[:200])}</code>")
-                imgs_obj = []; imgs_html = []; imgs_final = []
-                try: imgs_obj = _lot_images_from(fields_obj) if fields_obj is not None else []
-                except Exception: pass
-                try: imgs_obj_dedup = _dedupe_image_variants(imgs_obj)
-                except Exception: imgs_obj_dedup = imgs_obj
-                lines.append(f"\n🖼 Из объекта: <b>{len(imgs_obj)}</b> (дедуп: <b>{len(imgs_obj_dedup)}</b>)")
-                for u in imgs_obj_dedup[:3]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
-                try: imgs_html = _lot_images_from_html(lid)
-                except Exception: pass
-                lines.append(f"\n🌐 Из HTML: <b>{len(imgs_html)}</b>")
-                for u in imgs_html[:3]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
-                try:
-                    imgs_final = _lot_images_deep(cached, lot_fields_obj=fields_obj, lot_dict=cached)
-                except Exception:
-                    imgs_final = imgs_obj_dedup or imgs_html
-                lines.append(f"\n🎯 Финальный набор: <b>{len(imgs_final)}</b>")
-                for u in imgs_final[:5]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
-                with LOCK: vision_cached = bool(LOT_VISION.get(lid))
-                lines.append(f"\n👁️ Vision в кэше: <b>{'да' if vision_cached else 'нет'}</b>")
-                lines.append("")
-                lines.append(_vision_debug_for_lot(lid))
-                if not imgs_final:
-                    lines.append("\n💡 Причины:\n· у лота нет картинок\n· FunPayAPI не отдал поля\n"
-                                 "· HTML требует авторизации\n· все картинки меньше min_bytes")
-                text = "\n".join(lines)
-                for chunk in [text[i:i+3500] for i in range(0, len(text), 3500)]:
-                    try:
-                        bot.send_message(m.chat.id, chunk, parse_mode="HTML")
-                    except Exception:
-                        try:
-                            plain_chunk = re.sub(r"<[^>]+>", "", chunk)
-                            bot.send_message(m.chat.id, plain_chunk, parse_mode=None)
-                        except Exception:
-                            try:
-                                bot.send_message(m.chat.id, plain_chunk)
-                            except Exception:
-                                pass
-            except Exception as e:
-                try: bot.send_message(m.chat.id, f"❌ {type(e).__name__}: {str(e)[:300]}")
-                except Exception: pass
-        POOL.submit(job)
-
-    def ask_vision_one(call):
-        msg = bot.send_message(call.message.chat.id,
-            "👁 Пришлите <code>lot_id</code> для переоценки vision только этого лота.",
-            reply_markup=CLEAR_STATE_BTN())
-        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_VISION_ONE)
-        try: bot.answer_callback_query(call.id)
-        except Exception: pass
-
-    def handle_vision_one(m):
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        lid = re.sub(r"[^\d]", "", (m.text or "").strip())
-        if not lid:
-            bot.reply_to(m, "❌ Пришлите цифровой <code>lot_id</code>."); return
-        bot.reply_to(m, f"👁 Читаю скрины лота <code>{utils.escape(lid)}</code>…")
-        def job():
-            try:
-                with LOCK: rec = dict(LOTS.get(lid) or {})
-                imgs = list(rec.get("image_urls") or [])
-                if not imgs:
-                    try: imgs = _lot_images_deep(rec, lot_dict=rec)
-                    except Exception: imgs = []
-                if not imgs: imgs = _lot_images_from_html(lid)
-                if not imgs:
-                    bot.send_message(m.chat.id,
-                        f"❌ Не нашёл картинок у лота <code>{utils.escape(lid)}</code>.\n"
-                        f"Попробуй «🔎 Диагностика».")
-                    return
-                with LOCK:
-                    LOTS.setdefault(lid, {})["image_urls"] = imgs[:12]
-                    LOT_VISION.pop(str(lid), None)
-                details = _vision_extract_lot_details(imgs)
-                if not details:
-                    with LOCK: dbg = dict(LOT_VISION_DEBUG.get("_last") or {})
-                    http_codes = []
-                    for s in (dbg.get("screens") or []):
-                        m2 = re.search(r"HTTPError:\s*(\d{3})", str(s.get("err", "")))
-                        if m2: http_codes.append(int(m2.group(1)))
-                    if http_codes and SETTINGS.get("lot_vision_explain_errors", True):
-                        dominant = max(set(http_codes), key=http_codes.count)
-                        bot.send_message(m.chat.id, _explain_http_error(dominant))
-                    else:
-                        bot.send_message(m.chat.id,
-                            f"⚠️ Картинок {len(imgs)}, но vision не вернул фактов.\n\n"
-                            + _vision_debug_for_lot(lid))
-                    return
-                with LOCK: LOT_VISION[str(lid)] = details
-                _save_lot_vision()
-                bot.send_message(m.chat.id,
-                    f"✅ <b>Лот {utils.escape(lid)} прочитан</b>\n\n"
-                    f"Картинок: <b>{len(imgs)}</b>\n\n"
-                    f"<b>Факты:</b>\n{utils.escape(details[:2000])}")
-            except Exception as e:
-                try: bot.send_message(m.chat.id, f"❌ {type(e).__name__}: {str(e)[:200]}")
-                except Exception: pass
-        POOL.submit(job)
+    def pick_api_model(call):
+        try:
+            idx = int(call.data.split(":")[-1])
+        except Exception:
+            bot.answer_callback_query(call.id, "Ошибка индекса", show_alert=True); return
+        base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
+        key = _api_key_resolved()
+        try:
+            r = requests.get(base + "/models", headers=_api_headers(key), timeout=(8, 30))
+            r.raise_for_status()
+            items = r.json().get("data") or []
+            names = [str(i.get("id") or i.get("name")) for i in items if (i.get("id") or i.get("name"))]
+            model = names[idx]
+        except Exception:
+            bot.answer_callback_query(call.id, "Не удалось получить модель", show_alert=True); return
+        SETTINGS["api_model"] = model
+        save_config()
+        bot.answer_callback_query(call.id, f"Выбрано: {model[:40]}")
+        show_api(call)
 
     def updates_text():
         with LOCK:
@@ -4787,6 +5012,14 @@ def init_telegram(cardinal):
 
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(show_api, lambda c: c.data == f"{CB}:m:api")
+    tg.cbq_handler(show_providers, lambda c: c.data == f"{CB}:provider")
+    tg.cbq_handler(pick_provider, lambda c: c.data.startswith(f"{CB}:apipreset:"))
+    tg.cbq_handler(show_free_api, lambda c: c.data == f"{CB}:freeapi")
+    tg.cbq_handler(pick_free_api, lambda c: c.data.startswith(f"{CB}:freeapipick:"))
+    tg.cbq_handler(api_status, lambda c: c.data == f"{CB}:api_status")
+    tg.cbq_handler(api_clearkey, lambda c: c.data == f"{CB}:api_clearkey")
+    tg.cbq_handler(show_api_models, lambda c: c.data.startswith(f"{CB}:apimodels:"))
+    tg.cbq_handler(pick_api_model, lambda c: c.data.startswith(f"{CB}:apimodelpick:"))
     tg.cbq_handler(show_replies, lambda c: c.data == f"{CB}:m:replies")
     tg.cbq_handler(show_memory, lambda c: c.data == f"{CB}:m:memory")
     tg.cbq_handler(show_orders_menu, lambda c: c.data == f"{CB}:m:orders")
@@ -4839,6 +5072,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(cycle_webres, lambda c: c.data == f"{CB}:cycle:webres")
     tg.cbq_handler(toggle_headimg, lambda c: c.data == f"{CB}:tog:headimg")
     tg.cbq_handler(cycle_minbytes, lambda c: c.data == f"{CB}:cycle:minbytes")
+    tg.cbq_handler(toggle_fallback, lambda c: c.data == f"{CB}:tog:fallback")
     tg.cbq_handler(ask_thank_text, lambda c: c.data == f"{CB}:thanktext")
     tg.cbq_handler(ask_survey_text, lambda c: c.data == f"{CB}:surveytext")
     tg.cbq_handler(reset_statuses, lambda c: c.data == f"{CB}:resetstatus")
@@ -4873,8 +5107,10 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask_lot_item_add, lambda c: c.data == f"{CB}:litem:add")
     tg.cbq_handler(ask_lot_item_del, lambda c: c.data == f"{CB}:litem:del")
     tg.cbq_handler(ask_role_chat, lambda c: c.data == f"{CB}:role_set_chat")
-    tg.cbq_handler(ask(ST_URL, "Введите base URL API:"), lambda c: c.data == f"{CB}:url")
-    tg.cbq_handler(ask(ST_KEY, "Введите API key:"), lambda c: c.data == f"{CB}:key")
+    tg.cbq_handler(ask(ST_URL, "Введите base URL API (например https://api.openai.com/v1):"),
+                   lambda c: c.data == f"{CB}:url")
+    tg.cbq_handler(ask(ST_KEY, "Введите API key или env:ИМЯ_ПЕРЕМЕННОЙ:"),
+                   lambda c: c.data == f"{CB}:key")
     tg.cbq_handler(ask(ST_MODEL, "Введите ID модели:"), lambda c: c.data == f"{CB}:model")
     tg.cbq_handler(ask(ST_SELLER, "Пришлите данные о продавце:"), lambda c: c.data == f"{CB}:seller")
     tg.cbq_handler(ask(ST_TIMEOUT, "AI timeout 30–600 сек:"), lambda c: c.data == f"{CB}:timeout")
@@ -4887,9 +5123,53 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask_diag_lot, lambda c: c.data == f"{CB}:diag_lot")
     tg.cbq_handler(ask_vision_one, lambda c: c.data == f"{CB}:vision_refresh_one")
 
-    tg.msg_handler(make_setter("api_url", back_cb=f"{CB}:m:api"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
-    tg.msg_handler(make_setter("api_key", back_cb=f"{CB}:m:api"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
-    tg.msg_handler(make_setter("api_model", back_cb=f"{CB}:m:api"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
+    def set_api_url(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        url = _normalize_openai_base_url(m.text or "")
+        if not url:
+            bot.reply_to(m, "❌ Некорректный URL."); return
+        SETTINGS["api_url"] = url
+        # Авто-детект пресета
+        detected = "custom"
+        for key, (_, preset_url) in API_PRESETS.items():
+            if preset_url and _normalize_openai_base_url(preset_url) == url:
+                detected = key
+                break
+        SETTINGS["api_preset"] = detected
+        save_config()
+        bot.reply_to(m, f"✅ URL сохранён. Провайдер: <b>{utils.escape(_current_provider_label())}</b>",
+            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
+    def set_api_key(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        raw = (m.text or "").strip()
+        if not raw or len(raw) > 500:
+            bot.reply_to(m, "❌ API key пустой или слишком длинный."); return
+        if raw.lower().startswith("env:"):
+            name = raw[4:].strip()
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+                bot.reply_to(m, "❌ После env: нужно корректное имя переменной."); return
+        SETTINGS["api_key"] = raw
+        save_config()
+        try:
+            if not raw.lower().startswith("env:"):
+                bot.delete_message(m.chat.id, getattr(m, "message_id", getattr(m, "id", 0)))
+        except Exception: pass
+        bot.send_message(m.chat.id,
+            f"✅ API key сохранён как <code>{utils.escape(_mask_api_key(raw))}</code>.",
+            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
+    def set_api_model(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        model = (m.text or "").strip()
+        if not model or len(model) > 200:
+            bot.reply_to(m, "❌ Некорректный ID модели."); return
+        SETTINGS["api_model"] = model
+        save_config()
+        bot.reply_to(m, f"✅ Модель: <code>{utils.escape(model)}</code>",
+            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
+
+    tg.msg_handler(set_api_url, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
+    tg.msg_handler(set_api_key, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
+    tg.msg_handler(set_api_model, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
     tg.msg_handler(make_setter("seller_info", back_cb=f"{CB}:m:replies"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
     tg.msg_handler(make_setter("ai_timeout", back_cb=f"{CB}:m:api",
         validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
