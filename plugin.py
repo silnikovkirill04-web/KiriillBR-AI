@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "13.4.2"
+VERSION = "13.4.3"
 DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (35+ эндпоинтов), Vision, web-поиск, ЧС+WL.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -228,7 +228,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 76, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 77, "enabled": True, "setup_done": False,
     "api_provider": "openai_compatible",
     "api_preset": "openrouter",
     "api_url": "https://openrouter.ai/api/v1",
@@ -589,14 +589,14 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 76:
+        if cv < 77:
             SETTINGS.setdefault("lot_fallback_enabled", True)
             SETTINGS.setdefault("api_preset", "openrouter")
             SETTINGS.setdefault("api_provider", "openai_compatible")
@@ -609,7 +609,7 @@ def load_config():
                     detected = key
                     break
             SETTINGS["api_preset"] = detected
-            SETTINGS["version"] = 76
+            SETTINGS["version"] = 77
             save_config()
     except Exception: pass
 
@@ -2982,9 +2982,8 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     v = outbound_violation(out)
     if v and v != "empty": out = refusal(v); notify = False
     out = _strip_fake_order_action(out)
-    if not out or out.strip() in ("Уточните, пожалуйста, что именно нужно.",
-                                   "Уточните, что именно нужно."):
-        out = "Какой лот вас интересует? Напишите название или ID 🙂"
+    if not out:
+        out = "Секунду, проверю 🙂"
     try:
         _chat_id = str(getattr(m, "chat_id", "") or "")
         if _chat_id and _RE_REFUND_WORD.search(out):
@@ -3003,44 +3002,9 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     if notify: notify_seller(c, m, buyer_text or "", out, reason=reason, header=notify_header)
     return True
 
+# Отключено: шаблоны общения. Оставлено для ручного включения при желании.
 def handle_deterministic(c, m, text):
-    n = norm(text)
-    if _RE_LONE_ID.match(str(text or "").strip()):
-        _say(c, m, "Принял 👍"); return True
-    if _RE_WAIT_INTENT.search(n):
-        _say(c, m, "Работаю 👍"); return True
-    if _RE_PURCHASE_INTENT.search(n):
-        _say(c, m, "Да, оформляйте 👍"); return True
-    if _RE_GREET.search(n): _say(c, m, "Здравствуйте! 👋 Чем могу помочь?"); return True
-    if _RE_WELL.search(n): _say(c, m, "Всё хорошо, спасибо 😊"); return True
-    if _RE_PRESENCE.search(n): _say(c, m, "Да, на связи 🤝"); return True
-    if _RE_THANKS.search(n) and len(n.split()) <= 8: _say(c, m, "Пожалуйста! 🤝"); return True
-    if _RE_BYE.search(n): _say(c, m, "До встречи! 👋"); return True
-    if _RE_DISCOUNT.search(n):
-        already = _recent_assistant_said_about(m.chat_id, r"скидк")
-        if already:
-            _say(c, m, "Скидка на усмотрение продавца.", notify=True,
-                notify_header="🆘 <b>Покупатель повторно просит скидку</b>",
-                reason="Повторная просьба о скидке", buyer_text=text); return True
-        _say(c, m, "Скидка на усмотрение продавца.", notify=True,
-            notify_header="🆘 <b>Покупатель просит скидку</b>",
-            reason="Просьба о скидке / торг", buyer_text=text); return True
-    if _RE_OTHER_LOT.fullmatch(n):
-        with LOCK: avail = list(LOTS.values())[:8]
-        if avail:
-            body = "Вот доступные лоты:\n" + "\n".join(f"{i}) {l.get('title')}" for i, l in enumerate(avail, 1))
-            body += "\n\nНапишите название или номер нужного."
-        else: body = "Напишите название нужного лота."
-        _say(c, m, body); return True
-    if _RE_SELLER_COUNT.search(n):
-        with LOCK: cnt = len(LOTS)
-        _say(c, m, f"В профиле сейчас {cnt} лотов."); return True
-    if re.search(r"возврат|верните|верни\s+деньги|refund", norm(text)):
-        _say(c, m, "Возврат оформляет продавец.", notify=True,
-            notify_header="🆘 <b>Покупатель просит возврат</b>",
-            reason="Запрос возврата", buyer_text=text); return True
-    violation = classify_policy_violation(text)
-    if violation: _say(c, m, policy_refusal(violation)); return True
+    """Зарезервировано. Не вызывается из handle_message (шаблоны общения отключены)."""
     return False
 
 def _obj(o, a, d=""):
@@ -3458,10 +3422,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "11) НИКОГДА не выводи технические метки: User Safety, Response Safety, "
         "Content Policy, Moderation, Rating, Safe/Unsafe. Только ответ покупателю.\n"
         "12) НИКОГДА не отвечай «Уточните, пожалуйста, что именно нужно». Если непонятно — "
-        "спроси конкретно: «Какой лот вас интересует?» или «Вас интересует цена или наличие?».\n"
-        "13) «Могу купить?» / «Куплю» / «Беру» → «Да, оформляйте 👍».\n"
-        "14) Голый ID (6-12 цифр) → «Принял 👍».\n"
-        "15) «Жду» / «Сколько ждать?» → «Работаю 👍».\n")
+        "спроси конкретно: «Какой лот вас интересует?» или «Вас интересует цена или наличие?».\n")
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
     lot_instr = ""
@@ -3634,24 +3595,7 @@ def ask_ai(m, buyer_text, lot):
     return _RE_SEARCH_MARKER.sub("", first).strip() or first
 
 def _offline_lot_fallback(text, lot):
-    n = norm(text)
-    if _RE_PURCHASE_INTENT.search(n):
-        return "Да, оформляйте 👍"
-    if _RE_WAIT_INTENT.search(n):
-        return "Работаю 👍"
-    if _RE_LONE_ID.match(str(text or "").strip()):
-        return "Принял 👍"
-    if re.search(r"\bцен|стоит|стоимость|почем|сколько\s+стоит", n):
-        if lot and lot.get("price") is not None:
-            cur = str(lot.get("currency") or "").strip()
-            return f"Цена: {lot['price']} {cur}".strip() + "."
-        return "Цена указана в лоте."
-    if re.search(r"налич|\bесть\b|доступ|остал|сколько\s+штук", n):
-        return "Да, в наличии ✅"
-    if re.search(r"автовыдач|авто\s*выдач", n):
-        return "Автовыдача после оплаты ⚡"
-    if re.search(r"привет|здравствуй|добрый", n):
-        return "Здравствуйте! 👋 Чем помочь?"
+    """Резерв на случай падения API. Никаких шаблонов общения — только заглушка."""
     return "Секунду, проверю 🙂"
 
 def handle_message(c, m, text):
@@ -3684,7 +3628,7 @@ def handle_message(c, m, text):
         if is_offtopic(text):
             _instant_blacklist(c, m, "Оффтоп (не по теме товара)", text)
             _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if handle_deterministic(c, m, text): return
+    # handle_deterministic отключён — шаблоны общения не применяются.
     lot = _get_lot(c, m, text)
     if _message_has_photo(m) and not str(text or "").strip():
         if not _extract_message_image(m):
