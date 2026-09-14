@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "13.4.0"
-DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (25+ эндпоинтов), Vision, web-поиск, ЧС+WL.")
+VERSION = "13.4.2"
+DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (35+ эндпоинтов), Vision, web-поиск, ЧС+WL.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -54,72 +54,43 @@ _WEB_SEARCH_TIMEOUT = (6, 15)
 _WEB_SEARCH_MAX_BYTES = 512 * 1024
 _HTTP_UA = "Mozilla/5.0 (compatible; KiriillBRAI/1.0)"
 
-# ═══════════════════════════════════════════════════════════════════════
-#  РАСШИРЕННЫЙ СПИСОК API-ЭНДПОИНТОВ (OpenAI-compatible)
-#  Все принимают POST {url}/chat/completions и GET {url}/models
-# ═══════════════════════════════════════════════════════════════════════
 API_PRESETS: dict[str, tuple[str, str]] = {
-    # --- OpenAI ---
     "openai":            ("OpenAI", "https://api.openai.com/v1"),
-    "openai_azure":      ("Azure OpenAI (свой resource)", "https://YOUR-RESOURCE.openai.azure.com/openai/v1"),
-    # --- OpenRouter ---
+    "openai_azure":      ("Azure OpenAI", "https://YOUR-RESOURCE.openai.azure.com/openai/v1"),
     "openrouter":        ("OpenRouter", "https://openrouter.ai/api/v1"),
     "openrouter_alt":    ("OpenRouter (alias)", "https://openrouter.ai/api/v1"),
-    # --- Groq ---
     "groq":              ("Groq", "https://api.groq.com/openai/v1"),
-    # --- Google Gemini (OpenAI-совместимый) ---
     "gemini":            ("Google Gemini (v1beta/openai)", "https://generativelanguage.googleapis.com/v1beta/openai"),
     "gemini_v1":         ("Google Gemini (v1/openai)", "https://generativelanguage.googleapis.com/v1/openai"),
     "gemini_alt":        ("Google Gemini (генерик)", "https://generativelanguage.googleapis.com/v1beta"),
-    # --- DeepSeek ---
     "deepseek":          ("DeepSeek", "https://api.deepseek.com"),
     "deepseek_v1":       ("DeepSeek (v1)", "https://api.deepseek.com/v1"),
-    # --- Together ---
     "together":          ("Together AI", "https://api.together.ai/v1"),
     "together_xyz":      ("Together AI (legacy xyz)", "https://api.together.xyz/v1"),
-    # --- Mistral ---
     "mistral":           ("Mistral", "https://api.mistral.ai/v1"),
-    # --- xAI ---
     "xai":               ("xAI Grok", "https://api.x.ai/v1"),
-    # --- Fireworks ---
     "fireworks":         ("Fireworks AI", "https://api.fireworks.ai/inference/v1"),
-    # --- Perplexity ---
     "perplexity":        ("Perplexity", "https://api.perplexity.ai"),
-    # --- Anyscale ---
     "anyscale":          ("Anyscale", "https://api.endpoints.anyscale.com/v1"),
-    # --- DeepInfra ---
     "deepinfra":         ("DeepInfra", "https://api.deepinfra.com/v1/openai"),
-    # --- Cerebras ---
     "cerebras":          ("Cerebras", "https://api.cerebras.ai/v1"),
-    # --- SambaNova ---
     "sambanova":         ("SambaNova", "https://api.sambanova.ai/v1"),
-    # --- Alibaba Qwen (DashScope) ---
     "qwen":              ("Alibaba Qwen / DashScope", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     "qwen_intl":         ("Alibaba Qwen (international)", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
-    # --- Moonshot Kimi ---
     "moonshot":          ("Moonshot Kimi", "https://api.moonshot.cn/v1"),
-    # --- Zhipu GLM ---
     "zhipu":             ("Zhipu GLM", "https://open.bigmodel.cn/api/paas/v4"),
-    # --- 01.ai (Yi) ---
     "yi":                ("01.AI Yi", "https://api.lingyiwanwu.com/v1"),
-    # --- Baichuan ---
     "baichuan":          ("Baichuan", "https://api.baichuan-ai.com/v1"),
-    # --- Novita ---
     "novita":            ("Novita AI", "https://api.novita.ai/v3/openai"),
-    # --- Hyperbolic ---
     "hyperbolic":        ("Hyperbolic", "https://api.hyperbolic.xyz/v1"),
-    # --- Lambda Labs ---
     "lambda":            ("Lambda Labs", "https://api.lambdalabs.com/v1"),
-    # --- Lepton ---
     "lepton":            ("Lepton AI", "https://<your-endpoint>.lepton.run/api/v1"),
-    # --- Local сервера ---
     "ollama":            ("Ollama (локально)", "http://localhost:11434/v1"),
     "lm_studio":         ("LM Studio (локально)", "http://localhost:1234/v1"),
     "vllm":              ("vLLM (локально)", "http://localhost:8000/v1"),
     "textgen_webui":     ("Text Generation WebUI", "http://localhost:5000/v1"),
     "llama_cpp":         ("llama.cpp server", "http://localhost:8080/v1"),
     "koboldcpp":         ("KoboldCpp", "http://localhost:5001/v1"),
-    # --- Кастом ---
     "custom":            ("Свой OpenAI-compatible API", ""),
 }
 
@@ -257,7 +228,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 74, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 76, "enabled": True, "setup_done": False,
     "api_provider": "openai_compatible",
     "api_preset": "openrouter",
     "api_url": "https://openrouter.ai/api/v1",
@@ -618,14 +589,14 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 74:
+        if cv < 76:
             SETTINGS.setdefault("lot_fallback_enabled", True)
             SETTINGS.setdefault("api_preset", "openrouter")
             SETTINGS.setdefault("api_provider", "openai_compatible")
@@ -638,7 +609,7 @@ def load_config():
                     detected = key
                     break
             SETTINGS["api_preset"] = detected
-            SETTINGS["version"] = 74
+            SETTINGS["version"] = 76
             save_config()
     except Exception: pass
 
@@ -1528,6 +1499,7 @@ _RE_SECRET = re.compile(r"\b(?:парол\w*|password|passwd|token|токен\w*
     r"phpsessid|cookies?|session(?:id)?|сесси\w*|2fa|otp)\b\s*[:=]\s*[^\s,;]{3,}", re.I)
 _RE_PROD_NUM = re.compile(r"(?:подписчик\w*|просмотр\w*|лайк\w*|зв[её]зд\w*|голос\w*|штук\w*|"
     r"единиц\w*|количеств\w*|пакет\w*|цен\w*|стоим\w*|руб\w*|₽|usd|eur|доллар\w*|евро)", re.I)
+_RE_GAME_ID = re.compile(r"^\s*\d{6,12}\s*$")
 
 _RE_PURCHASE_TOPIC = re.compile(
     r"(?:\bоплат\w*|\bзаплат\w*|\bоплатил\w*|\bоплач\w*|\bзаказ\w*|"
@@ -1725,8 +1697,16 @@ _REFUSAL = {"contacts": "Не могу передавать личные кон�
 def refusal(code):
     return _REFUSAL.get(code, _REFUSAL["confidential"])
 
+def _is_game_id_context(full_text: str) -> bool:
+    if not full_text: return False
+    return bool(_RE_GAME_ID.match(str(full_text).strip()))
+
 def _is_prod_num(text, m):
-    return bool(_RE_PROD_NUM.search(text[max(0, m.start() - 55):m.end() + 55]))
+    if _RE_PROD_NUM.search(text[max(0, m.start() - 55):m.end() + 55]):
+        return True
+    if _is_game_id_context(text):
+        return True
+    return False
 
 def outbound_violation(text):
     v = str(text or "")
@@ -2971,6 +2951,10 @@ def _recent_assistant_said_about(chat_id, pattern):
     return False
 
 _RE_DISCOUNT = re.compile(r"\bскидк\w*|\bдешевле\b|\bторг\w*|\bснизить цен\w*|\bпромокод\w*|\bакци\w*", re.I)
+_RE_WAIT_INTENT = re.compile(
+    r"\b(?:жду|ожидаю|подожду|сколько\s+ждать|ещё\s+долго|долго\s+ещё|"
+    r"давай\s+быстрее|побыстрее|быстрее|ну\s+что\s+там)\b", re.I)
+_RE_LONE_ID = re.compile(r"^\s*\d{6,12}\s*$")
 _RE_OTHER_LOT = re.compile(r"^(?:друг\w*|а друг\w*|ещ[её]\b|не этот|не то|хочу друг\w*)[!?., ]*$", re.I)
 _RE_SELLER_COUNT = re.compile(r"сколько\s+(?:лотов|товаров|объявлени\w*)", re.I)
 _RE_PRESENCE = re.compile(r"^(?:(?:ты|вы|продавец)\s+)?(?:тут|здесь|на месте|на связи)[!? ]*$|^есть кто\w*[!? ]*$", re.I)
@@ -2979,6 +2963,11 @@ _RE_GREET = re.compile(r"^(?:привет\w*|здравствуй\w*|добры�
 _RE_THANKS = re.compile(r"(?:спасибо|благодарю|спс)", re.I)
 _RE_WELL = re.compile(r"\bкак (?:у (?:тебя|вас) )?дела\b|\bкак жизнь\b|\bкак настроение\b", re.I)
 _RE_BYE = re.compile(r"^(?:пока|до свидания|до встречи|всего доброго)[!., ]*$", re.I)
+
+_RE_PURCHASE_INTENT = re.compile(
+    r"(?:^|\s)(?:могу|можно|хочу|давай|буду)\s+(?:ли\s+)?(?:купить|взять|приобрести|оформить|заказать)"
+    r"|^(?:куплю|беру|возьму|оформ(?:лю|ляю|ить))[!?.]*$"
+    r"|\b(?:купить|взять)\s+могу\b|\bмогу\s+купить\b|\bможно\s+купить\b", re.I)
 
 def _apply_watermark(text):
     body = str(text or "").rstrip()
@@ -3016,6 +3005,12 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
 
 def handle_deterministic(c, m, text):
     n = norm(text)
+    if _RE_LONE_ID.match(str(text or "").strip()):
+        _say(c, m, "Принял 👍"); return True
+    if _RE_WAIT_INTENT.search(n):
+        _say(c, m, "Работаю 👍"); return True
+    if _RE_PURCHASE_INTENT.search(n):
+        _say(c, m, "Да, оформляйте 👍"); return True
     if _RE_GREET.search(n): _say(c, m, "Здравствуйте! 👋 Чем могу помочь?"); return True
     if _RE_WELL.search(n): _say(c, m, "Всё хорошо, спасибо 😊"); return True
     if _RE_PRESENCE.search(n): _say(c, m, "Да, на связи 🤝"); return True
@@ -3355,7 +3350,7 @@ def _lot_prompt(lot):
             f"Количество: {lot.get('amount') if lot.get('amount') is not None else '—'}\n"
             f"Автовыдача: {'да' if lot.get('auto') else 'нет'}\n"
             f"Категория: {lot.get('subcategory') or '—'}\n"
-            f"Описание: {(lot.get('full_description') or lot.get('description') or '')[:1200]}")
+            f"Описание: {(lot.get('full_description') or lot.get('description') or '')[:400]}")
         extra = lot.get("extra_fields") or {}
         if isinstance(extra, dict) and extra:
             lines = []
@@ -3463,7 +3458,10 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "11) НИКОГДА не выводи технические метки: User Safety, Response Safety, "
         "Content Policy, Moderation, Rating, Safe/Unsafe. Только ответ покупателю.\n"
         "12) НИКОГДА не отвечай «Уточните, пожалуйста, что именно нужно». Если непонятно — "
-        "спроси конкретно: «Какой лот вас интересует?» или «Вас интересует цена или наличие?».\n")
+        "спроси конкретно: «Какой лот вас интересует?» или «Вас интересует цена или наличие?».\n"
+        "13) «Могу купить?» / «Куплю» / «Беру» → «Да, оформляйте 👍».\n"
+        "14) Голый ID (6-12 цифр) → «Принял 👍».\n"
+        "15) «Жду» / «Сколько ждать?» → «Работаю 👍».\n")
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
     lot_instr = ""
@@ -3637,35 +3635,24 @@ def ask_ai(m, buyer_text, lot):
 
 def _offline_lot_fallback(text, lot):
     n = norm(text)
-    if not lot:
-        return str(SETTINGS.get("unknown_reply")
-                   or "Какой лот вас интересует? Напишите название или ID 🙂")
-    title = str(lot.get("title") or lot.get("description") or "этот товар").strip()
-    price = lot.get("price")
-    currency = str(lot.get("currency") or "").strip()
-    amount = lot.get("amount")
-    if re.search(r"\bцен|стоит|стоимость|почем|сколько\s+стоит|сколько\s+стоят", n):
-        if price is not None:
-            return f"Цена лота «{title}» — {price} {currency}".strip() + "."
-        return f"Для лота «{title}» цена не указана."
-    if re.search(r"\bналич|\bесть\b|доступ|остал|количеств|сколько\s+штук", n):
-        if amount is None:
-            return f"Лот «{title}» доступен. Можете оформлять ✅"
-        try:
-            amt = float(amount)
-            if amt > 0:
-                return f"Да, товар в наличии — {amt:g} шт. Можете оформлять ✅"
-            return f"Сейчас товар «{title}» закончился."
-        except Exception:
-            return f"Лот «{title}» доступен. Можете оформлять ✅"
-    if re.search(r"автовыдач|авто\s*выдач|сразу\s+придет|сразу\s+получу|моментальн", n):
-        if lot.get("auto"):
-            return f"Да, на лоте «{title}» включена автовыдача — данные придут автоматически после оплаты ⚡"
-        return f"Автовыдача на лоте «{title}» не указана."
-    parts = [f"Лот «{title}»"]
-    if price is not None:
-        parts.append(f"Цена: {price} {currency}".strip())
-    return ". ".join(parts) + "."
+    if _RE_PURCHASE_INTENT.search(n):
+        return "Да, оформляйте 👍"
+    if _RE_WAIT_INTENT.search(n):
+        return "Работаю 👍"
+    if _RE_LONE_ID.match(str(text or "").strip()):
+        return "Принял 👍"
+    if re.search(r"\bцен|стоит|стоимость|почем|сколько\s+стоит", n):
+        if lot and lot.get("price") is not None:
+            cur = str(lot.get("currency") or "").strip()
+            return f"Цена: {lot['price']} {cur}".strip() + "."
+        return "Цена указана в лоте."
+    if re.search(r"налич|\bесть\b|доступ|остал|сколько\s+штук", n):
+        return "Да, в наличии ✅"
+    if re.search(r"автовыдач|авто\s*выдач", n):
+        return "Автовыдача после оплаты ⚡"
+    if re.search(r"привет|здравствуй|добрый", n):
+        return "Здравствуйте! 👋 Чем помочь?"
+    return "Секунду, проверю 🙂"
 
 def handle_message(c, m, text):
     wl = is_whitelisted(_extract_nick_from_message(m),
@@ -4391,7 +4378,6 @@ def init_telegram(cardinal):
         SETTINGS["lot_vision_verbose"] = not bool(SETTINGS.get("lot_vision_verbose", True))
         save_config(); show_lots_settings(call)
 
-    # ⬇⬇⬇ ГЛАВНОЕ ИСПРАВЛЕНИЕ (NameError убран) ⬇⬇⬇
     def toggle_visionretry(call):
         SETTINGS["lot_vision_retry"] = not bool(SETTINGS.get("lot_vision_retry", True))
         save_config()
@@ -4403,7 +4389,6 @@ def init_telegram(cardinal):
         except Exception:
             try: show_lots_settings(call)
             except Exception: pass
-    # ⬆⬆⬆ конец фикса ⬆⬆⬆
 
     def cycle_visionimgs(call):
         cur = int(SETTINGS.get("lot_vision_max_images", 5))
@@ -5339,7 +5324,6 @@ def init_telegram(cardinal):
         bot.reply_to(m, f"✅ Ключ сохранён: <code>{utils.escape(_mask_api_key())}</code>",
             reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
 
-    # ---------- Регистрация обработчиков ----------
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(show_api, lambda c: c.data == f"{CB}:m:api")
     tg.cbq_handler(show_replies, lambda c: c.data == f"{CB}:m:replies")
