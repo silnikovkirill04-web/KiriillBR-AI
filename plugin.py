@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "13.3.3"
+VERSION = "13.3.4"
 DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (OpenAI, OpenRouter, Groq, Gemini, "
                "DeepSeek, Together, Mistral и любой OpenAI-compatible), Vision, web-поиск, ЧС+WL.")
 CREDITS = "@qneiz"
@@ -55,7 +55,6 @@ _WEB_SEARCH_TIMEOUT = (6, 15)
 _WEB_SEARCH_MAX_BYTES = 512 * 1024
 _HTTP_UA = "Mozilla/5.0 (compatible; KiriillBRAI/1.0)"
 
-# === Пресеты AI-провайдеров (все OpenAI-compatible) ===
 API_PRESETS: dict[str, tuple[str, str]] = {
     "openai":      ("OpenAI", "https://api.openai.com/v1"),
     "openrouter":  ("OpenRouter", "https://openrouter.ai/api/v1"),
@@ -74,7 +73,6 @@ API_PRESETS: dict[str, tuple[str, str]] = {
     "custom":      ("Свой OpenAI-compatible API", ""),
 }
 
-# Быстрые бесплатные варианты — все используют тот же OpenAI-compatible транспорт
 FREE_API_OPTIONS: dict[str, dict[str, str]] = {
     "openrouter_free": {
         "label": "OpenRouter · Free Router",
@@ -583,7 +581,6 @@ def load_config():
             SETTINGS.setdefault("api_provider", "openai_compatible")
             if str(SETTINGS.get("unknown_reply") or "").startswith("Уточните, пожалуйста"):
                 SETTINGS["unknown_reply"] = DEFAULTS["unknown_reply"]
-            # Авто-детект пресета по URL
             cur_url = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
             detected = "custom"
             for key, (_, preset_url) in API_PRESETS.items():
@@ -3911,10 +3908,10 @@ def init_telegram(cardinal):
                B("🆓 Free-модели", callback_data=f"{CB}:freeapi"),
                B("🧹 Удалить key", callback_data=f"{CB}:api_clearkey"))
         kb.row(B("⏱ Timeout", callback_data=f"{CB}:timeout"),
-               B("📏 Бюджет", callback_data=f"{CB}:budget"),
-               B("🌡 T", callback_data=f"{CB}:temperature"))
+               B("📏 Бюджет", callback_data=f"{CB}:budget"))
         kb.row(B("🖼 Тест фото", callback_data=f"{CB}:testphoto"),
-               B("👁️ Тест vision", callback_data=f"{CB}:vision_probe"))
+               B("👁️ Тест vision", callback_data=f"{CB}:vision_probe"),
+               B(f"🔁 Retry {utils.bool_to_text(SETTINGS.get('lot_vision_retry', True))}", callback_data=f"{CB}:tog:visionretry"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -3924,7 +3921,7 @@ def init_telegram(cardinal):
     def show_providers(call):
         current = _current_preset()
         lines = [f"🏷 <b>Выбор AI-провайдера</b>\n\nТекущий: <b>{utils.escape(_current_provider_label())}</b>\n",
-                 "Все провайдеры ниже используют стандартный OpenAI-compatible API "
+                 "Все провайдеры используют стандартный OpenAI-compatible API "
                  "(<code>/chat/completions</code>). Выбирай по ключу, который у тебя есть.\n"]
         for key, (label, url) in API_PRESETS.items():
             mark = "✅ " if key == current else ""
@@ -4054,14 +4051,13 @@ def init_telegram(cardinal):
             f"🌍 Язык: <b>{utils.bool_to_text(SETTINGS.get('match_language', True))}</b> · "
             f"🧊 Тон: <b>{utils.bool_to_text(SETTINGS.get('neutral_on_anger', True))}</b>\n"
             f"🚫 Без обещаний: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b>\n"
-            f"🔔 О неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
-            f"🧹 Метки модерации: <b>{utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}</b>\n"
-            f"🛡 HTML-safe: <b>{utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}</b> · "
-            f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
-            f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
-            f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
-            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>\n"
-            f"🎯 Fallback лот: <b>{utils.bool_to_text(SETTINGS.get('lot_fallback_enabled', True))}</b>")
+        f"🔔 О неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
+        f"🧹 Метки модерации: <b>{utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}</b>\n"
+        f"🛡 HTML-safe: <b>{utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}</b> · "
+        f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
+        f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
+        f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
+        f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
         kb = K(row_width=2)
         kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
         kb.row(B("🏪 Продавец", callback_data=f"{CB}:seller"),
@@ -4078,8 +4074,7 @@ def init_telegram(cardinal):
                B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"))
         kb.row(B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"),
                B("✏️ Текст вод. знака", callback_data=f"{CB}:wmtext"))
-        kb.row(B(f"🎯 Fallback лот {utils.bool_to_text(SETTINGS.get('lot_fallback_enabled', True))}", callback_data=f"{CB}:tog:fallback"),
-               B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
+        kb.add(B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -4299,11 +4294,6 @@ def init_telegram(cardinal):
     def toggle_visionverbose(call):
         SETTINGS["lot_vision_verbose"] = not bool(SETTINGS.get("lot_vision_verbose", True))
         save_config(); show_lots_settings(call)
-    def toggle_visionretry(call):
-        SETTINGS["lot_vision_retry"] = not bool(SETTINGS.get("lot_vision_retry", True))
-        save_config()
-        try: show_api(call)
-        except Exception: show_lots_settings(call)
     def cycle_visionimgs(call):
         cur = int(SETTINGS.get("lot_vision_max_images", 5))
         SETTINGS["lot_vision_max_images"] = {3: 5, 5: 8, 8: 10, 10: 3}.get(cur, 5)
@@ -4334,10 +4324,8 @@ def init_telegram(cardinal):
         cur = int(SETTINGS.get("lot_image_min_bytes", 5000))
         SETTINGS["lot_image_min_bytes"] = {1000: 5000, 5000: 10000, 10000: 20000, 20000: 1000}.get(cur, 5000)
         save_config(); show_lots_settings(call)
-    def toggle_fallback(call):
-        SETTINGS["lot_fallback_enabled"] = not bool(SETTINGS.get("lot_fallback_enabled", True))
-        save_config(); show_replies(call)
 
+    # ---------- Whitelist ----------
     def show_whitelist(call):
         with LOCK: raw = list(SETTINGS.get("whitelist") or [])
         try: thr = int(SETTINGS.get("auto_whitelist_after_orders", 3))
@@ -4443,6 +4431,7 @@ def init_telegram(cardinal):
         except Exception: pass
         show_misc(call)
 
+    # ---------- Thank / Survey texts ----------
     def ask_thank_text(call):
         msg = bot.send_message(call.message.chat.id, "Текст благодарности после оплаты:", reply_markup=CLEAR_STATE_BTN())
         tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_THANK_TEXT); bot.answer_callback_query(call.id)
@@ -4512,6 +4501,7 @@ def init_telegram(cardinal):
             bot.reply_to(m, "✅ Сохранено.", reply_markup=K().add(B("◀️ Назад", callback_data=back_cb)))
         return setter
 
+    # ---------- Prompt editor ----------
     def ask_prompt_start(call):
         PROMPT_BUFFER["text"] = ""
         kb = K(row_width=1)
@@ -4545,6 +4535,7 @@ def init_telegram(cardinal):
     def prompt_reset(call):
         PROMPT_BUFFER["text"] = ""; bot.answer_callback_query(call.id, "🗑 Буфер очищен.")
 
+    # ---------- Blacklist ----------
     def show_blacklist(call):
         with LOCK: raw = list(SETTINGS.get("blacklist") or [])
         lines = ["🚫 <b>Чёрный список</b>", "",
@@ -4682,86 +4673,263 @@ def init_telegram(cardinal):
     blacklist_photo_toggle = _mk_toggle("Фото-вопрос", "auto_blacklist_photo_ask", True)
     blacklist_photo_send_toggle = _mk_toggle("Фото×3", "auto_blacklist_photo_send", True)
 
+    # ---------- API test / vision test ----------
     def test_api(call):
         bot.answer_callback_query(call.id, "Проверяю…")
         try:
             base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
             key = _api_key_resolved()
-            model = str(SETTINGS.get("api_model") or "")
+            model = str(SETTINGS.get("api_model") or "").strip()
             if not base or not key or not model:
                 bot.send_message(call.message.chat.id, "❌ Заполните URL, ключ и модель."); return
             ans = _call_ai_api(base, key, model, [{"role": "user", "content": "Ответь OK"}], 30, 0, 16)
-            bot.send_message(call.message.chat.id,
-                f"✅ Ответ провайдера <b>{utils.escape(_current_provider_label())}</b>:\n"
-                f"<code>{utils.escape(ans[:120])}</code>")
+            bot.send_message(call.message.chat.id, f"✅ Ответ API: <code>{utils.escape(ans[:120])}</code>")
         except Exception as e:
-            resp = getattr(e, "response", None)
-            extra = ""
-            if resp is not None:
-                try: extra = f"\nHTTP {resp.status_code}: <code>{utils.escape(resp.text[:300])}</code>"
-                except Exception: extra = ""
             bot.send_message(call.message.chat.id,
-                f"❌ <code>{utils.escape(f'{type(e).__name__}: {e}'[:300])}</code>{extra}")
+                f"❌ <code>{utils.escape(f'{type(e).__name__}: {e}'[:500])}</code>")
 
-    def show_api_models(call):
-        try: page = int(call.data.split(":")[-1])
-        except Exception: page = 0
+    def ask_test_photo(call):
+        msg = bot.send_message(call.message.chat.id, "📷 Отправьте фото — передам в AI vision.", reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_TEST_PHOTO); bot.answer_callback_query(call.id)
+    def handle_test_photo(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        if not getattr(m, "photo", None):
+            bot.reply_to(m, "❌ Не фото."); return
+        try:
+            fi = bot.get_file(m.photo[-1].file_id)
+            fb = bot.download_file(fi.file_path)
+        except Exception as e:
+            bot.reply_to(m, f"❌ {utils.escape(str(e)[:200])}"); return
+        if not fb or len(fb) > _VISION_MAX_BYTES:
+            bot.reply_to(m, "❌ Пустой/слишком большой."); return
         base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
         key = _api_key_resolved()
-        if not base or not key:
-            show_text(call, "❌ URL или ключ не заданы.", back_cb=f"{CB}:m:api"); return
+        model = str(SETTINGS.get("api_model") or "").strip()
+        if not base or not key or not model:
+            bot.reply_to(m, "❌ Заполните API URL, ключ, модель."); return
+        b64 = base64.b64encode(fb).decode("ascii")
+        data_url = f"data:image/jpeg;base64,{b64}"
         try:
-            r = requests.get(base + "/models", headers=_api_headers(key), timeout=(8, 30))
+            r = requests.post(base + "/chat/completions",
+                headers=_api_headers(key),
+                json={"model": model, "messages": [{"role": "user", "content": [
+                    {"type": "text", "text": _VISION_PROMPT},
+                    {"type": "image_url", "image_url": {"url": data_url}}]}],
+                    "temperature": 0.2, "max_tokens": 800},
+                timeout=(10, max(30, int(SETTINGS.get("ai_timeout", 120) or 120))))
             r.raise_for_status()
-            data = r.json()
-            items = data.get("data") or []
-            names = []
-            for item in items:
-                n = item.get("id") or item.get("name")
-                if n: names.append(str(n))
+            data = _safe_json(r, "test_photo")
+            ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip() or "(пусто)"
+            bot.reply_to(m, f"🖼 <b>Ответ AI:</b>\n\n{utils.escape(ans[:3500])}",
+                reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
         except Exception as e:
-            show_text(call, f"❌ /models недоступен: <code>{utils.escape(f'{type(e).__name__}: {e}'[:400])}</code>",
-                      back_cb=f"{CB}:m:api"); return
-        if not names:
-            show_text(call, "❌ /models вернул пустой список.", back_cb=f"{CB}:m:api"); return
-        per = 7
-        start = page * per
-        kb = K()
-        for idx, name in enumerate(names[start:start + per], start=start):
-            mark = "✅ " if name == SETTINGS.get("api_model") else ""
-            short = name if len(name) <= 42 else name[:41] + "…"
-            kb.add(B(mark + short, callback_data=f"{CB}:apimodelpick:{idx}"))
-        nav = []
-        if page > 0: nav.append(B("⬅️", callback_data=f"{CB}:apimodels:{page-1}"))
-        if start + per < len(names): nav.append(B("➡️", callback_data=f"{CB}:apimodels:{page+1}"))
-        if nav: kb.row(*nav)
-        kb.add(B("◀️ Назад", callback_data=f"{CB}:m:api"))
-        try:
-            bot.edit_message_text(f"📦 <b>Модели {_current_provider_label()}</b> ({len(names)})",
-                call.message.chat.id, call.message.id, reply_markup=kb)
-            bot.answer_callback_query(call.id)
+            bot.reply_to(m, f"❌ {type(e).__name__}: {utils.escape(str(e)[:300])}")
+
+    def notify_test(call):
+        bot.answer_callback_query(call.id, "Отправляю…")
+        def job():
+            try: cardinal.telegram.send_notification("🆘 <b>Тестовое уведомление</b>")
+            except Exception: pass
+        threading.Thread(target=job, daemon=True).start()
+
+    def refresh_lots(call):
+        bot.answer_callback_query(call.id, "Запущено…")
+        msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую…")
+        def job():
+            cnt = sync_lots(cardinal, enrich=False)
+            try:
+                bot.edit_message_text(f"✅ Синхронизировано: {cnt}.", msg.chat.id, msg.id,
+                    reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:lots")))
+            except Exception: pass
+        POOL.submit(job)
+
+    def vision_refresh(call):
+        bot.answer_callback_query(call.id, "👁 Собираю лоты…")
+        msg = bot.send_message(call.message.chat.id, "🔄 Синхронизирую и читаю скрины…")
+        def job():
+            try:
+                try: sync_lots(cardinal, enrich=False)
+                except Exception as e: logger.debug("sync_lots failed: %s", e)
+                with LOCK: lids = list(LOTS.keys())
+                total = len(lids); with_imgs = 0; done = 0
+                no_imgs_lids = []
+                for lid in lids:
+                    if STOP.is_set(): break
+                    with LOCK:
+                        rec = dict(LOTS.get(lid) or {})
+                        imgs = list(rec.get("image_urls") or [])
+                    if not imgs:
+                        try:
+                            fresh = _lot_images_deep(rec, lot_dict=rec)
+                            if fresh:
+                                imgs = fresh
+                                with LOCK: LOTS[lid]["image_urls"] = fresh[:12]
+                        except Exception: pass
+                    if not imgs: no_imgs_lids.append(lid); continue
+                    with_imgs += 1
+                    try:
+                        with LOCK: LOT_VISION.pop(str(lid), None)
+                        details = _vision_extract_lot_details(imgs)
+                        if details:
+                            with LOCK: LOT_VISION[str(lid)] = details
+                            done += 1
+                        time.sleep(0.4)
+                    except Exception as e:
+                        logger.debug("vision_refresh lid=%s: %s", lid, e)
+                        continue
+                _save_lot_vision()
+                lines = ["✅ <b>Готово</b>", f"Всего лотов: <b>{total}</b>",
+                         f"С картинками: <b>{with_imgs}</b>", f"Прочитано: <b>{done}</b>"]
+                if no_imgs_lids:
+                    lines.append(f"\n⚠️ Без картинок: <b>{len(no_imgs_lids)}</b>")
+                    for x in no_imgs_lids[:5]: lines.append(f"· лот <code>{utils.escape(str(x))}</code>")
+                    if len(no_imgs_lids) > 5: lines.append(f"… и ещё {len(no_imgs_lids) - 5}")
+                    lines.append("\n💡 «🔎 Диагностика» покажет причину.")
+                if total == 0: lines.append("\n❌ <b>Лоты не загружены.</b> Нажми «🔄 Обновить».")
+                bot.edit_message_text("\n".join(lines), msg.chat.id, msg.id,
+                    reply_markup=K().add(B("🔎 Диагностика", callback_data=f"{CB}:diag_lot"))
+                    .add(B("◀️ Назад", callback_data=f"{CB}:m:lots")))
+            except Exception as e:
+                try: bot.edit_message_text(f"❌ {type(e).__name__}: {str(e)[:300]}", msg.chat.id, msg.id)
+                except Exception: pass
+        POOL.submit(job)
+
+    def ask_diag_lot(call):
+        msg = bot.send_message(call.message.chat.id,
+            "🔎 Пришлите <code>lot_id</code> (цифры) — покажу что есть в объекте лота и какие картинки найдены.",
+            reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_DIAG_LOT)
+        try: bot.answer_callback_query(call.id)
         except Exception: pass
 
-    def pick_api_model(call):
-        try:
-            idx = int(call.data.split(":")[-1])
-        except Exception:
-            bot.answer_callback_query(call.id, "Ошибка индекса", show_alert=True); return
-        base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
-        key = _api_key_resolved()
-        try:
-            r = requests.get(base + "/models", headers=_api_headers(key), timeout=(8, 30))
-            r.raise_for_status()
-            items = r.json().get("data") or []
-            names = [str(i.get("id") or i.get("name")) for i in items if (i.get("id") or i.get("name"))]
-            model = names[idx]
-        except Exception:
-            bot.answer_callback_query(call.id, "Не удалось получить модель", show_alert=True); return
-        SETTINGS["api_model"] = model
-        save_config()
-        bot.answer_callback_query(call.id, f"Выбрано: {model[:40]}")
-        show_api(call)
+    def handle_diag_lot(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        lid = re.sub(r"[^\d]", "", (m.text or "").strip())
+        if not lid:
+            bot.reply_to(m, "❌ Пришлите цифровой <code>lot_id</code>."); return
+        bot.reply_to(m, f"🔎 Анализирую лот <code>{utils.escape(lid)}</code>…")
+        def job():
+            try:
+                lines = [f"🔎 <b>Диагностика лота #{utils.escape(lid)}</b>\n"]
+                with LOCK:
+                    in_cache = lid in LOTS
+                    cached = dict(LOTS.get(lid) or {})
+                lines.append(f"📦 В кэше: <b>{'да' if in_cache else 'нет'}</b>")
+                if in_cache:
+                    lines.append(f"   · название: <code>{utils.escape(str(cached.get('title') or '—')[:80])}</code>")
+                    lines.append(f"   · цена: <b>{cached.get('price')}</b>")
+                    iu = cached.get("image_urls") or []
+                    lines.append(f"   · image_urls в кэше: <b>{len(iu)}</b>")
+                fields_obj = None
+                try:
+                    fields_obj = cardinal.account.get_lot_fields(int(lid))
+                    lines.append(f"\n🧩 <b>get_lot_fields</b>: <b>да</b>")
+                    fd = getattr(fields_obj, "__dict__", None)
+                    if isinstance(fd, dict):
+                        keys = sorted([k for k in fd.keys() if not k.startswith("__")])
+                        lines.append(f"   · полей: <b>{len(keys)}</b>")
+                        lines.append(f"   · ключи: <code>{utils.escape(', '.join(keys[:40]))}</code>")
+                except Exception as e:
+                    lines.append(f"\n🧩 <b>get_lot_fields</b>: ❌ <code>{utils.escape(f'{type(e).__name__}: {e}'[:200])}</code>")
+                imgs_obj = []; imgs_html = []; imgs_final = []
+                try: imgs_obj = _lot_images_from(fields_obj) if fields_obj is not None else []
+                except Exception: pass
+                try: imgs_obj_dedup = _dedupe_image_variants(imgs_obj)
+                except Exception: imgs_obj_dedup = imgs_obj
+                lines.append(f"\n🖼 Из объекта: <b>{len(imgs_obj)}</b> (дедуп: <b>{len(imgs_obj_dedup)}</b>)")
+                for u in imgs_obj_dedup[:3]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                try: imgs_html = _lot_images_from_html(lid)
+                except Exception: pass
+                lines.append(f"\n🌐 Из HTML: <b>{len(imgs_html)}</b>")
+                for u in imgs_html[:3]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                try:
+                    imgs_final = _lot_images_deep(cached, lot_fields_obj=fields_obj, lot_dict=cached)
+                except Exception:
+                    imgs_final = imgs_obj_dedup or imgs_html
+                lines.append(f"\n🎯 Финальный набор: <b>{len(imgs_final)}</b>")
+                for u in imgs_final[:5]: lines.append(f"   · <code>{utils.escape(u[:120])}</code>")
+                with LOCK: vision_cached = bool(LOT_VISION.get(lid))
+                lines.append(f"\n👁️ Vision в кэше: <b>{'да' if vision_cached else 'нет'}</b>")
+                lines.append("")
+                lines.append(_vision_debug_for_lot(lid))
+                if not imgs_final:
+                    lines.append("\n💡 Причины:\n· у лота нет картинок\n· FunPayAPI не отдал поля\n"
+                                 "· HTML требует авторизации\n· все картинки меньше min_bytes")
+                text = "\n".join(lines)
+                for chunk in [text[i:i+3500] for i in range(0, len(text), 3500)]:
+                    try:
+                        bot.send_message(m.chat.id, chunk, parse_mode="HTML")
+                    except Exception:
+                        try:
+                            plain_chunk = re.sub(r"<[^>]+>", "", chunk)
+                            bot.send_message(m.chat.id, plain_chunk, parse_mode=None)
+                        except Exception:
+                            try:
+                                bot.send_message(m.chat.id, plain_chunk)
+                            except Exception:
+                                pass
+            except Exception as e:
+                try: bot.send_message(m.chat.id, f"❌ {type(e).__name__}: {str(e)[:300]}")
+                except Exception: pass
+        POOL.submit(job)
 
+    def ask_vision_one(call):
+        msg = bot.send_message(call.message.chat.id,
+            "👁 Пришлите <code>lot_id</code> для переоценки vision только этого лота.",
+            reply_markup=CLEAR_STATE_BTN())
+        tg.set_state(call.message.chat.id, msg.id, call.from_user.id, ST_VISION_ONE)
+        try: bot.answer_callback_query(call.id)
+        except Exception: pass
+
+    def handle_vision_one(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        lid = re.sub(r"[^\d]", "", (m.text or "").strip())
+        if not lid:
+            bot.reply_to(m, "❌ Пришлите цифровой <code>lot_id</code>."); return
+        bot.reply_to(m, f"👁 Читаю скрины лота <code>{utils.escape(lid)}</code>…")
+        def job():
+            try:
+                with LOCK: rec = dict(LOTS.get(lid) or {})
+                imgs = list(rec.get("image_urls") or [])
+                if not imgs:
+                    try: imgs = _lot_images_deep(rec, lot_dict=rec)
+                    except Exception: imgs = []
+                if not imgs: imgs = _lot_images_from_html(lid)
+                if not imgs:
+                    bot.send_message(m.chat.id,
+                        f"❌ Не нашёл картинок у лота <code>{utils.escape(lid)}</code>.\n"
+                        f"Попробуй «🔎 Диагностика».")
+                    return
+                with LOCK:
+                    LOTS.setdefault(lid, {})["image_urls"] = imgs[:12]
+                    LOT_VISION.pop(str(lid), None)
+                details = _vision_extract_lot_details(imgs)
+                if not details:
+                    with LOCK: dbg = dict(LOT_VISION_DEBUG.get("_last") or {})
+                    http_codes = []
+                    for s in (dbg.get("screens") or []):
+                        m2 = re.search(r"HTTPError:\s*(\d{3})", str(s.get("err", "")))
+                        if m2: http_codes.append(int(m2.group(1)))
+                    if http_codes and SETTINGS.get("lot_vision_explain_errors", True):
+                        dominant = max(set(http_codes), key=http_codes.count)
+                        bot.send_message(m.chat.id, _explain_http_error(dominant))
+                    else:
+                        bot.send_message(m.chat.id,
+                            f"⚠️ Картинок {len(imgs)}, но vision не вернул фактов.\n\n"
+                            + _vision_debug_for_lot(lid))
+                    return
+                with LOCK: LOT_VISION[str(lid)] = details
+                _save_lot_vision()
+                bot.send_message(m.chat.id,
+                    f"✅ <b>Лот {utils.escape(lid)} прочитан</b>\n\n"
+                    f"Картинок: <b>{len(imgs)}</b>\n\n"
+                    f"<b>Факты:</b>\n{utils.escape(details[:2000])}")
+            except Exception as e:
+                try: bot.send_message(m.chat.id, f"❌ {type(e).__name__}: {str(e)[:200]}")
+                except Exception: pass
+        POOL.submit(job)
+
+    # ---------- Updates ----------
     def updates_text():
         with LOCK:
             manifest = UPDATE_STATE.get("manifest")
@@ -4884,6 +5052,7 @@ def init_telegram(cardinal):
         try: bot.answer_callback_query(call.id)
         except Exception: pass
 
+    # ---------- Lot instructions / items ----------
     def show_lot_instr(call):
         with LOCK: instrs = dict(SETTINGS.get("lot_instructions") or {})
         if not instrs:
@@ -4896,7 +5065,13 @@ def init_telegram(cardinal):
                 lines.append(f"· <code>{utils.escape(str(k)[:40])}</code>\n   {utils.escape(str(v)[:180])}")
             if len(instrs) > 20: lines.append(f"\n… и ещё {len(instrs) - 20}")
             text = "\n".join(lines)
-        show_text(call, text, back_cb=f"{CB}:m:lots")
+        kb = K(row_width=3)
+        kb.row(B("➕", callback_data=f"{CB}:lins:add"), B("➖", callback_data=f"{CB}:lins:del"),
+               B("◀️ Назад", callback_data=f"{CB}:m:lots"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception: pass
     def ask_lot_instr_add(call):
         msg = bot.send_message(call.message.chat.id,
             "Пришлите <code>lot_id|текст</code> или <code>название|текст</code>:",
@@ -4958,7 +5133,13 @@ def init_telegram(cardinal):
                 if isinstance(lst, list):
                     for it in lst[:5]: lines.append(f"   – {utils.escape(str(it)[:120])}")
             text = "\n".join(lines)
-        show_text(call, text, back_cb=f"{CB}:m:lots")
+        kb = K(row_width=3)
+        kb.row(B("➕", callback_data=f"{CB}:litem:add"), B("➖", callback_data=f"{CB}:litem:del"),
+               B("◀️ Назад", callback_data=f"{CB}:m:lots"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
+            bot.answer_callback_query(call.id)
+        except Exception: pass
     def ask_lot_item_add(call):
         msg = bot.send_message(call.message.chat.id,
             "Пришлите <code>lot_id|товар</code> или <code>название лота|товар</code>:",
@@ -5010,16 +5191,35 @@ def init_telegram(cardinal):
                     reply_markup=K().add(B("◀️ К списку", callback_data=f"{CB}:litem:list")))
             else: bot.reply_to(m, "ℹ️ Не найдено.")
 
+    # ---------- Setters for API URL/Key with preset detection ----------
+    def set_api_url(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        v = _normalize_openai_base_url((m.text or "").strip())
+        if not v:
+            bot.reply_to(m, "❌ Некорректный URL."); return
+        SETTINGS["api_url"] = v
+        detected = "custom"
+        for key, (_, preset_url) in API_PRESETS.items():
+            if preset_url and _normalize_openai_base_url(preset_url) == v:
+                detected = key; break
+        SETTINGS["api_preset"] = detected
+        SETTINGS["api_provider"] = "openai_compatible"
+        save_config()
+        bot.reply_to(m, f"✅ Сохранено. Провайдер: <b>{utils.escape(API_PRESETS[detected][0])}</b>",
+            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
+    def set_api_key(m):
+        tg.clear_state(m.chat.id, m.from_user.id, True)
+        v = (m.text or "").strip()
+        if not v:
+            bot.reply_to(m, "❌ Пусто."); return
+        SETTINGS["api_key"] = v
+        save_config()
+        bot.reply_to(m, f"✅ Ключ сохранён: <code>{utils.escape(_mask_api_key())}</code>",
+            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
+
+    # ---------- Handler registrations ----------
     tg.cbq_handler(show, lambda c: c.data in (f"{CB}:main", f"{CBT.PLUGIN_SETTINGS}:{UUID}"))
     tg.cbq_handler(show_api, lambda c: c.data == f"{CB}:m:api")
-    tg.cbq_handler(show_providers, lambda c: c.data == f"{CB}:provider")
-    tg.cbq_handler(pick_provider, lambda c: c.data.startswith(f"{CB}:apipreset:"))
-    tg.cbq_handler(show_free_api, lambda c: c.data == f"{CB}:freeapi")
-    tg.cbq_handler(pick_free_api, lambda c: c.data.startswith(f"{CB}:freeapipick:"))
-    tg.cbq_handler(api_status, lambda c: c.data == f"{CB}:api_status")
-    tg.cbq_handler(api_clearkey, lambda c: c.data == f"{CB}:api_clearkey")
-    tg.cbq_handler(show_api_models, lambda c: c.data.startswith(f"{CB}:apimodels:"))
-    tg.cbq_handler(pick_api_model, lambda c: c.data.startswith(f"{CB}:apimodelpick:"))
     tg.cbq_handler(show_replies, lambda c: c.data == f"{CB}:m:replies")
     tg.cbq_handler(show_memory, lambda c: c.data == f"{CB}:m:memory")
     tg.cbq_handler(show_orders_menu, lambda c: c.data == f"{CB}:m:orders")
@@ -5072,7 +5272,6 @@ def init_telegram(cardinal):
     tg.cbq_handler(cycle_webres, lambda c: c.data == f"{CB}:cycle:webres")
     tg.cbq_handler(toggle_headimg, lambda c: c.data == f"{CB}:tog:headimg")
     tg.cbq_handler(cycle_minbytes, lambda c: c.data == f"{CB}:cycle:minbytes")
-    tg.cbq_handler(toggle_fallback, lambda c: c.data == f"{CB}:tog:fallback")
     tg.cbq_handler(ask_thank_text, lambda c: c.data == f"{CB}:thanktext")
     tg.cbq_handler(ask_survey_text, lambda c: c.data == f"{CB}:surveytext")
     tg.cbq_handler(reset_statuses, lambda c: c.data == f"{CB}:resetstatus")
@@ -5107,10 +5306,17 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask_lot_item_add, lambda c: c.data == f"{CB}:litem:add")
     tg.cbq_handler(ask_lot_item_del, lambda c: c.data == f"{CB}:litem:del")
     tg.cbq_handler(ask_role_chat, lambda c: c.data == f"{CB}:role_set_chat")
-    tg.cbq_handler(ask(ST_URL, "Введите base URL API (например https://api.openai.com/v1):"),
-                   lambda c: c.data == f"{CB}:url")
-    tg.cbq_handler(ask(ST_KEY, "Введите API key или env:ИМЯ_ПЕРЕМЕННОЙ:"),
-                   lambda c: c.data == f"{CB}:key")
+    # --- API-specific handlers (new in 13.3.4) ---
+    tg.cbq_handler(show_providers, lambda c: c.data == f"{CB}:provider")
+    tg.cbq_handler(pick_provider, lambda c: c.data.startswith(f"{CB}:apipreset:"))
+    tg.cbq_handler(show_free_api, lambda c: c.data == f"{CB}:freeapi")
+    tg.cbq_handler(pick_free_api, lambda c: c.data.startswith(f"{CB}:freeapipick:"))
+    tg.cbq_handler(api_status, lambda c: c.data == f"{CB}:api_status")
+    tg.cbq_handler(api_clearkey, lambda c: c.data == f"{CB}:api_clearkey")
+    tg.cbq_handler(vision_probe_cb, lambda c: c.data == f"{CB}:vision_probe")
+    # --- ask/message-state ---
+    tg.cbq_handler(ask(ST_URL, "Введите base URL API:"), lambda c: c.data == f"{CB}:url")
+    tg.cbq_handler(ask(ST_KEY, "Введите API key (или env:NAME):"), lambda c: c.data == f"{CB}:key")
     tg.cbq_handler(ask(ST_MODEL, "Введите ID модели:"), lambda c: c.data == f"{CB}:model")
     tg.cbq_handler(ask(ST_SELLER, "Пришлите данные о продавце:"), lambda c: c.data == f"{CB}:seller")
     tg.cbq_handler(ask(ST_TIMEOUT, "AI timeout 30–600 сек:"), lambda c: c.data == f"{CB}:timeout")
@@ -5123,54 +5329,12 @@ def init_telegram(cardinal):
     tg.cbq_handler(ask_diag_lot, lambda c: c.data == f"{CB}:diag_lot")
     tg.cbq_handler(ask_vision_one, lambda c: c.data == f"{CB}:vision_refresh_one")
 
-    def set_api_url(m):
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        url = _normalize_openai_base_url(m.text or "")
-        if not url:
-            bot.reply_to(m, "❌ Некорректный URL."); return
-        SETTINGS["api_url"] = url
-        # Авто-детект пресета
-        detected = "custom"
-        for key, (_, preset_url) in API_PRESETS.items():
-            if preset_url and _normalize_openai_base_url(preset_url) == url:
-                detected = key
-                break
-        SETTINGS["api_preset"] = detected
-        save_config()
-        bot.reply_to(m, f"✅ URL сохранён. Провайдер: <b>{utils.escape(_current_provider_label())}</b>",
-            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
-    def set_api_key(m):
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        raw = (m.text or "").strip()
-        if not raw or len(raw) > 500:
-            bot.reply_to(m, "❌ API key пустой или слишком длинный."); return
-        if raw.lower().startswith("env:"):
-            name = raw[4:].strip()
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
-                bot.reply_to(m, "❌ После env: нужно корректное имя переменной."); return
-        SETTINGS["api_key"] = raw
-        save_config()
-        try:
-            if not raw.lower().startswith("env:"):
-                bot.delete_message(m.chat.id, getattr(m, "message_id", getattr(m, "id", 0)))
-        except Exception: pass
-        bot.send_message(m.chat.id,
-            f"✅ API key сохранён как <code>{utils.escape(_mask_api_key(raw))}</code>.",
-            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
-    def set_api_model(m):
-        tg.clear_state(m.chat.id, m.from_user.id, True)
-        model = (m.text or "").strip()
-        if not model or len(model) > 200:
-            bot.reply_to(m, "❌ Некорректный ID модели."); return
-        SETTINGS["api_model"] = model
-        save_config()
-        bot.reply_to(m, f"✅ Модель: <code>{utils.escape(model)}</code>",
-            reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
-
     tg.msg_handler(set_api_url, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_URL))
     tg.msg_handler(set_api_key, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_KEY))
-    tg.msg_handler(set_api_model, func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
-    tg.msg_handler(make_setter("seller_info", back_cb=f"{CB}:m:replies"), func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
+    tg.msg_handler(make_setter("api_model", back_cb=f"{CB}:m:api"),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_MODEL))
+    tg.msg_handler(make_setter("seller_info", back_cb=f"{CB}:m:replies"),
+                   func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_SELLER))
     tg.msg_handler(make_setter("ai_timeout", back_cb=f"{CB}:m:api",
         validate=lambda v: v.isdigit() and 30 <= int(v) <= 600, transform=int),
         func=lambda m: tg.check_state(m.chat.id, m.from_user.id, ST_TIMEOUT))
@@ -5201,6 +5365,7 @@ def init_telegram(cardinal):
     tg.msg_handler(cmd_ai, commands=["ai"])
     cardinal.add_telegram_commands(UUID, [("ai", "KiriillBR AI", True)])
 
+
 def post_init(c):
     if not os.path.exists(CFG_PATH): load_config()
     _load_buyer_counts(); _load_lot_vision()
@@ -5210,10 +5375,12 @@ def post_init(c):
     try: sync_lots(c, enrich=False)
     except Exception: logger.debug("post_init", exc_info=True)
 
+
 def post_start(c):
     threading.Thread(target=lot_worker, args=(c,), daemon=True, name="KBAI-lots").start()
     threading.Thread(target=update_worker, args=(c,), daemon=True, name="KBAI-updates").start()
     threading.Thread(target=save_orders_worker, args=(c,), daemon=True, name="KBAI-orders-save").start()
+
 
 def on_delete(c, call=None):
     try: save_orders_state()
@@ -5227,6 +5394,7 @@ def on_delete(c, call=None):
     STOP.set()
     try: POOL.shutdown(wait=False, cancel_futures=True)
     except Exception: pass
+
 
 BIND_TO_PRE_INIT = [init_telegram]
 BIND_TO_POST_INIT = [post_init]
