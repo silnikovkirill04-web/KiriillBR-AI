@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "8.5.1"
-DESCRIPTION = "AI-помощник продавца FunPay. Vision, web-поиск, ЧС+WL, анти-leet, HTML-safe, склад+автовыдача."
+VERSION = "8.6.0"
+DESCRIPTION = "AI-помощник продавца FunPay. Vision, web-поиск, ЧС+WL, анти-leet, HTML-safe, склад+автовыдача, память чата."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
 SETTINGS_PAGE = True
@@ -155,7 +155,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 72, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 74, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
@@ -211,6 +211,9 @@ DEFAULTS = {"version": 72, "enabled": True, "setup_done": False,
     "stock_prepend_buyer_prefix": False,
     "stock_buyer_prefix": "Здравствуйте! Ваш товар по заказу #{order_id}:\n\n",
     "lot_fallback_enabled": True,
+    "history_store_multiplier": 3,
+    "reset_order_memory_on_new_order": True,
+    "include_buyer_memory_in_prompt": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -222,6 +225,8 @@ DONE = {}
 VIEWING_CACHE = {}
 CHAT_LOT = {}
 CHAT_LOT_AT = {}
+CHAT_LAST_RESOLVED_LOT = {}
+CHAT_LAST_RESOLVED_AT = {}
 SELLER_NOTIFY_AT = {}
 SURVEY_SENT = {}
 PROCESSED_ORDERS = {}
@@ -245,7 +250,7 @@ UPDATE_STATE = {"checked_at": 0.0, "status": "not_checked", "error": "",
 LOCK = threading.RLock()
 STOP = threading.Event()
 POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="KBAI")
-_HISTORY_HARD_CAP = 200
+_HISTORY_HARD_CAP = 400
 _ORDER_DEDUP_TTL = 24 * 3600
 _ORDER_CLOSED_TTL = 7 * 86400
 _SPAM_WINDOW = 30 * 60
@@ -468,24 +473,19 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 72:
-            for k in ("auto_delivery_from_stock", "auto_delivery_mark_delivered",
-                      "stock_notify_seller", "stock_warn_empty", "include_delivery_in_ai",
-                      "lot_fallback_enabled"):
+        if cv < 74:
+            for k in ("history_store_multiplier", "reset_order_memory_on_new_order",
+                      "include_buyer_memory_in_prompt"):
                 SETTINGS.setdefault(k, DEFAULTS[k])
-            SETTINGS.setdefault("stock_warn_threshold", 2)
-            SETTINGS.setdefault("auto_delivery_require_stock", False)
-            SETTINGS.setdefault("stock_prepend_buyer_prefix", False)
-            SETTINGS.setdefault("stock_buyer_prefix", DEFAULTS["stock_buyer_prefix"])
-            SETTINGS["unknown_reply"] = DEFAULTS["unknown_reply"]
-            SETTINGS["version"] = 72
+            SETTINGS.setdefault("unknown_reply", DEFAULTS["unknown_reply"])
+            SETTINGS["version"] = 74
             save_config()
     except Exception: pass
 
@@ -574,7 +574,9 @@ def save_history_state():
         with LOCK:
             data = {"saved_at": time.time(), "chats": {}}
             for cid, hist in HISTORY.items():
-                if hist: data["chats"][str(cid)] = list(hist)[-30:]
+                if hist:
+                    cap = max(20, min(60, _history_store_limit()))
+                    data["chats"][str(cid)] = list(hist)[-cap:]
         _atomic_write(HISTORY_PATH, data)
     except Exception: logger.debug("save_history_state failed", exc_info=True)
 
@@ -2021,6 +2023,66 @@ def _clear_manual_fulfill(order_id):
     if not oid: return
     with LOCK: MANUAL_FULFILL_QUEUE.pop(oid, None)
 
+def _reset_buyer_order_memory(chat_id, *, reason="", order_id=""):
+    """Сбрасывает контекст заказов и товара для чата при новом оплаченном заказе.
+
+    Что чистится:
+      • CHAT_ORDERS[chat] — список известных заказов чата
+      • ORDER_STATUS[oid] — статусные записи, привязанные к этому чату
+      • MANUAL_FULFILL_QUEUE — карточки ручной выдачи из этого чата
+      • CHAT_LOT / CHAT_LOT_AT / CHAT_LAST_RESOLVED_LOT — «текущий» лот чата
+      • SURVEY_SENT — флаг опроса, чтобы не блокировать новый опрос
+      • VIEWING_CACHE для собеседника — чтобы свежее viewing перечиталось
+
+    Что НЕ чистится: HISTORY чата (диалог и память AI остаются),
+    ROLE чата, ЧС/WL, склад/выдачи, счётчики заказов покупателя.
+    """
+    if not SETTINGS.get("reset_order_memory_on_new_order", True):
+        return
+    key = str(chat_id or "")
+    if not key:
+        return
+    removed_orders = 0
+    removed_status = 0
+    removed_manual = 0
+    with LOCK:
+        CHAT_ORDERS.pop(key, None)
+        for oid in list(ORDER_STATUS.keys()):
+            rec = ORDER_STATUS.get(oid)
+            if not rec: continue
+            try:
+                _, ck, _ = rec
+            except Exception:
+                continue
+            if str(ck) == key:
+                ORDER_STATUS.pop(oid, None)
+                removed_status += 1
+        for oid in list(MANUAL_FULFILL_QUEUE.keys()):
+            rec = MANUAL_FULFILL_QUEUE.get(oid)
+            if isinstance(rec, dict) and str(rec.get("chat_id") or "") == key:
+                MANUAL_FULFILL_QUEUE.pop(oid, None)
+                removed_manual += 1
+        CHAT_LOT.pop(key, None)
+        CHAT_LOT_AT.pop(key, None)
+        CHAT_LAST_RESOLVED_LOT.pop(key, None)
+        CHAT_LAST_RESOLVED_AT.pop(key, None)
+        SURVEY_SENT.pop(key, None)
+        # Свежее viewing должно быть перечитано, а не взято из прошлого состояния
+        for buyer_id in list(VIEWING_CACHE.keys()):
+            try:
+                # кэш привязан к buyer_id, а не chat_id; сбросим весь, не критично
+                VIEWING_CACHE.pop(buyer_id, None)
+            except Exception:
+                pass
+    try:
+        save_orders_state()
+    except Exception:
+        pass
+    logger.info(
+        "chat=%s order_memory_reset status_removed=%d manual_removed=%d order=%s reason=%s",
+        key, removed_status, removed_manual, order_id or "-", reason or "-"
+    )
+
 def _find_lot_for_order(c, order):
     for attr in ("lot_id", "offer_id"):
         lid = getattr(order, attr, None)
@@ -2281,6 +2343,16 @@ def _handle_new_paid_order(c, order):
     if not _mark_order_processed(order_id): return
     chat_id = str(getattr(order, "chat_id", "") or "")
     if _get_order_status(order_id) in ("confirmed", "refunded"): return
+
+    # 🔑 Сброс памяти заказов на покупателя: перед фиксацией нового оплаченного
+    # заказа чистим устаревшие карточки/статусы этого чата, чтобы AI не путал
+    # прошлые заказы с текущим. История диалога сохраняется.
+    if chat_id:
+        try:
+            _reset_buyer_order_memory(chat_id, reason="new_paid_order", order_id=order_id)
+        except Exception:
+            logger.debug("reset order memory failed for chat=%s", chat_id, exc_info=True)
+
     _set_order_status(order_id, chat_id, "paid")
     if chat_id: _set_chat_role(chat_id, "seller")
     buyer_name = _order_buyer_name(order)
@@ -2370,6 +2442,10 @@ def _observe_transaction_message(c, item):
             if status and oid:
                 if status == "paid":
                     if _get_order_status(oid) not in ("confirmed", "refunded"):
+                        if chat_id:
+                            try:
+                                _reset_buyer_order_memory(chat_id, reason="paid_event", order_id=oid)
+                            except Exception: pass
                         _set_order_status(oid, chat_id, "paid")
                         if chat_id: _set_chat_role(chat_id, "seller")
                 elif status == "refunded": _mark_order_closed(oid, chat_id, "refunded")
@@ -3197,17 +3273,24 @@ def _bootstrap_chat_history(c, m, current_text):
             if str(getattr(it, "text", "") or "").strip() == current_safe: cutoff = i; break
     if cutoff is None: cutoff = len(messages)
     imported = []
-    for item in messages[:cutoff][-100:]:
+    # Забираем больше, чем нужно для контекста — буфер памяти по Hybrid-примеру.
+    keep_limit = _history_store_limit()
+    for item in messages[:cutoff][-max(80, keep_limit * 2):]:
         role = _message_role(c, item)
         if role not in ("user", "assistant"): continue
-        text = str(getattr(item, "text", "") or "").strip()
+        text = _safe_history_content(getattr(item, "text", ""))
         if not text: continue
         imported.append({"role": role, "content": text[:2000]})
     if not imported: return
+    imported = imported[-keep_limit:]
     with LOCK:
         existing = list(HISTORY.get(chat_key, []))
-        if existing: HISTORY[chat_key] = (list(imported) + existing[-5:])[-_HISTORY_HARD_CAP:]
-        else: HISTORY[chat_key] = imported[-_HISTORY_HARD_CAP:]
+        merged: list[dict] = []
+        for item in imported + existing:
+            if merged and merged[-1].get("role") == item.get("role") and merged[-1].get("content") == item.get("content"):
+                continue
+            merged.append(item)
+        HISTORY[chat_key] = merged[-keep_limit:]
 
 def _recent_assistant_said_about(chat_id, pattern):
     rx = re.compile(pattern, re.I)
@@ -3413,13 +3496,48 @@ def lot_worker(c):
             try: sync_lots(c, enrich=True)
             except Exception: logger.exception("lot_worker")
 
+def _history_store_limit():
+    """Сколько реплик хранить в RAM и подкладывать в подсказку по примеру Hybrid AI."""
+    try:
+        max_h = max(4, min(200, int(SETTINGS.get("history_max_messages", 40) or 40)))
+    except Exception:
+        max_h = 40
+    try:
+        mult = max(1, min(6, int(SETTINGS.get("history_store_multiplier", 3) or 3)))
+    except Exception:
+        mult = 3
+    return max(24, min(160, max_h * mult))
+
+def _safe_history_content(content):
+    """Очищает текст до сохранения в память: убираем возможные секреты, контакты, реквизиты.
+    Товарный смысл сохраняется — «Telegram: 7 дней» не редактируем."""
+    s = str(content or "")
+    if not s: return ""
+    # Секретные присваивания и балансы режем всегда.
+    s = _RE_SECRET.sub("[СКРЫТО: СЕКРЕТ]", s)
+    # Голые контакты (телефон/почта/карта/handle) — тоже, но не трогаем товарные числа.
+    s = _RE_EMAIL.sub("[СКРЫТО: КОНТАКТ]", s)
+    s = _RE_HANDLE.sub("[СКРЫТО: КОНТАКТ]", s)
+    s = _RE_TG_LINK.sub("[СКРЫТО: КОНТАКТ]", s)
+    def _phone(m): return m.group(0) if _is_prod_num(s, m) else "[СКРЫТО: ТЕЛЕФОН]"
+    s = _RE_PHONE.sub(_phone, s)
+    def _card(m): return m.group(0) if _is_prod_num(s, m) else "[СКРЫТО: РЕКВИЗИТЫ]"
+    s = _RE_CARD.sub(_card, s)
+    return s.strip()[:3000]
+
 def add_history(chat_id, role, text):
-    t = str(text or "").strip()[:3000]
-    if not t: return
+    raw = str(text or "").strip()
+    if not raw: return
+    if role == "user" or role == "assistant":
+        raw = _safe_history_content(raw)
+    else:
+        raw = raw[:3000]
+    if not raw: return
     with LOCK:
         h = HISTORY.setdefault(str(chat_id), [])
-        h.append({"role": role, "content": t})
-        if len(h) > _HISTORY_HARD_CAP: del h[:-_HISTORY_HARD_CAP]
+        h.append({"role": role, "content": raw})
+        cap = _history_store_limit()
+        if len(h) > cap: del h[:-(cap)]
 
 def _compress_history_item(item, is_old=False):
     if not isinstance(item, dict): return None
@@ -3433,6 +3551,44 @@ def _compress_history_item(item, is_old=False):
         content = content[:200].rstrip() + "…"
     out_role = "system" if role == "system_note" else role
     return {"role": out_role, "content": content}
+
+def _buyer_request_memory(chat_id, current_text="", limit=7, max_chars=1100):
+    """Компактная память прошлых вопросов покупателя — по примеру Hybrid AI.
+
+    Возвращает безопасную нумерованную хронологию предыдущих buyer-сообщений.
+    Текущую реплику исключаем: она и так последняя в messages для AI.
+    """
+    if not SETTINGS.get("include_buyer_memory_in_prompt", True):
+        return ""
+    key = str(chat_id or "")
+    if not key: return ""
+    with LOCK:
+        hist = list(HISTORY.get(key, []))
+    user_items = [
+        _safe_history_content(item.get("content") or "")
+        for item in hist
+        if str(item.get("role") or "") == "user" and str(item.get("content") or "").strip()
+    ]
+    if not user_items: return ""
+    safe_current = _safe_history_content(current_text)
+    previous = list(user_items)
+    if safe_current and previous and previous[-1] == safe_current:
+        previous = previous[:-1]
+    if not previous: return ""
+    compact: list[str] = []
+    for text in previous[-max(1, int(limit)):]:
+        one_line = re.sub(r"\s+", " ", text).strip()
+        if not one_line: continue
+        if compact and compact[-1] == one_line: continue
+        compact.append(one_line[:220])
+    if not compact: return ""
+    lines: list[str] = []
+    used = 0
+    for i, t in enumerate(compact, 1):
+        line = f"{i}) {t}"
+        if used + len(line) + 1 > max_chars: break
+        lines.append(line); used += len(line) + 1
+    return "\n".join(lines)
 
 def _history_for_api(chat_id, exclude_last_user=""):
     with LOCK: raw = list(HISTORY.get(str(chat_id), []))
@@ -3461,25 +3617,41 @@ def _history_for_api(chat_id, exclude_last_user=""):
     return compressed
 
 def _get_viewing(c, m):
+    """Мульти-фоллбэк определения «что сейчас смотрит покупатель».
+
+    1) buyer_viewing прямо в объекте сообщения
+    2) get_buyer_viewing / get_user_viewing / get_viewing / get_viewing_by_user
+    3) chat.looking_link / looking_text (после get_chat with_history=False)
+    """
     viewing = getattr(m, "buyer_viewing", None)
-    if viewing and getattr(viewing, "is_viewing_lot", False): return viewing
+    if viewing and getattr(viewing, "is_viewing_lot", False):
+        return viewing
+
     buyer_id = (getattr(m, "interlocutor_id", None)
                 or getattr(m, "author_id", None)
                 or getattr(m, "interlocutor_username", None))
-    if not buyer_id: return None
+    if not buyer_id:
+        return None
+
     key = str(buyer_id); now = time.time()
     with LOCK: cached = VIEWING_CACHE.get(key)
-    if cached and now - cached[0] < 30: return cached[1]
+    if cached and now - cached[0] < 30:
+        return cached[1]
+
     viewing = None
     for method_name in ("get_buyer_viewing", "get_user_viewing", "get_viewing", "get_viewing_by_user"):
         method = getattr(c.account, method_name, None)
-        if not callable(method): continue
+        if not callable(method):
+            continue
         try:
             v = method(buyer_id)
-            if v: viewing = v; break
+            if v:
+                viewing = v
+                break
         except Exception as e:
             logger.debug("_get_viewing.%s(%s) failed: %s", method_name, buyer_id, e)
             continue
+
     if viewing is None:
         try:
             get_chat = getattr(c.account, "get_chat", None)
@@ -3496,8 +3668,10 @@ def _get_viewing(c, m):
                     except Exception:
                         viewing = None
         except Exception as e:
-            logger.debug("_get_viewing chat fallback failed: %s", e)
-    with LOCK: VIEWING_CACHE[key] = (now, viewing)
+            logger.debug("_get_viewing chat.looking_link fallback failed: %s", e)
+
+    with LOCK:
+        VIEWING_CACHE[key] = (now, viewing)
     if viewing is None:
         logger.info("_get_viewing: покупатель %s сейчас НЕ смотрит лот (или API не отдал)", buyer_id)
     else:
@@ -3510,8 +3684,10 @@ def _remember_chat_lot(chat_id, lot):
     key = str(chat_id or "")
     lid = str(lot.get("id") or "")
     if not key or not lid: return
+    now = time.time()
     with LOCK:
-        CHAT_LOT[key] = lid; CHAT_LOT_AT[key] = time.time()
+        CHAT_LOT[key] = lid; CHAT_LOT_AT[key] = now
+        CHAT_LAST_RESOLVED_LOT[key] = lid; CHAT_LAST_RESOLVED_AT[key] = now
 
 def _last_chat_lot(chat_id, ttl_seconds=1800):
     key = str(chat_id or "")
@@ -3525,9 +3701,32 @@ def _last_chat_lot(chat_id, ttl_seconds=1800):
             CHAT_LOT.pop(key, None); CHAT_LOT_AT.pop(key, None)
     return None
 
+def _last_resolved_product(chat_id):
+    key = str(chat_id or "")
+    with LOCK:
+        lid = CHAT_LAST_RESOLVED_LOT.get(key)
+        seen = CHAT_LAST_RESOLVED_AT.get(key, 0.0)
+        lot = LOTS.get(lid) if lid else None
+    ttl = 30 * 60
+    if lot and time.time() - seen <= ttl:
+        return lot
+    if lid:
+        with LOCK:
+            CHAT_LAST_RESOLVED_LOT.pop(key, None)
+            CHAT_LAST_RESOLVED_AT.pop(key, None)
+    return None
+
 def _get_lot(c, m, text):
     n = norm(text)
     chat_key = str(getattr(m, "chat_id", "") or "")
+
+    # 0) Явная ссылка «этот лот / данного товара» — отдаём последний реально
+    # определённый лот этого чата (пример Hybrid AI).
+    if _RE_CONTEXT_LOT.search(n):
+        prev_ctx = _last_resolved_product(chat_key)
+        if prev_ctx: return prev_ctx
+
+    # 1) Предыдущий лот этого чата
     prev = _last_chat_lot(chat_key, ttl_seconds=3600)
     if prev:
         ranked = find_lots(text, 3)
@@ -3537,6 +3736,8 @@ def _get_lot(c, m, text):
             if len(ranked) == 1 or score - second >= 0.05 or score >= 0.8:
                 _remember_chat_lot(chat_key, best); return best
         return prev
+
+    # 2) Совпадение по тексту
     ranked = find_lots(text, 3)
     if ranked:
         best, score = ranked[0]
@@ -3544,9 +3745,8 @@ def _get_lot(c, m, text):
             second = ranked[1][1] if len(ranked) > 1 else 0.0
             if len(ranked) == 1 or score - second >= 0.04 or score >= 0.8:
                 _remember_chat_lot(chat_key, best); return best
-    if _RE_CONTEXT_LOT.search(n):
-        prev2 = _last_chat_lot(chat_key)
-        if prev2: return prev2
+
+    # 3) Что смотрит покупатель
     viewing = _get_viewing(c, m)
     if viewing and getattr(viewing, "is_viewing_lot", False):
         lid = str(getattr(viewing, "lot_id", ""))
@@ -3571,6 +3771,8 @@ def _get_lot(c, m, text):
                 "auto": False, "subcategory": "", "server": "", "extra_fields": {},
                 "payment_message": "", "image_urls": []}
             _remember_chat_lot(chat_key, synthetic); return synthetic
+
+    # 4) Покупатель спрашивает про цену/наличие — берём наиболее «полный» лот
     if SETTINGS.get("lot_fallback_enabled", True) and _RE_PURCHASE_TOPIC.search(n):
         with LOCK: items = list(LOTS.values())
         if items:
@@ -3758,12 +3960,20 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
     if search_results:
         search_block = ("\n\nРЕЗУЛЬТАТЫ ПОИСКА В ОТКРЫТЫХ ИСТОЧНИКАХ "
                         "(используй как доп. инфо, не цитируй URL):\n" + search_results + "\n")
+    buyer_memory = _buyer_request_memory(chat_id)
+    buyer_memory_block = ""
+    if buyer_memory:
+        buyer_memory_block = (
+            "\nБЕЗОПАСНАЯ ПАМЯТЬ ПРЕДЫДУЩИХ ВОПРОСОВ ПОКУПАТЕЛЯ (только слова покупателя, не факты):\n"
+            + buyer_memory
+            + "\nИспользуй для коротких продолжений («а ты?», «а по второму?», «тогда беру», «что я спрашивал?»).\n"
+        )
     return (f"{SETTINGS['system_prompt']}\n\n{role_block}\n"
         f"ПАМЯТЬ ДИАЛОГА:\n{memory_note}\n\nКОНТЕКСТ ТОВАРА:\n{viewing_note}\n\n"
         f"ИНФОРМАЦИЯ О ПРОДАВЦЕ:\n{seller or 'не задана'}\n\n"
         f"ТЕКУЩИЙ ТОВАР:\n{_lot_prompt(lot)}"
         f"{instr_block}{attached_block}\n\n{FUNPAY_RULES_SNAPSHOT}\n\n"
-        f"{status_hint}{no_hallucination}\n{promises}{extra}{search_block}\n"
+        f"{status_hint}{no_hallucination}\n{promises}{extra}{search_block}{buyer_memory_block}\n"
         "Дополнительно:\n- «Аккаунт Standoff/Steam/CS2/Valorant/Telegram» — обычный товар.\n"
         "- Название платформы внутри товара — НЕ контакт.")
 
@@ -4105,7 +4315,7 @@ def init_telegram(cardinal):
         head += f"🛍 Лотов: <b>{len(LOTS)}</b>/🖼️<b>{n_with_imgs}</b> · 👁️<b>{n_vision}</b>\n"
         head += f"📦 Склад: <b>{n_stock_lots}</b> лотов / <b>{n_stock_items}</b> поз. · 📤 выдан: <b>{n_delivered}</b>\n"
         head += f"📌 Заказов: <b>{n_status}</b> · ⚠️<b>{n_manual}</b>\n"
-        head += f"💬 Память: <b>{n_chats}</b> / <b>{n_msgs}</b> сообщ.\n"
+        head += f"💬 Память: <b>{n_chats}</b> / <b>{n_msgs}</b> сообщ. (лимит {_history_store_limit()}/чат)\n"
         head += f"🎭 Роли: 🏪<b>{n_role_s}</b> · 🛒<b>{n_role_b}</b>\n"
         head += f"🔄 Обновления: <b>{utils.escape(update_status_line())}</b>"
         return head
@@ -4191,7 +4401,9 @@ def init_telegram(cardinal):
             f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
             f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
             f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
-            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
+            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>\n"
+            f"🧠 Память покупателя: <b>{utils.bool_to_text(SETTINGS.get('include_buyer_memory_in_prompt', True))}</b> · "
+            f"♻️ Сброс памяти заказов: <b>{utils.bool_to_text(SETTINGS.get('reset_order_memory_on_new_order', True))}</b>")
         kb = K(row_width=2)
         kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
         kb.row(B("🏪 Продавец", callback_data=f"{CB}:seller"),
@@ -4208,7 +4420,10 @@ def init_telegram(cardinal):
                B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"))
         kb.row(B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"),
                B("✏️ Текст вод. знака", callback_data=f"{CB}:wmtext"))
-        kb.row(B(f"🎯 Fallback лот {utils.bool_to_text(SETTINGS.get('lot_fallback_enabled', True))}", callback_data=f"{CB}:tog:fallback"))
+        kb.row(B(f"🎯 Fallback лот {utils.bool_to_text(SETTINGS.get('lot_fallback_enabled', True))}", callback_data=f"{CB}:tog:fallback"),
+               B(f"🧠 Buy-memory {utils.bool_to_text(SETTINGS.get('include_buyer_memory_in_prompt', True))}", callback_data=f"{CB}:tog:buyermem"))
+        kb.row(B(f"♻️ Сброс заказов {utils.bool_to_text(SETTINGS.get('reset_order_memory_on_new_order', True))}", callback_data=f"{CB}:tog:resetord"),
+               B(f"🧮 Multiplier {SETTINGS.get('history_store_multiplier', 3)}", callback_data=f"{CB}:cycle:histmult"))
         kb.add(B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
@@ -4217,17 +4432,27 @@ def init_telegram(cardinal):
         except Exception: pass
 
     def show_memory(call):
+        with LOCK:
+            n_chats = len(HISTORY)
+            n_msgs = sum(len(h) for h in HISTORY.values())
         text = (f"🎛 <b>Память и контекст</b>\n\n"
-            f"📨 Макс. сообщений в контексте: <b>{SETTINGS.get('history_max_messages', 40)}</b>\n"
+            f"💬 Сейчас помню <b>{n_chats}</b> чатов / <b>{n_msgs}</b> сообщ.\n"
+            f"🎯 Лимит на чат: <b>{_history_store_limit()}</b> сообщ.\n\n"
+            f"📨 Макс. сообщений в контексте AI: <b>{SETTINGS.get('history_max_messages', 40)}</b>\n"
             f"📏 Лимит длины одного сообщения: <b>{SETTINGS.get('history_msg_char_cap', 1500)}</b>\n"
             f"📦 Общий бюджет: <b>{SETTINGS.get('history_char_budget', 12000)}</b> симв.\n"
-            f"🗜 Сжимать старые: <b>{utils.bool_to_text(SETTINGS.get('history_compress_old', True))}</b>\n\n"
-            f"<i>Помогает не жечь деньги на длинных диалогах.</i>")
+            f"🗜 Сжимать старые: <b>{utils.bool_to_text(SETTINGS.get('history_compress_old', True))}</b>\n"
+            f"🧠 Buy-memory в промпте: <b>{utils.bool_to_text(SETTINGS.get('include_buyer_memory_in_prompt', True))}</b>\n"
+            f"🧮 Множитель хранения (×{SETTINGS.get('history_store_multiplier', 3)}): <b>{SETTINGS.get('history_store_multiplier', 3)}</b>\n\n"
+            f"<i>Buy-memory — компактный список прошлых вопросов покупателя в промпте, чтобы AI понимал короткие продолжения («а ты?», «а по второму?»).</i>")
         kb = K(row_width=2)
-        kb.row(B(f"📨 Сообщений {SETTINGS.get('history_max_messages', 40)}", callback_data=f"{CB}:cycle:histmsgs"),
+        kb.row(B(f"📨 Контекст {SETTINGS.get('history_max_messages', 40)}", callback_data=f"{CB}:cycle:histmsgs"),
                B(f"📏 Лимит {SETTINGS.get('history_msg_char_cap', 1500)}", callback_data=f"{CB}:cycle:histcap"))
         kb.row(B(f"📦 Бюджет {SETTINGS.get('history_char_budget', 12000)}", callback_data=f"{CB}:budget"),
                B(f"🗜 Сжатие {utils.bool_to_text(SETTINGS.get('history_compress_old', True))}", callback_data=f"{CB}:tog:compress"))
+        kb.row(B(f"🧠 Buy-memory {utils.bool_to_text(SETTINGS.get('include_buyer_memory_in_prompt', True))}", callback_data=f"{CB}:tog:buyermem"),
+               B(f"🧮 ×{SETTINGS.get('history_store_multiplier', 3)}", callback_data=f"{CB}:cycle:histmult"))
+        kb.add(B("🗑 Очистить память всех чатов", callback_data=f"{CB}:clear_history"))
         kb.add(B("◀️ Назад", callback_data=f"{CB}:m:replies"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -4246,7 +4471,9 @@ def init_telegram(cardinal):
             f"⚠️ Ручная: <b>{utils.bool_to_text(SETTINGS.get('manual_fulfill_notify', True))}</b> · очередь: <b>{n_manual}</b>\n"
             f"✅ Выдано (всего): <b>{n_delivered}</b> · 🔔 Увед: <b>{utils.bool_to_text(SETTINGS.get('auto_fulfill_notify_seller', True))}</b>\n"
             f"🙏 Спасибо: <b>{utils.bool_to_text(SETTINGS.get('auto_thank_after_payment', True))}</b> · "
-            f"📊 Опрос: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>")
+            f"📊 Опрос: <b>{utils.bool_to_text(SETTINGS.get('post_order_survey', True))}</b>\n\n"
+            f"♻️ Сброс памяти заказов при новом оплаченном заказе: "
+            f"<b>{utils.bool_to_text(SETTINGS.get('reset_order_memory_on_new_order', True))}</b>")
         kb = K(row_width=2)
         kb.row(B(f"⚡ Автовыдача {utils.bool_to_text(SETTINGS.get('auto_fulfill_paid_orders', False))}", callback_data=f"{CB}:autofulfill"),
                B(f"⏱ Задержка {SETTINGS.get('auto_fulfill_delay_sec', 3)}с", callback_data=f"{CB}:autofulfilldelay"))
@@ -4260,11 +4487,12 @@ def init_telegram(cardinal):
                B(f"⏱ Cooldown {SETTINGS.get('seller_notify_cooldown', 5)}м", callback_data=f"{CB}:cooldown"))
         kb.row(B(f"🙏 Спасибо {utils.bool_to_text(SETTINGS.get('auto_thank_after_payment', True))}", callback_data=f"{CB}:thank"),
                B(f"📊 Опрос {utils.bool_to_text(SETTINGS.get('post_order_survey', True))}", callback_data=f"{CB}:survey"))
-        kb.row(B("📜 История выдач", callback_data=f"{CB}:delivered_list"),
+        kb.row(B(f"♻️ Сброс памяти при оплате {utils.bool_to_text(SETTINGS.get('reset_order_memory_on_new_order', True))}", callback_data=f"{CB}:tog:resetord"),
                B("✍️ Отметить вручную", callback_data=f"{CB}:manual_deliver"))
+        kb.row(B("📜 История выдач", callback_data=f"{CB}:delivered_list"),
+               B("🧹 Очистить статусы", callback_data=f"{CB}:resetstatus"))
         kb.add(B("✏️ Текст благодарности", callback_data=f"{CB}:thanktext"))
         kb.add(B("✏️ Текст опроса", callback_data=f"{CB}:surveytext"))
-        kb.add(B("🗑 Сбросить статусы", callback_data=f"{CB}:resetstatus"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -4659,7 +4887,8 @@ def init_telegram(cardinal):
         kb = K(row_width=2)
         kb.row(B("📋 Правила", callback_data=f"{CB}:rules"),
                B("🧪 Уведомл.", callback_data=f"{CB}:notify_test"))
-        kb.add(B("🗑 Сбросить память", callback_data=f"{CB}:clear_history"))
+        kb.add(B("🗑 Сбросить память чатов", callback_data=f"{CB}:clear_history"))
+        kb.add(B("🗑 Сбросить статусы заказов", callback_data=f"{CB}:resetstatus"))
         kb.add(B("🗑 Сбросить счётчики", callback_data=f"{CB}:wipe_counts"))
         kb.add(B("🗑 Сбросить vision", callback_data=f"{CB}:wipe_vision"))
         kb.add(B("🗑 Сбросить историю выдач", callback_data=f"{CB}:wipe_delivered"))
@@ -4747,6 +4976,10 @@ def init_telegram(cardinal):
         cur = int(SETTINGS.get("history_msg_char_cap", 1500))
         SETTINGS["history_msg_char_cap"] = {500: 1000, 1000: 1500, 1500: 2000, 2000: 500}.get(cur, 1500)
         save_config(); show_memory(call)
+    def cycle_histmult(call):
+        cur = int(SETTINGS.get("history_store_multiplier", 3))
+        SETTINGS["history_store_multiplier"] = {1: 2, 2: 3, 3: 4, 4: 6, 6: 1}.get(cur, 3)
+        save_config(); show_memory(call)
     def toggle_manual(call):
         SETTINGS["manual_fulfill_notify"] = not bool(SETTINGS.get("manual_fulfill_notify", True))
         save_config(); show_orders_menu(call)
@@ -4791,6 +5024,16 @@ def init_telegram(cardinal):
     def toggle_fallback(call):
         SETTINGS["lot_fallback_enabled"] = not bool(SETTINGS.get("lot_fallback_enabled", True))
         save_config(); show_replies(call)
+    def toggle_buyermem(call):
+        SETTINGS["include_buyer_memory_in_prompt"] = not bool(SETTINGS.get("include_buyer_memory_in_prompt", True))
+        save_config()
+        try: show_memory(call)
+        except Exception: show_replies(call)
+    def toggle_resetord(call):
+        SETTINGS["reset_order_memory_on_new_order"] = not bool(SETTINGS.get("reset_order_memory_on_new_order", True))
+        save_config()
+        try: show_orders_menu(call)
+        except Exception: show_replies(call)
 
     def show_whitelist(call):
         with LOCK: raw = list(SETTINGS.get("whitelist") or [])
@@ -4934,6 +5177,9 @@ def init_telegram(cardinal):
         with LOCK:
             ORDER_STATUS.clear(); CHAT_ORDERS.clear(); CLOSED_ORDERS.clear()
             PROCESSED_ORDERS.clear(); MANUAL_FULFILL_QUEUE.clear()
+            CHAT_LOT.clear(); CHAT_LOT_AT.clear()
+            CHAT_LAST_RESOLVED_LOT.clear(); CHAT_LAST_RESOLVED_AT.clear()
+            SURVEY_SENT.clear(); VIEWING_CACHE.clear()
         try: os.path.exists(ORDERS_PATH) and os.remove(ORDERS_PATH)
         except Exception: pass
         try: bot.answer_callback_query(call.id, "✅ Сброшено")
@@ -4943,9 +5189,7 @@ def init_telegram(cardinal):
         with LOCK:
             for chat_id in list(HISTORY.keys()):
                 CHAT_HISTORY_BOOTSTRAPPED.add(str(chat_id))
-            HISTORY.clear(); VIEWING_CACHE.clear()
-            CHAT_LOT.clear(); CHAT_LOT_AT.clear()
-            SELLER_NOTIFY_AT.clear(); DONE.clear(); SPAM_WATCH.clear()
+            HISTORY.clear()
         try: os.path.exists(HISTORY_PATH) and os.remove(HISTORY_PATH)
         except Exception: pass
         try: bot.answer_callback_query(call.id, "✅ Память сброшена")
@@ -4959,9 +5203,10 @@ def init_telegram(cardinal):
             for cid, hist in items[:30]:
                 n_a = sum(1 for x in hist if x.get("role") == "assistant")
                 n_u = sum(1 for x in hist if x.get("role") == "user")
+                n_note = sum(1 for x in hist if x.get("role") == "system_note")
                 with LOCK: role = CHAT_ROLE.get(str(cid), "")
                 role_str = _role_ru(role) if role else "❔"
-                lines.append(f"<code>{utils.escape(str(cid))}</code> — {role_str} · {len(hist)} · 👤{n_u} · 🤖{n_a}")
+                lines.append(f"<code>{utils.escape(str(cid))}</code> — {role_str} · {len(hist)} · 👤{n_u} · 🤖{n_a} · 📝{n_note}")
             text = "\n".join(lines)
         show_text(call, text, back_cb=f"{CB}:m:lots")
     def show_rules(call):
@@ -5705,6 +5950,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(toggle_compress, lambda c: c.data == f"{CB}:tog:compress")
     tg.cbq_handler(cycle_histmsgs, lambda c: c.data == f"{CB}:cycle:histmsgs")
     tg.cbq_handler(cycle_histcap, lambda c: c.data == f"{CB}:cycle:histcap")
+    tg.cbq_handler(cycle_histmult, lambda c: c.data == f"{CB}:cycle:histmult")
     tg.cbq_handler(toggle_thank, lambda c: c.data == f"{CB}:thank")
     tg.cbq_handler(toggle_autofulfill, lambda c: c.data == f"{CB}:autofulfill")
     tg.cbq_handler(toggle_autofulfill_notify, lambda c: c.data == f"{CB}:autofulfillnotify")
@@ -5733,6 +5979,8 @@ def init_telegram(cardinal):
     tg.cbq_handler(toggle_stock_prefix, lambda c: c.data == f"{CB}:tog:stock_prefix")
     tg.cbq_handler(cycle_stockwarn, lambda c: c.data == f"{CB}:cycle:stockwarn")
     tg.cbq_handler(toggle_fallback, lambda c: c.data == f"{CB}:tog:fallback")
+    tg.cbq_handler(toggle_buyermem, lambda c: c.data == f"{CB}:tog:buyermem")
+    tg.cbq_handler(toggle_resetord, lambda c: c.data == f"{CB}:tog:resetord")
     tg.cbq_handler(ask_stock_add, lambda c: c.data == f"{CB}:stock_add")
     tg.cbq_handler(ask_stock_view, lambda c: c.data == f"{CB}:stock_view")
     tg.cbq_handler(ask_stock_clear, lambda c: c.data == f"{CB}:stock_clear")
