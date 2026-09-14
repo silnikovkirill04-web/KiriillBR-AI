@@ -2,7 +2,7 @@
 from __future__ import annotations
 import ast, base64, difflib, hashlib, io, json, logging, os, re, shutil, sys, threading, time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 import requests
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, CallbackQuery, Message
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "13.4.3"
+VERSION = "13.5.0"
 DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (35+ эндпоинтов), Vision, web-поиск, ЧС+WL.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -53,6 +53,7 @@ _VISION_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp", "image/gif")
 _WEB_SEARCH_TIMEOUT = (6, 15)
 _WEB_SEARCH_MAX_BYTES = 512 * 1024
 _HTTP_UA = "Mozilla/5.0 (compatible; KiriillBRAI/1.0)"
+_IMG_FETCH_TIMEOUT = (4, 8)
 
 API_PRESETS: dict[str, tuple[str, str]] = {
     "openai":            ("OpenAI", "https://api.openai.com/v1"),
@@ -147,6 +148,9 @@ _RE_HTML_TAG = re.compile(r"</?([a-zA-Z][a-zA-Z0-9]*)(?:\s[^<>]{0,200})?/?>")
 _HTML_SAFE_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "br", "em", "strong", "tg-spoiler", "blockquote"}
 _HTML_SELF_CLOSING = {"br", "hr", "img"}
 
+_RE_THINK_TAG = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.I | re.DOTALL)
+_RE_THINK_OPEN = re.compile(r"<think\b[^>]*>.*", re.I | re.DOTALL)
+
 _VISION_PROMPT = (
     "Ты — строгий модератор контента и AI-заместитель продавца FunPay. Покупатель прислал фото.\n\n"
     "ТЕБЕ ЗАПРЕЩЕНО ОТКАЗЫВАТЬСЯ ОПИСЫВАТЬ ФОТО.\n\n"
@@ -228,7 +232,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 77, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 78, "enabled": True, "setup_done": False,
     "api_provider": "openai_compatible",
     "api_preset": "openrouter",
     "api_url": "https://openrouter.ai/api/v1",
@@ -277,6 +281,9 @@ DEFAULTS = {"version": 77, "enabled": True, "setup_done": False,
     "sanitize_html_output": True, "balance_html_output": True,
     "deleet_pure_normalize": True,
     "lot_fallback_enabled": True,
+    "fallback_model_enabled": True,
+    "strip_think_tags": True,
+    "http_retry_attempts": 2,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -305,7 +312,8 @@ UPDATE_STATE = {"checked_at": 0.0, "status": "not_checked", "error": "",
     "manifest": None, "available": False, "installing": False}
 LOCK = threading.RLock()
 STOP = threading.Event()
-POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="KBAI")
+POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="KBAI")
+IMG_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="KBAI-img")
 _HISTORY_HARD_CAP = 200
 _ORDER_DEDUP_TTL = 24 * 3600
 _ORDER_CLOSED_TTL = 7 * 86400
@@ -512,6 +520,101 @@ _PROMISE_PHRASES = [
     re.compile(r"\bсообщ\w*\s+продавц\w*", re.I),
 ]
 
+# ---------- ХЕЛПЕРЫ ДЛЯ ПРОВАЙДЕРОВ ----------
+
+_NO_VISION_MARKERS = (
+    "deepseek-chat", "deepseek-reasoner", "deepseek-coder",
+    "o1-", "o1", "o3-mini", "o3-mini-", "o1-mini", "o1-preview",
+    "llama-3", "llama3", "llama-2", "mistral-7b", "mixtral",
+    "qwen-turbo", "qwen-plus", "qwen-max", "yi-", "glm-4-flash",
+    "command-r", "command-light",
+)
+
+def _is_vision_model(model: str) -> bool:
+    """Грубая эвристика: поддерживает ли модель изображения."""
+    m = str(model or "").lower()
+    if not m: return False
+    if any(x in m for x in _NO_VISION_MARKERS): return False
+    vision_markers = (
+        "gpt-4o", "gpt-4-vision", "gpt-4-turbo", "gpt-4.1", "gpt-4.5",
+        "gemini", "claude-3", "claude-4", "sonnet-4", "opus-4", "haiku-4",
+        "vision", "llava", "pixtral", "qwen-vl", "qwen2-vl", "qwen2.5-vl",
+        "internvl", "minicpm-v", "moondream", "phi-3-vision", "phi-4-vision",
+        "grok-vision", "grok-2-vision", "grok-4", "llama-3.2-90b-vision",
+        "llama-3.2-11b-vision", "idefics", "florence",
+    )
+    return any(x in m for x in vision_markers)
+
+_ANTHROPIC_HINT = re.compile(r"anthropic|claude|sonnet|opus|haiku", re.I)
+_GOOGLE_HINT = re.compile(r"gemini|google", re.I)
+_DEEPSEEK_HINT = re.compile(r"deepseek", re.I)
+
+def _uses_system_top_level(base: str, model: str, preset: str) -> bool:
+    """Anthropic-подобные API требуют system на верхнем уровне."""
+    if preset.startswith("gemini") or preset.startswith("qwen") or preset.startswith("zhipu"):
+        return False
+    if _ANTHROPIC_HINT.search(model or ""): return True
+    if "anthropic" in (base or "").lower(): return True
+    return False
+
+def _strip_think(text: str) -> str:
+    if not text: return text
+    if not SETTINGS.get("strip_think_tags", True): return text
+    s = str(text)
+    s = _RE_THINK_TAG.sub("", s)
+    # Незакрытый <think> — отрезаем всё от него до конца
+    if "<think" in s.lower() and "</think" not in s.lower():
+        s = _RE_THINK_OPEN.sub("", s)
+    return s.strip()
+
+def _merge_consecutive_roles(msgs: list) -> list:
+    """Склеивает подряд идущие сообщения с одинаковой ролью."""
+    if not msgs: return msgs
+    merged = []
+    for msg in msgs:
+        role = msg.get("role")
+        content = msg.get("content")
+        if not merged or merged[-1].get("role") != role:
+            merged.append({"role": role, "content": content})
+            continue
+        prev = merged[-1]["content"]
+        # Оба строки
+        if isinstance(prev, str) and isinstance(content, str):
+            merged[-1]["content"] = prev + "\n\n" + content
+            continue
+        # Один массив, другой строка
+        if isinstance(prev, list) and isinstance(content, str):
+            merged[-1]["content"] = list(prev) + [{"type": "text", "text": content}]
+            continue
+        if isinstance(prev, str) and isinstance(content, list):
+            merged[-1]["content"] = [{"type": "text", "text": prev}] + list(content)
+            continue
+        if isinstance(prev, list) and isinstance(content, list):
+            merged[-1]["content"] = list(prev) + list(content)
+            continue
+        merged[-1]["content"] = str(prev) + "\n\n" + str(content)
+    return merged
+
+def _strip_images_from_msgs(msgs: list) -> list:
+    """Убирает image_url блоки для текстовых моделей."""
+    out = []
+    for msg in msgs:
+        content = msg.get("content")
+        role = msg.get("role")
+        if isinstance(content, list):
+            texts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    texts.append(str(part.get("text") or ""))
+            joined = "\n".join(t for t in texts if t).strip()
+            if joined:
+                out.append({"role": role, "content": joined})
+        else:
+            out.append(msg)
+    return out
+
+# ---------- БАЗОВЫЕ ХЕЛПЕРЫ ----------
+
 def _merge(a, b):
     if isinstance(a, dict) and isinstance(b, dict):
         r = dict(a)
@@ -589,27 +692,18 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 77:
-            SETTINGS.setdefault("lot_fallback_enabled", True)
-            SETTINGS.setdefault("api_preset", "openrouter")
-            SETTINGS.setdefault("api_provider", "openai_compatible")
-            if str(SETTINGS.get("unknown_reply") or "").startswith("Уточните, пожалуйста"):
-                SETTINGS["unknown_reply"] = DEFAULTS["unknown_reply"]
-            cur_url = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
-            detected = "custom"
-            for key, (_, preset_url) in API_PRESETS.items():
-                if preset_url and _normalize_openai_base_url(preset_url) == cur_url:
-                    detected = key
-                    break
-            SETTINGS["api_preset"] = detected
-            SETTINGS["version"] = 77
+        if cv < 78:
+            SETTINGS.setdefault("fallback_model_enabled", True)
+            SETTINGS.setdefault("strip_think_tags", True)
+            SETTINGS.setdefault("http_retry_attempts", 2)
+            SETTINGS["version"] = 78
             save_config()
     except Exception: pass
 
@@ -1673,6 +1767,7 @@ def _strip_fake_order_action(text):
 
 def _clean_ai_answer(text):
     result = str(text or "")
+    result = _strip_think(result)
     if SETTINGS.get("strip_safety_junk", True):
         for _ in range(10):
             try:
@@ -2181,6 +2276,8 @@ def _trigger_post_order_survey(c, m):
         send_post_order_survey(c, chat_id, chat_name)
     POOL.submit(_job)
 
+# ---------- ЗАГРУЗКА КАРТИНОК (УМЕНЬШЕНЫ ТАЙМАУТЫ) ----------
+
 def _extract_url_as_data_url(url: str) -> str:
     u = str(url or "").strip()
     if not u.lower().startswith(("http://", "https://")): return ""
@@ -2194,7 +2291,7 @@ def _extract_url_as_data_url(url: str) -> str:
     last_err = ""
     for hdr in headers_variants:
         try:
-            r = requests.get(u, timeout=(8, 25), stream=True, headers=hdr, allow_redirects=True)
+            r = requests.get(u, timeout=_IMG_FETCH_TIMEOUT, stream=True, headers=hdr, allow_redirects=True)
             r.raise_for_status()
             ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if ctype and not ctype.startswith("image/"):
@@ -2218,6 +2315,24 @@ def _extract_url_as_data_url(url: str) -> str:
     if SETTINGS.get("lot_vision_verbose", True):
         logger.warning("vision data-url FAIL url=%s err=%s", u[:120], last_err)
     return ""
+
+def _parallel_data_urls(urls: list, max_workers: int = 4) -> list:
+    """Параллельно скачивает несколько URL в data-url. Порядок сохраняется."""
+    if not urls: return []
+    if len(urls) == 1:
+        r = _extract_url_as_data_url(urls[0])
+        return [r] if r else []
+    results = [None] * len(urls)
+    try:
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(urls))) as pool:
+            future_map = {pool.submit(_extract_url_as_data_url, u): i for i, u in enumerate(urls)}
+            for fut in as_completed(future_map, timeout=max(8, 6 * len(urls))):
+                idx = future_map[fut]
+                try: results[idx] = fut.result()
+                except Exception: results[idx] = ""
+    except Exception:
+        pass
+    return [r for r in results if r]
 
 def _extract_message_image(m):
     if m is None: return ""
@@ -2266,7 +2381,7 @@ def _validate_image_url(url: str, min_bytes: int = None) -> tuple:
         if min_bytes is None:
             try: min_bytes = int(SETTINGS.get("lot_image_min_bytes", 5000))
             except Exception: min_bytes = 5000
-        r = requests.head(url, timeout=(5, 10), allow_redirects=True,
+        r = requests.head(url, timeout=(4, 6), allow_redirects=True,
                          headers={"User-Agent": _HTTP_UA, "Referer": "https://funpay.com/",
                                   "Accept": "image/*,*/*;q=0.8"})
         ct = (r.headers.get("Content-Type") or "").lower().split(";")[0].strip()
@@ -2505,6 +2620,10 @@ def _vision_extract_lot_details(image_urls):
         debug["error"] = "api url/key/model missing"
         with LOCK: LOT_VISION_DEBUG["_last"] = debug
         return ""
+    if not _is_vision_model(model):
+        debug["error"] = "model is not vision capable"
+        with LOCK: LOT_VISION_DEBUG["_last"] = debug
+        return ""
     try: max_imgs = max(1, min(10, int(SETTINGS.get("lot_vision_max_images", 5))))
     except Exception: max_imgs = 5
     try: max_tokens = max(600, min(2500, int(SETTINGS.get("lot_vision_max_tokens", 1400))))
@@ -2527,16 +2646,18 @@ def _vision_extract_lot_details(image_urls):
             while attempt < (2 if retry_enabled else 1):
                 attempt += 1
                 try:
+                    payload = {"model": model,
+                               "messages": [{"role": "user", "content": [
+                                   {"type": "text", "text": _VISION_LOT_PROMPT},
+                                   {"type": "image_url", "image_url": {"url": du, "detail": "low"}}]}],
+                               "temperature": 0.0, "max_tokens": max_tokens, "stream": False}
                     r = requests.post(base + "/chat/completions",
-                        headers=_api_headers(key), json={"model": model,
-                              "messages": [{"role": "user", "content": [
-                                  {"type": "text", "text": _VISION_LOT_PROMPT},
-                                  {"type": "image_url", "image_url": {"url": du}}]}],
-                              "temperature": 0.0, "max_tokens": max_tokens, "stream": False},
+                        headers=_api_headers(key), json=payload,
                         timeout=(20, max(60, int(SETTINGS.get("ai_timeout", 120)))))
                     r.raise_for_status()
                     data = _safe_json(r, "lot_vision")
                     resp_text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+                    resp_text = _strip_think(resp_text)
                     if resp_text: break
                 except Exception as e:
                     scr["err"] = f"attempt{attempt}: {type(e).__name__}: {str(e)[:120]}"
@@ -2591,6 +2712,7 @@ def _vision_extract_lot_details(image_urls):
             r.raise_for_status()
             data = _safe_json(r, "lot_vision_merge")
             mt = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            mt = _strip_think(mt)
             if (mt and len(mt) > 80 and any(m in mt for m in ("🎮", "👤", "🎁", "💰"))
                     and not any(x in mt.lower() for x in refused_markers)):
                 merged = mt[:2500]; debug["merge_applied"] = True
@@ -2673,6 +2795,9 @@ def _vision_probe_api():
     key = _api_key_resolved()
     model = str(SETTINGS.get("api_model") or "").strip()
     if not base or not key or not model: return "❌ Не заданы API URL / key / model."
+    if not _is_vision_model(model):
+        return (f"⚠️ Модель <code>{utils.escape(model)}</code> по имени похожа на <b>текстовую</b>.\n"
+                "Vision не сработает. Возьмите gpt-4o, gemini-2.x, claude-3.5+.")
     test_png_b64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
     try:
         r = requests.post(base + "/chat/completions",
@@ -2680,7 +2805,7 @@ def _vision_probe_api():
             json={"model": model,
                   "messages": [{"role": "user", "content": [
                       {"type": "text", "text": "Ответь одним словом: что видишь?"},
-                      {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_png_b64}"}}]}],
+                      {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_png_b64}", "detail": "low"}}]}],
                   "temperature": 0.0, "max_tokens": 30, "stream": False},
             timeout=(15, 60))
         if r.status_code >= 400:
@@ -2688,7 +2813,7 @@ def _vision_probe_api():
             except Exception: body = ""
             return _explain_http_error(r.status_code, body)
         data = _safe_json(r, "vision_probe")
-        ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        ans = _strip_think(str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip())
         if not ans:
             return ("❌ Модель вернула пустой ответ на картинку.\n\n"
                     "Скорее всего модель НЕ vision. Возьми vision-модель.")
@@ -3002,7 +3127,6 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     if notify: notify_seller(c, m, buyer_text or "", out, reason=reason, header=notify_header)
     return True
 
-# Отключено: шаблоны общения. Оставлено для ручного включения при желании.
 def handle_deterministic(c, m, text):
     """Зарезервировано. Не вызывается из handle_message (шаблоны общения отключены)."""
     return False
@@ -3116,15 +3240,31 @@ def sync_lots(c, enrich=True):
         for lid in list(cache):
             if STOP.is_set(): break
             _enrich(c, lid)
-            time.sleep(1.0)
+            time.sleep(0.6)
     return len(cache)
 
 def lot_worker(c):
+    """Обновление лотов с экспоненциальным backoff при сбоях."""
+    backoff = 60
     sync_lots(c, enrich=True)
-    while not STOP.wait(max(60, SETTINGS["lot_refresh_minutes"] * 60)):
-        if is_enabled(c):
-            try: sync_lots(c, enrich=True)
-            except Exception: logger.exception("lot_worker")
+    while not STOP.is_set():
+        try:
+            interval = max(60, SETTINGS["lot_refresh_minutes"] * 60)
+        except Exception:
+            interval = 1800
+        if STOP.wait(interval):
+            break
+        if not is_enabled(c):
+            backoff = 60
+            continue
+        try:
+            cnt = sync_lots(c, enrich=True)
+            if cnt > 0:
+                backoff = 60
+        except Exception as e:
+            logger.warning("lot_worker: sync упал (%s). Пауза %d сек.", type(e).__name__, backoff)
+            if STOP.wait(backoff): break
+            backoff = min(3600, backoff * 2)
 
 def add_history(chat_id, role, text):
     t = str(text or "").strip()[:3000]
@@ -3475,17 +3615,117 @@ def _api_headers(key: str) -> dict[str, str]:
         headers["X-Title"] = f"KiriillBR AI {VERSION}"
     return headers
 
-def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens):
-    r = requests.post(base + "/chat/completions",
-        headers=_api_headers(key),
-        json={"model": model, "messages": msgs, "temperature": temperature,
-              "max_tokens": max_tokens, "stream": False},
-        timeout=(10, max(30, int(timeout))))
-    r.raise_for_status()
-    data = _safe_json(r, "ask_ai")
-    text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-    if not text: raise RuntimeError("AI вернул пустой ответ.")
-    return text
+def _build_request_payload(model, msgs, temperature, max_tokens, base, preset):
+    """Собирает JSON-тело запроса с учётом особенностей провайдера."""
+    payload = {"model": model, "temperature": temperature, "stream": False}
+    # max_tokens / max_completion_tokens
+    m_low = str(model or "").lower()
+    if (m_low.startswith("o1") or m_low.startswith("o3") or m_low.startswith("gpt-5")
+            or "o1-" in m_low or "o3-" in m_low):
+        payload["max_completion_tokens"] = max_tokens
+    else:
+        payload["max_tokens"] = max_tokens
+    # system top-level для Anthropic-подобных
+    if _uses_system_top_level(base, model, preset):
+        system_parts = []
+        clean_msgs = []
+        for msg in msgs:
+            if msg.get("role") == "system":
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            system_parts.append(str(part.get("text") or ""))
+                else:
+                    system_parts.append(str(content or ""))
+            else:
+                clean_msgs.append(msg)
+        if system_parts:
+            payload["system"] = "\n\n".join(p for p in system_parts if p).strip()
+        payload["messages"] = _merge_consecutive_roles(clean_msgs)
+    else:
+        payload["messages"] = _merge_consecutive_roles(msgs)
+    return payload
+
+def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens, allow_retry=True):
+    """Вызов chat/completions с обработкой ошибок, чтением тела, retry."""
+    if not _is_vision_model(model):
+        msgs = _strip_images_from_msgs(msgs)
+    preset = _current_preset()
+    attempts = max(1, int(SETTINGS.get("http_retry_attempts", 2) or 2)) if allow_retry else 1
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        try:
+            payload = _build_request_payload(model, msgs, temperature, max_tokens, base, preset)
+            r = requests.post(base + "/chat/completions",
+                headers=_api_headers(key), json=payload,
+                timeout=(10, max(30, int(timeout))))
+            if r.status_code >= 400:
+                try: body_text = r.text[:600].replace("\n", " ")
+                except Exception: body_text = ""
+                # HTTP 429 / 5xx — retry
+                if r.status_code in (429, 500, 502, 503, 504) and attempt < attempts:
+                    last_err = f"HTTP {r.status_code}: {body_text[:200]}"
+                    time.sleep(1.5 * attempt)
+                    continue
+                # 400 с vision — убираем картинки и пробуем снова
+                if (r.status_code == 400 and attempt < attempts
+                        and any(x in body_text.lower() for x in
+                                ("vision", "image", "multimodal", "does not support", "unsupported"))):
+                    msgs = _strip_images_from_msgs(msgs)
+                    last_err = f"HTTP 400 (vision): {body_text[:200]}"
+                    continue
+                raise requests.HTTPError(f"HTTP {r.status_code}: {body_text[:400]}", response=r)
+            data = _safe_json(r, "ask_ai")
+            text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            text = _strip_think(text)
+            if not text:
+                # Пустой ответ — retry с fallback-моделью
+                if attempt < attempts:
+                    last_err = "AI вернул пустой ответ"
+                    time.sleep(1.0)
+                    continue
+                # Последняя попытка — fallback-модель
+                fb = _try_fallback_model(base, key, msgs, timeout, temperature, max_tokens)
+                if fb:
+                    return fb
+                raise RuntimeError("AI вернул пустой ответ.")
+            return text
+        except requests.HTTPError:
+            raise
+        except requests.RequestException as e:
+            last_err = f"{type(e).__name__}: {str(e)[:200]}"
+            if attempt < attempts:
+                time.sleep(1.2 * attempt)
+                continue
+            raise RuntimeError(last_err)
+    if last_err:
+        raise RuntimeError(last_err)
+    raise RuntimeError("Не удалось получить ответ от API.")
+
+def _try_fallback_model(base, key, msgs, timeout, temperature, max_tokens):
+    """Пробует бесплатную fallback-модель из FREE_API_OPTIONS (если совпадает провайдер)."""
+    if not SETTINGS.get("fallback_model_enabled", True): return ""
+    preset = _current_preset()
+    for opt_key, option in FREE_API_OPTIONS.items():
+        if option["provider"] != preset:
+            continue
+        try:
+            payload = _build_request_payload(option["model"], msgs, temperature, max_tokens, base, preset)
+            r = requests.post(base + "/chat/completions",
+                headers=_api_headers(key), json=payload,
+                timeout=(10, max(30, int(timeout))))
+            if r.status_code >= 400: continue
+            data = r.json()
+            text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            text = _strip_think(text)
+            if text:
+                logger.info("Fallback-модель %s сработала", option["model"])
+                return text
+        except Exception as e:
+            logger.debug("fallback model %s fail: %s", option["model"], e)
+            continue
+    return ""
 
 def ask_ai(m, buyer_text, lot):
     base = _normalize_openai_base_url(str(SETTINGS.get("api_url") or ""))
@@ -3510,30 +3750,33 @@ def ask_ai(m, buyer_text, lot):
         if not lot_image_urls: lot_image_urls = list(lot.get("image_urls") or [])
     lot_image_data_urls = []
     if lot_image_urls:
-        for u in lot_image_urls[:3]:
-            try:
-                du = _extract_url_as_data_url(u)
-                if du: lot_image_data_urls.append(du)
-            except Exception: continue
+        lot_image_data_urls = _parallel_data_urls(lot_image_urls[:3], max_workers=3)
     effective = buyer_text_clean
     msgs = [{"role": "system", "content": _sys_prompt(lot, full_chat, chat_id, lang_hint, tone_hint_text)}]
     msgs += history
+    vision_ok = _is_vision_model(model)
     lot_imgs_ok = [du for du in lot_image_data_urls[:3] if du]
-    if image_data_url and lot_imgs_ok:
-        head_content = [{"type": "text", "text": "Контекст: скриншоты лота (НЕ фото покупателя)."}]
-        for du in lot_imgs_ok: head_content.append({"type": "image_url", "image_url": {"url": du}})
-        msgs.append({"role": "user", "content": head_content})
+    if image_data_url and lot_imgs_ok and vision_ok:
+        combined = [{"type": "text", "text": "Контекст: скриншоты лота (НЕ фото покупателя)."}]
+        for du in lot_imgs_ok:
+            combined.append({"type": "image_url", "image_url": {"url": du, "detail": "low"}})
+        combined.append({"type": "text", "text": effective})
+        combined.append({"type": "image_url", "image_url": {"url": image_data_url, "detail": "auto"}})
+        msgs.append({"role": "user", "content": combined})
+    elif image_data_url and vision_ok:
         msgs.append({"role": "user", "content": [
             {"type": "text", "text": effective},
-            {"type": "image_url", "image_url": {"url": image_data_url}}]})
-    elif image_data_url:
-        msgs.append({"role": "user", "content": [
-            {"type": "text", "text": effective},
-            {"type": "image_url", "image_url": {"url": image_data_url}}]})
-    elif lot_imgs_ok:
+            {"type": "image_url", "image_url": {"url": image_data_url, "detail": "auto"}}]})
+    elif image_data_url and not vision_ok:
+        # Модель без vision — подменяем картинку текстовым описанием
+        note = (f"\n\n[Покупатель прислал фото, но модель {model} не поддерживает изображения. "
+                "Вежливо скажи, что лучше описать текстом.]")
+        msgs.append({"role": "user", "content": effective + note})
+    elif lot_imgs_ok and vision_ok:
         content = [{"type": "text",
                     "text": (effective + "\n\n(Ниже — скриншоты ЛОТА для справки. Отвечай ТОЛЬКО на заданный вопрос.)")}]
-        for du in lot_imgs_ok: content.append({"type": "image_url", "image_url": {"url": du}})
+        for du in lot_imgs_ok:
+            content.append({"type": "image_url", "image_url": {"url": du, "detail": "low"}})
         msgs.append({"role": "user", "content": content})
     else:
         msgs.append({"role": "user", "content": effective})
@@ -3595,7 +3838,7 @@ def ask_ai(m, buyer_text, lot):
     return _RE_SEARCH_MARKER.sub("", first).strip() or first
 
 def _offline_lot_fallback(text, lot):
-    """Резерв на случай падения API. Никаких шаблонов общения — только заглушка."""
+    """Резервная заглушка, если API недоступен."""
     return "Секунду, проверю 🙂"
 
 def handle_message(c, m, text):
@@ -3628,7 +3871,6 @@ def handle_message(c, m, text):
         if is_offtopic(text):
             _instant_blacklist(c, m, "Оффтоп (не по теме товара)", text)
             _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    # handle_deterministic отключён — шаблоны общения не применяются.
     lot = _get_lot(c, m, text)
     if _message_has_photo(m) and not str(text or "").strip():
         if not _extract_message_image(m):
@@ -4080,11 +4322,13 @@ def init_telegram(cardinal):
             f"🚫 Без обещаний: <b>{utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}</b>\n"
             f"🔔 О неувер.: <b>{utils.bool_to_text(SETTINGS.get('confidence_notify', True))}</b>\n"
             f"🧹 Метки модерации: <b>{utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}</b>\n"
+            f"🧠 Strip &lt;think&gt;: <b>{utils.bool_to_text(SETTINGS.get('strip_think_tags', True))}</b>\n"
             f"🛡 HTML-safe: <b>{utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}</b> · "
             f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
             f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
             f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
-            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
+            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>\n"
+            f"⚡ Fallback-модель: <b>{utils.bool_to_text(SETTINGS.get('fallback_model_enabled', True))}</b>")
         kb = K(row_width=2)
         kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
         kb.row(B("🏪 Продавец", callback_data=f"{CB}:seller"),
@@ -4094,12 +4338,14 @@ def init_telegram(cardinal):
         kb.row(B(f"🚫 Обещ. {utils.bool_to_text(SETTINGS.get('no_unconfirmed_promises', True))}", callback_data=f"{CB}:nopromise"),
                B(f"🔔 Увер. {utils.bool_to_text(SETTINGS.get('confidence_notify', True))}", callback_data=f"{CB}:confnotify"))
         kb.row(B(f"🧹 Метки {utils.bool_to_text(SETTINGS.get('strip_safety_junk', True))}", callback_data=f"{CB}:tog:safetyclean"),
-               B(f"🛡 HTML {utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}", callback_data=f"{CB}:tog:htmlsafe"))
-        kb.row(B(f"🔧 Balance {utils.bool_to_text(SETTINGS.get('balance_html_output', True))}", callback_data=f"{CB}:tog:htmlbalance"),
-               B(f"🎭 Анти-leet {utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}", callback_data=f"{CB}:tog:deleet"))
-        kb.row(B(f"🔬 Pure {utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}", callback_data=f"{CB}:tog:pureleat"),
-               B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"))
-        kb.row(B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"),
+               B(f"🧠 Think {utils.bool_to_text(SETTINGS.get('strip_think_tags', True))}", callback_data=f"{CB}:tog:thinktags"))
+        kb.row(B(f"🛡 HTML {utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}", callback_data=f"{CB}:tog:htmlsafe"),
+               B(f"🔧 Balance {utils.bool_to_text(SETTINGS.get('balance_html_output', True))}", callback_data=f"{CB}:tog:htmlbalance"))
+        kb.row(B(f"🎭 Анти-leet {utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}", callback_data=f"{CB}:tog:deleet"),
+               B(f"🔬 Pure {utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}", callback_data=f"{CB}:tog:pureleat"))
+        kb.row(B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"),
+               B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"))
+        kb.row(B(f"⚡ Fallback {utils.bool_to_text(SETTINGS.get('fallback_model_enabled', True))}", callback_data=f"{CB}:tog:fallback"),
                B("✏️ Текст вод. знака", callback_data=f"{CB}:wmtext"))
         kb.add(B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
@@ -4271,6 +4517,8 @@ def init_telegram(cardinal):
         SETTINGS["confidence_notify"] = not bool(SETTINGS.get("confidence_notify", True)); save_config(); show_replies(call)
     def toggle_safetyclean(call):
         SETTINGS["strip_safety_junk"] = not bool(SETTINGS.get("strip_safety_junk", True)); save_config(); show_replies(call)
+    def toggle_thinktags(call):
+        SETTINGS["strip_think_tags"] = not bool(SETTINGS.get("strip_think_tags", True)); save_config(); show_replies(call)
     def toggle_htmlsafe(call):
         SETTINGS["sanitize_html_output"] = not bool(SETTINGS.get("sanitize_html_output", True)); save_config(); show_replies(call)
     def toggle_htmlbalance(call):
@@ -4321,7 +4569,6 @@ def init_telegram(cardinal):
     def toggle_visionverbose(call):
         SETTINGS["lot_vision_verbose"] = not bool(SETTINGS.get("lot_vision_verbose", True))
         save_config(); show_lots_settings(call)
-
     def toggle_visionretry(call):
         SETTINGS["lot_vision_retry"] = not bool(SETTINGS.get("lot_vision_retry", True))
         save_config()
@@ -4333,6 +4580,9 @@ def init_telegram(cardinal):
         except Exception:
             try: show_lots_settings(call)
             except Exception: pass
+    def toggle_fallback(call):
+        SETTINGS["fallback_model_enabled"] = not bool(SETTINGS.get("fallback_model_enabled", True))
+        save_config(); show_replies(call)
 
     def cycle_visionimgs(call):
         cur = int(SETTINGS.get("lot_vision_max_images", 5))
@@ -4752,6 +5002,8 @@ def init_telegram(cardinal):
         model = str(SETTINGS.get("api_model") or "").strip()
         if not base or not key or not model:
             bot.reply_to(m, "❌ Заполните API URL, ключ, модель."); return
+        if not _is_vision_model(model):
+            bot.reply_to(m, f"⚠️ Модель <code>{utils.escape(model)}</code> похожа на текстовую, vision может не работать.")
         b64 = base64.b64encode(fb).decode("ascii")
         data_url = f"data:image/jpeg;base64,{b64}"
         try:
@@ -4759,12 +5011,12 @@ def init_telegram(cardinal):
                 headers=_api_headers(key),
                 json={"model": model, "messages": [{"role": "user", "content": [
                     {"type": "text", "text": _VISION_PROMPT},
-                    {"type": "image_url", "image_url": {"url": data_url}}]}],
+                    {"type": "image_url", "image_url": {"url": data_url, "detail": "auto"}}]}],
                     "temperature": 0.2, "max_tokens": 800},
                 timeout=(10, max(30, int(SETTINGS.get("ai_timeout", 120) or 120))))
             r.raise_for_status()
             data = _safe_json(r, "test_photo")
-            ans = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip() or "(пусто)"
+            ans = _strip_think(str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()) or "(пусто)"
             bot.reply_to(m, f"🖼 <b>Ответ AI:</b>\n\n{utils.escape(ans[:3500])}",
                 reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
         except Exception as e:
@@ -5295,6 +5547,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(toggle_nopromise, lambda c: c.data == f"{CB}:nopromise")
     tg.cbq_handler(toggle_confnotify, lambda c: c.data == f"{CB}:confnotify")
     tg.cbq_handler(toggle_safetyclean, lambda c: c.data == f"{CB}:tog:safetyclean")
+    tg.cbq_handler(toggle_thinktags, lambda c: c.data == f"{CB}:tog:thinktags")
     tg.cbq_handler(toggle_htmlsafe, lambda c: c.data == f"{CB}:tog:htmlsafe")
     tg.cbq_handler(toggle_htmlbalance, lambda c: c.data == f"{CB}:tog:htmlbalance")
     tg.cbq_handler(toggle_deleet, lambda c: c.data == f"{CB}:tog:deleet")
@@ -5315,6 +5568,7 @@ def init_telegram(cardinal):
     tg.cbq_handler(toggle_visionmerge, lambda c: c.data == f"{CB}:tog:visionmerge")
     tg.cbq_handler(toggle_visionretry, lambda c: c.data == f"{CB}:tog:visionretry")
     tg.cbq_handler(toggle_visionverbose, lambda c: c.data == f"{CB}:tog:visionverbose")
+    tg.cbq_handler(toggle_fallback, lambda c: c.data == f"{CB}:tog:fallback")
     tg.cbq_handler(cycle_visionimgs, lambda c: c.data == f"{CB}:cycle:visionimgs")
     tg.cbq_handler(cycle_visiontokens, lambda c: c.data == f"{CB}:cycle:visiontokens")
     tg.cbq_handler(vision_probe_cb, lambda c: c.data == f"{CB}:vision_probe")
@@ -5443,6 +5697,8 @@ def on_delete(c, call=None):
     except Exception: pass
     STOP.set()
     try: POOL.shutdown(wait=False, cancel_futures=True)
+    except Exception: pass
+    try: IMG_POOL.shutdown(wait=False, cancel_futures=True)
     except Exception: pass
 
 
