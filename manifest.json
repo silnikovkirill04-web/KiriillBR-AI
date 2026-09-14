@@ -3,7 +3,7 @@
   "uuid": "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214",
   "version": "13.3.4",
   "download_url": "https://raw.githubusercontent.com/silnikovkirill04-web/KiriillBR-AI/main/plugin.py",
-  "sha256": "aed8da83c5185e4b518d2220615cf26d9bee42cc6f5acd85ab2810e9b84f3afa",
+  "sha256": "a281a87548b8b6eac5273ceaabcbbf615da91e234b272f0daa1682726646b8e2",
   "mandatory": true,
   "notes": "v13.3.3 — МУЛЬТИПРОВАЙДЕР: 14 AI-сервисов на выбор + быстрые free-модели\n\n🌐 ПРОВАЙДЕРЫ (все OpenAI-compatible):\n• OpenAI, OpenRouter, Groq, Google Gemini, DeepSeek\n• Together AI, Mistral, xAI Grok, Fireworks AI\n• Perplexity, Anyscale, DeepInfra, Cerebras, SambaNova\n• Свой URL (custom)\n\n🆓 FREE-МОДЕЛИ В ОДИН КЛИК:\n• OpenRouter · Free Router\n• Groq · GPT-OSS 20B / 120B\n• Gemini · 2.5 Flash / 2.0 Flash\nАвтоматически подставляются api_url, api_model и env:ENV_VAR для ключа.\n\n🎛 НОВОЕ МЕНЮ API:\n• 🏷 Провайдер — выбор из 14 сервисов\n• 🔄 /models — проверка доступа + список моделей\n• 📦 Список моделей — с пагинацией\n• 🆓 Free-модели — быстрая настройка бесплатных\n• 🧹 Удалить key — очистка\n\n🔑 ХРАНЕНИЕ КЛЮЧА:\n• Прямо в конфиге ИЛИ\n• Через env:OPENROUTER_API_KEY (переменные окружения)\n• Авто-детект пресета при вводе URL вручную\n\n🎯 СОХРАНЕНО ИЗ v8.1.1:\n• _get_viewing мульти-фоллбэк (interlocutor_id → author_id → chat.looking_link)\n• _offline_lot_fallback — ответ ценой лота при падении AI\n• Fallback-лот из кэша для вопросов о цене/наличии\n• Логирование HTTP-статуса и body при ошибке API\n• Тумблер 🎯 Fallback лот\n\n🚨 Обязательное обновление. После установки — перезапустить Cardinal."
 }
