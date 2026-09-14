@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "8.9.1"
+VERSION = "9.0.0"
 DESCRIPTION = "AI-помощник продавца FunPay. Vision, web-поиск, ЧС+WL, анти-leet, HTML-safe."
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -145,12 +145,12 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 69, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 68, "enabled": True, "setup_done": False,
     "api_url": "https://openrouter.ai/api/v1", "api_key": "", "api_model": "",
     "ai_timeout": 120, "temperature": 0.25, "num_predict": 300,
     "history_char_budget": 12000, "response_delay": 0.3,
     "system_prompt": DEFAULT_PROMPT, "seller_info": "",
-    "unknown_reply": "Какой лот вас интересует? Напишите название или ID 🙂",
+    "unknown_reply": "Уточните, пожалуйста, что именно нужно.",
     "lot_refresh_minutes": 30, "orders_refresh_sec": 30, "watermark": True,
     "watermark_text": "Помощник продавца  🛍( Искуственный интеллект 👾)",
     "seller_notify": True, "seller_notify_cooldown": 5,
@@ -190,7 +190,6 @@ DEFAULTS = {"version": 69, "enabled": True, "setup_done": False,
     "history_compress_old": True, "deleet_enabled": True,
     "sanitize_html_output": True, "balance_html_output": True,
     "deleet_pure_normalize": True,
-    "lot_fallback_enabled": True,
 }
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
@@ -443,18 +442,18 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 69:
-            SETTINGS.setdefault("lot_fallback_enabled", True)
-            if str(SETTINGS.get("unknown_reply") or "").startswith("Уточните, пожалуйста"):
-                SETTINGS["unknown_reply"] = DEFAULTS["unknown_reply"]
-            SETTINGS["version"] = 69
+        if cv < 68:
+            for _k in ("auto_fulfill_paid_orders", "auto_fulfill_delay_sec",
+                       "auto_fulfill_notify_seller", "manual_fulfill_notify"):
+                SETTINGS.pop(_k, None)
+            SETTINGS["version"] = 68
             save_config()
     except Exception: pass
 
@@ -2818,9 +2817,7 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     v = outbound_violation(out)
     if v and v != "empty": out = refusal(v); notify = False
     out = _strip_fake_order_action(out)
-    if not out or out.strip() in ("Уточните, пожалуйста, что именно нужно.",
-                                   "Уточните, что именно нужно."):
-        out = "Какой лот вас интересует? Напишите название или ID 🙂"
+    if not out: out = "Уточните, пожалуйста, что именно нужно."
     try:
         _chat_id = str(getattr(m, "chat_id", "") or "")
         if _chat_id and _RE_REFUND_WORD.search(out):
@@ -3040,66 +3037,16 @@ def _history_for_api(chat_id, exclude_last_user=""):
     return compressed
 
 def _get_viewing(c, m):
-    """Мульти-фоллбэк определения «что смотрит покупатель».
-
-    1) buyer_viewing прямо в объекте сообщения
-    2) get_buyer_viewing / get_user_viewing / get_viewing / get_viewing_by_user
-    3) chat.looking_link / looking_text (get_chat with_history=False)
-    """
     viewing = getattr(m, "buyer_viewing", None)
-    if viewing and getattr(viewing, "is_viewing_lot", False):
-        return viewing
-
-    buyer_id = (getattr(m, "interlocutor_id", None)
-                or getattr(m, "author_id", None)
-                or getattr(m, "interlocutor_username", None))
-    if not buyer_id:
-        return None
-
+    if viewing and getattr(viewing, "is_viewing_lot", False): return viewing
+    buyer_id = getattr(m, "interlocutor_id", None)
+    if not buyer_id: return None
     key = str(buyer_id); now = time.time()
     with LOCK: cached = VIEWING_CACHE.get(key)
-    if cached and now - cached[0] < 30:
-        return cached[1]
-
-    viewing = None
-    for method_name in ("get_buyer_viewing", "get_user_viewing", "get_viewing", "get_viewing_by_user"):
-        method = getattr(c.account, method_name, None)
-        if not callable(method):
-            continue
-        try:
-            v = method(buyer_id)
-            if v:
-                viewing = v
-                break
-        except Exception as e:
-            logger.debug("_get_viewing.%s(%s) failed: %s", method_name, buyer_id, e)
-            continue
-
-    if viewing is None:
-        try:
-            get_chat = getattr(c.account, "get_chat", None)
-            chat_id = getattr(m, "chat_id", None)
-            if callable(get_chat) and chat_id:
-                full = get_chat(chat_id, with_history=False)
-                link = getattr(full, "looking_link", None) or ""
-                text = getattr(full, "looking_text", None) or ""
-                if link or text:
-                    try:
-                        vv = BuyerViewing(0, link, text, None)
-                        if getattr(vv, "is_viewing_lot", False) or text:
-                            viewing = vv
-                    except Exception:
-                        viewing = None
-        except Exception as e:
-            logger.debug("_get_viewing chat.looking_link fallback failed: %s", e)
-
-    with LOCK:
-        VIEWING_CACHE[key] = (now, viewing)
-    if viewing is None:
-        logger.info("_get_viewing: покупатель %s сейчас НЕ смотрит лот (или API не отдал)", buyer_id)
-    else:
-        logger.info("_get_viewing: покупатель %s смотрит lot_id=%s",
-                    buyer_id, getattr(viewing, "lot_id", "?"))
+    if cached and now - cached[0] < 45: return cached[1]
+    try: viewing = c.account.get_buyer_viewing(buyer_id)
+    except Exception: viewing = None
+    with LOCK: VIEWING_CACHE[key] = (now, viewing)
     return viewing
 
 def _remember_chat_lot(chat_id, lot):
@@ -3123,11 +3070,8 @@ def _last_chat_lot(chat_id, ttl_seconds=1800):
     return None
 
 def _get_lot(c, m, text):
-    """Ищем подходящий лот с мульти-фоллбэком на «самый полный лот из кэша»."""
     n = norm(text)
     chat_key = str(getattr(m, "chat_id", "") or "")
-
-    # 1) Предыдущий лот этого чата
     prev = _last_chat_lot(chat_key, ttl_seconds=3600)
     if prev:
         ranked = find_lots(text, 3)
@@ -3137,8 +3081,6 @@ def _get_lot(c, m, text):
             if len(ranked) == 1 or score - second >= 0.05 or score >= 0.8:
                 _remember_chat_lot(chat_key, best); return best
         return prev
-
-    # 2) Совпадение по тексту
     ranked = find_lots(text, 3)
     if ranked:
         best, score = ranked[0]
@@ -3146,13 +3088,9 @@ def _get_lot(c, m, text):
             second = ranked[1][1] if len(ranked) > 1 else 0.0
             if len(ranked) == 1 or score - second >= 0.04 or score >= 0.8:
                 _remember_chat_lot(chat_key, best); return best
-
-    # 3) «этот/данный лот»
     if _RE_CONTEXT_LOT.search(n):
         prev2 = _last_chat_lot(chat_key)
         if prev2: return prev2
-
-    # 4) Что смотрит покупатель
     viewing = _get_viewing(c, m)
     if viewing and getattr(viewing, "is_viewing_lot", False):
         lid = str(getattr(viewing, "lot_id", ""))
@@ -3177,22 +3115,6 @@ def _get_lot(c, m, text):
                 "auto": False, "subcategory": "", "server": "", "extra_fields": {},
                 "payment_message": "", "image_urls": []}
             _remember_chat_lot(chat_key, synthetic); return synthetic
-
-    # 5) Fallback: покупатель спрашивает про цену/наличие —
-    # берём наиболее «полный» лот из кэша, чтобы AI мог ответить.
-    if SETTINGS.get("lot_fallback_enabled", True) and _RE_PURCHASE_TOPIC.search(n):
-        with LOCK: items = list(LOTS.values())
-        if items:
-            scored = sorted(items, key=lambda L: (
-                -int(bool(L.get("image_urls"))),
-                -int(bool(L.get("full_description"))),
-                -int(bool(L.get("payment_message"))),
-            ))
-            best = scored[0]
-            logger.info("_get_lot FALLBACK: '%s' → lot_id=%s (%s)",
-                        text[:60], best.get("id"), str(best.get("title") or "")[:40])
-            _remember_chat_lot(chat_key, best)
-            return best
     return None
 
 def _lot_prompt(lot):
@@ -3269,23 +3191,8 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
     seller = str(SETTINGS.get("seller_info") or "").strip()
     memory_note = ("Ты видишь ВСЮ историю чата. Отвечай ТОЛЬКО на последнее сообщение." if full_chat
                    else "Ты видишь последние сообщения чата.")
-    if lot:
-        viewing_note = "В блоке ТЕКУЩИЙ ТОВАР уже передан лот. Отвечай сразу по нему, не переспрашивая."
-    else:
-        with LOCK: items = list(LOTS.values())[:8]
-        if items:
-            lines = ["Активные лоты продавца (используй как подсказку, если покупатель не назвал лот):"]
-            for i, l in enumerate(items, 1):
-                t = str(l.get("title") or "—")[:80]
-                p = l.get("price"); cu = l.get("currency") or ""
-                lines.append(f"{i}. {t} — {p} {cu}".strip())
-            viewing_note = ("Точного лота нет. Если покупатель спрашивает про цену/наличие — выбери "
-                            "подходящий лот из списка ниже и ответь ЦЕНОЙ. Если непонятно — задай ОДИН "
-                            "короткий вопрос «Какой лот вас интересует?» (НЕ пиши «Уточните, что именно нужно»).\n\n"
-                            + "\n".join(lines))
-        else:
-            viewing_note = ("Точного лота нет. Спроси: «Какой лот вас интересует?» "
-                            "(НЕ пиши «Уточните, что именно нужно»).")
+    viewing_note = ("В блоке ТЕКУЩИЙ ТОВАР уже передан лот. Отвечай сразу по нему." if lot
+                    else "Точного лота нет — задай ОДИН короткий уточняющий вопрос.")
     extra = ""
     if lang_hint: extra += f"\nЯЗЫК ОТВЕТА:\n{lang_hint}\n"
     if tone_hint_text: extra += f"\nТОН ОТВЕТА:\n{tone_hint_text}\n"
@@ -3298,7 +3205,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "1) ОТВЕЧАЙ СТРОГО НА ЗАДАННЫЙ ВОПРОС. Не вываливай все факты подряд.\n"
         "   Спросили «какой уровень?» — только про уровень. «Что по цене?» — ЦЕНУ.\n"
         "2) ИСТОЧНИК ИСТИНЫ — только ТЕКУЩИЙ ТОВАР, ОПРЕДЕЛЕНО, ФАКТЫ СО СКРИНОВ, "
-        "ПОДКЛЮЧЁННЫЕ ТОВАРЫ, ИНСТРУКЦИЯ, СПИСОК АКТИВНЫХ ЛОТОВ.\n"
+        "ПОДКЛЮЧЁННЫЕ ТОВАРЫ, ИНСТРУКЦИЯ.\n"
         "3) НИКОГДА не придумывай числа — если нет в фактах, значит нет.\n"
         "4) «AK-47 Redline ×2» называй ИМЕННО так, не заменяй на «есть скины».\n"
         "5) На «какие предметы?» — перечисли ВСЕ с количествами.\n"
@@ -3309,9 +3216,7 @@ def _sys_prompt(lot, full_chat, chat_id="", lang_hint="", tone_hint_text="", sea
         "10) Если покупатель НЕ присылал фото и НЕ просил описать картинки — НИКОГДА не "
         "описывай изображения. На «что по цене?» отвечай ЦЕНОЙ.\n"
         "11) НИКОГДА не выводи технические метки: User Safety, Response Safety, "
-        "Content Policy, Moderation, Rating, Safe/Unsafe. Только ответ покупателю.\n"
-        "12) НИКОГДА не отвечай «Уточните, пожалуйста, что именно нужно». Если непонятно — "
-        "спроси конкретно: «Какой лот вас интересует?» или «Вас интересует цена или наличие?».\n")
+        "Content Policy, Moderation, Rating, Safe/Unsafe. Только ответ покупателю.\n")
     status_hint = _chat_status_hint(chat_id)
     role_block = _role_block(chat_id, lot)
     lot_instr = ""
@@ -3441,7 +3346,7 @@ def ask_ai(m, buyer_text, lot):
         if image_data_url:
             first = "Не могу разобрать, что на фото. Опишите текстом, что нужно."
         else:
-            first = _offline_lot_fallback(buyer_text_clean, lot)
+            first = str(SETTINGS.get("unknown_reply", "Уточните, пожалуйста, что именно нужно."))
 
     if SETTINGS.get("web_search_enabled", True):
         msearch = _RE_SEARCH_MARKER.search(first)
@@ -3480,44 +3385,6 @@ def ask_ai(m, buyer_text, lot):
                 except Exception: pass
             return _RE_SEARCH_MARKER.sub("", first).strip() or first
     return _RE_SEARCH_MARKER.sub("", first).strip() or first
-
-def _offline_lot_fallback(text, lot):
-    """Fallback-ответ из данных лота, когда AI недоступен или вернул пустое."""
-    n = norm(text)
-    if not lot:
-        return str(SETTINGS.get("unknown_reply")
-                   or "Какой лот вас интересует? Напишите название или ID 🙂")
-
-    title = str(lot.get("title") or lot.get("description") or "этот товар").strip()
-    price = lot.get("price")
-    currency = str(lot.get("currency") or "").strip()
-    amount = lot.get("amount")
-
-    if re.search(r"\bцен|стоит|стоимость|почем|сколько\s+стоит|сколько\s+стоят", n):
-        if price is not None:
-            return f"Цена лота «{title}» — {price} {currency}".strip() + "."
-        return f"Для лота «{title}» цена не указана."
-
-    if re.search(r"\bналич|\bесть\b|доступ|остал|количеств|сколько\s+штук", n):
-        if amount is None:
-            return f"Лот «{title}» доступен. Можете оформлять ✅"
-        try:
-            amt = float(amount)
-            if amt > 0:
-                return f"Да, товар в наличии — {amt:g} шт. Можете оформлять ✅"
-            return f"Сейчас товар «{title}» закончился."
-        except Exception:
-            return f"Лот «{title}» доступен. Можете оформлять ✅"
-
-    if re.search(r"автовыдач|авто\s*выдач|сразу\s+придет|сразу\s+получу|моментальн", n):
-        if lot.get("auto"):
-            return f"Да, на лоте «{title}» включена автовыдача — данные придут автоматически после оплаты ⚡"
-        return f"Автовыдача на лоте «{title}» не указана."
-
-    parts = [f"Лот «{title}»"]
-    if price is not None:
-        parts.append(f"Цена: {price} {currency}".strip())
-    return ". ".join(parts) + "."
 
 def handle_message(c, m, text):
     wl = is_whitelisted(_extract_nick_from_message(m),
@@ -3572,23 +3439,10 @@ def handle_message(c, m, text):
     try:
         answer = ask_ai(m, text, lot)
     except Exception as e:
-        err_text = f"{type(e).__name__}: {e}"
-        resp = getattr(e, "response", None)
-        if resp is not None:
-            try:
-                body = resp.text[:600].replace("\n", " ")
-            except Exception:
-                body = ""
-            err_text = f"HTTP {resp.status_code} · {err_text} · body={body!r}"
-        logger.error("AI fail: %s", err_text)
-        if _message_has_photo(m) and not (text or "").strip():
-            _say(c, m, "📸 Не удалось обработать фото. Отправьте ещё раз или напишите текстом.")
-        else:
-            fallback = _offline_lot_fallback(text, lot)
-            _say(c, m, fallback, notify=True,
-                 notify_header="🆘 <b>AI-провайдер не ответил</b>",
-                 reason=f"API: {err_text[:200]}", buyer_text=text)
-        return
+        logger.warning("AI fail: %s: %s", type(e).__name__, e)
+        _say(c, m, str(SETTINGS["unknown_reply"]), notify=True,
+            notify_header="🆘 <b>AI-провайдер не ответил</b>",
+            reason="API недоступен", buyer_text=text); return
     if _is_forbidden_photo_response(answer, text):
         if not wl: _instant_blacklist(c, m, "Запрещённое фото или отказ AI от описания", answer)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
@@ -3816,8 +3670,7 @@ def init_telegram(cardinal):
             f"🔧 Balance: <b>{utils.bool_to_text(SETTINGS.get('balance_html_output', True))}</b>\n"
             f"🎭 Анти-leet: <b>{utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}</b> · "
             f"🔬 Pure-норм: <b>{utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}</b>\n"
-            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>\n"
-            f"🎯 Fallback лот: <b>{utils.bool_to_text(SETTINGS.get('lot_fallback_enabled', True))}</b>")
+            f"🔍 Web: <b>{utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}</b> · <b>{SETTINGS.get('web_search_max_results', 5)}</b>")
         kb = K(row_width=2)
         kb.add(B("📝 Редактировать промпт", callback_data=f"{CB}:prompt"))
         kb.row(B("🏪 Продавец", callback_data=f"{CB}:seller"),
@@ -3834,8 +3687,7 @@ def init_telegram(cardinal):
                B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"))
         kb.row(B(f"🔢 {SETTINGS.get('web_search_max_results', 5)}", callback_data=f"{CB}:cycle:webres"),
                B("✏️ Текст вод. знака", callback_data=f"{CB}:wmtext"))
-        kb.row(B(f"🎯 Fallback лот {utils.bool_to_text(SETTINGS.get('lot_fallback_enabled', True))}", callback_data=f"{CB}:tog:fallback"),
-               B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
+        kb.add(B("🎛 Память и контекст", callback_data=f"{CB}:m:memory"))
         kb.add(B("◀️ В меню", callback_data=f"{CB}:main"))
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=kb)
@@ -4085,9 +3937,6 @@ def init_telegram(cardinal):
         cur = int(SETTINGS.get("lot_image_min_bytes", 5000))
         SETTINGS["lot_image_min_bytes"] = {1000: 5000, 5000: 10000, 10000: 20000, 20000: 1000}.get(cur, 5000)
         save_config(); show_lots_settings(call)
-    def toggle_fallback(call):
-        SETTINGS["lot_fallback_enabled"] = not bool(SETTINGS.get("lot_fallback_enabled", True))
-        save_config(); show_replies(call)
 
     def show_whitelist(call):
         with LOCK: raw = list(SETTINGS.get("whitelist") or [])
@@ -4990,7 +4839,6 @@ def init_telegram(cardinal):
     tg.cbq_handler(cycle_webres, lambda c: c.data == f"{CB}:cycle:webres")
     tg.cbq_handler(toggle_headimg, lambda c: c.data == f"{CB}:tog:headimg")
     tg.cbq_handler(cycle_minbytes, lambda c: c.data == f"{CB}:cycle:minbytes")
-    tg.cbq_handler(toggle_fallback, lambda c: c.data == f"{CB}:tog:fallback")
     tg.cbq_handler(ask_thank_text, lambda c: c.data == f"{CB}:thanktext")
     tg.cbq_handler(ask_survey_text, lambda c: c.data == f"{CB}:surveytext")
     tg.cbq_handler(reset_statuses, lambda c: c.data == f"{CB}:resetstatus")
