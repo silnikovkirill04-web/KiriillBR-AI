@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "13.5.0"
+VERSION = "13.6.0"
 DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (35+ эндпоинтов), Vision, web-поиск, ЧС+WL.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -232,7 +232,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 78, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 79, "enabled": True, "setup_done": False,
     "api_provider": "openai_compatible",
     "api_preset": "openrouter",
     "api_url": "https://openrouter.ai/api/v1",
@@ -318,11 +318,11 @@ _HISTORY_HARD_CAP = 200
 _ORDER_DEDUP_TTL = 24 * 3600
 _ORDER_CLOSED_TTL = 7 * 86400
 _SPAM_WINDOW = 30 * 60
-_SPAM_LIMIT = 3
-_SPAM_SIMILAR_LIMIT = 4
+_SPAM_LIMIT = 1
+_SPAM_SIMILAR_LIMIT = 1
 _PHOTO_ASK_WINDOW = 30 * 60
-_PHOTO_ASK_LIMIT = 2
-_PHOTO_SENT_LIMIT = 4
+_PHOTO_ASK_LIMIT = 1
+_PHOTO_SENT_LIMIT = 1
 _ORDER_PRIO = {"paid": 0, "confirmed": 1, "refunded": 2}
 _STATUS_RU = {"paid": "оплачен, ждём выдачу",
     "confirmed": "закрыт и подтверждён покупателем",
@@ -437,13 +437,18 @@ _RE_INDECENT = re.compile(
     r"\bиди\s+на\b|\bпош[её]л\s+на\b|\bиди\s+ты\b|\bна\s+хуй\b|\bнах\s+ты\b)", re.I)
 
 _RE_FORBIDDEN_PHOTO = re.compile(
-    r"(?:\[\[(?:NSFW|SHOCK|SCAT|TRASH|TEXT_NSFW|ANATOMY_NSFW)\]\]|"
+    r"(?:\[\[(?:NSFW|SHOCK|SCAT|TRASH|TEXT_NSFW|ANATOMY_NSFW|CP|GORE|SNUFF|SELFHARM|DRUGS)\]\]|"
     r"\b18\s*\+|\bпорно\w*|\bэротик\w*|\bнагота\b|\bобнаж[её]нн\w*|"
     r"\bгенитал\w*|\bвагин\w*|\bпенис\w*|\bполов\w*\s+орган\w*|\bинтим\w*|"
-    r"\bрасчлен[её]нк\w*|\bтруп\w*|\bмертв[оы]\w*\s+тел\w*|"
+    r"\bрасчлен[её]нк\w*|\bтруп\w*|\bмертв[оы]\w*\s+тел\w*|\bкров\w*|\bкишк\w*|"
     r"\bкал\b|\bкакашк\w*|\bговн\w*|\bфекали\w*|\bэкскремент\w*|\bиспражнени\w*|\bнавоз\w*|"
     r"\bтужит\w*|\bтужащ\w*|\bтужил\w*|\bрвот\w*|\bблевот\w*|"
     r"\bизвращ\w*|\bвульгарн\w*|\bнепристойн\w*|"
+    r"\bпедофил\w*|\bпедо\b|\bлоли\w*|\bлоликон\w*|\bшот\w*|\bреб[её]нок\s+без\s+одежд|"
+    r"\bдетск\w*\s+(?:порн|нагот|тел)|"
+    r"\bзоофил\w*|\bзоо\b|\bскотолож\w*|\bжесток\w*\s+обращени\w*\s+с\s+животн\w*|"
+    r"\bсуицид\w*|\bсамоубийств\w*|\bпорез\w*|\bсамоповреждени\w*|\bселфхарм\w*|\bselfharm\w*|"
+    r"\bнаркотик\w*|\bкокаин\w*|\bгероин\w*|\bмефедрон\w*|\bспайс\w*|\bзакладк\w*|"
     r"\bнапомина\w*\s+(?:по\s+форме\s+)?(?:женск|мужск|полов|вагин|влагалищ|пенис|член)|"
     r"\bпохож\w*\s+на\s+(?:женск|мужск|полов|вагин|пенис|член|генитал)|"
     r"\bсходств\w*\s+с\s+(?:женск|мужск|полов|вагин|пенис|член|генитал)|"
@@ -531,7 +536,6 @@ _NO_VISION_MARKERS = (
 )
 
 def _is_vision_model(model: str) -> bool:
-    """Грубая эвристика: поддерживает ли модель изображения."""
     m = str(model or "").lower()
     if not m: return False
     if any(x in m for x in _NO_VISION_MARKERS): return False
@@ -550,7 +554,6 @@ _GOOGLE_HINT = re.compile(r"gemini|google", re.I)
 _DEEPSEEK_HINT = re.compile(r"deepseek", re.I)
 
 def _uses_system_top_level(base: str, model: str, preset: str) -> bool:
-    """Anthropic-подобные API требуют system на верхнем уровне."""
     if preset.startswith("gemini") or preset.startswith("qwen") or preset.startswith("zhipu"):
         return False
     if _ANTHROPIC_HINT.search(model or ""): return True
@@ -562,13 +565,11 @@ def _strip_think(text: str) -> str:
     if not SETTINGS.get("strip_think_tags", True): return text
     s = str(text)
     s = _RE_THINK_TAG.sub("", s)
-    # Незакрытый <think> — отрезаем всё от него до конца
     if "<think" in s.lower() and "</think" not in s.lower():
         s = _RE_THINK_OPEN.sub("", s)
     return s.strip()
 
 def _merge_consecutive_roles(msgs: list) -> list:
-    """Склеивает подряд идущие сообщения с одинаковой ролью."""
     if not msgs: return msgs
     merged = []
     for msg in msgs:
@@ -578,11 +579,9 @@ def _merge_consecutive_roles(msgs: list) -> list:
             merged.append({"role": role, "content": content})
             continue
         prev = merged[-1]["content"]
-        # Оба строки
         if isinstance(prev, str) and isinstance(content, str):
             merged[-1]["content"] = prev + "\n\n" + content
             continue
-        # Один массив, другой строка
         if isinstance(prev, list) and isinstance(content, str):
             merged[-1]["content"] = list(prev) + [{"type": "text", "text": content}]
             continue
@@ -596,7 +595,6 @@ def _merge_consecutive_roles(msgs: list) -> list:
     return merged
 
 def _strip_images_from_msgs(msgs: list) -> list:
-    """Убирает image_url блоки для текстовых моделей."""
     out = []
     for msg in msgs:
         content = msg.get("content")
@@ -692,18 +690,18 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 78:
+        if cv < 79:
             SETTINGS.setdefault("fallback_model_enabled", True)
             SETTINGS.setdefault("strip_think_tags", True)
             SETTINGS.setdefault("http_retry_attempts", 2)
-            SETTINGS["version"] = 78
+            SETTINGS["version"] = 79
             save_config()
     except Exception: pass
 
@@ -984,9 +982,22 @@ def _bump_buyer_orders(nick):
     _save_buyer_counts(); return cnt
 
 def _extract_nick_from_message(m):
-    for attr in ("author", "username", "chat_name", "interlocutor_username", "buyer_username"):
-        v = getattr(m, attr, None)
-        if isinstance(v, str) and v.strip(): return v.strip()
+    """Возвращает идентификатор покупателя для ЧС. Никогда не пусто, если есть chat_id."""
+    if m is None: return ""
+    for attr in ("author", "username", "chat_name", "interlocutor_username",
+                 "buyer_username", "chat_title", "name", "nickname", "title"):
+        try:
+            v = getattr(m, attr, None)
+        except Exception:
+            v = None
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    try:
+        cid = getattr(m, "chat_id", None)
+        if cid:
+            return f"chat:{cid}"
+    except Exception:
+        pass
     return ""
 
 def _add_to_blacklist(nick, auto=False):
@@ -1136,7 +1147,7 @@ def _is_chat_goal_bad(chat_id):
                 or _RE_BAD_INTENT.search(pure_normalize(t))
                 or _RE_CODE_REQUEST.search(pure_normalize(t))):
             bad += 1
-    return bad >= 2
+    return bad >= 1
 
 def _is_jailbreak_attempt(text):
     s = str(text or "")
@@ -1163,11 +1174,20 @@ def _is_jailbreak_attempt(text):
 def _instant_blacklist(c, m, reason, extra=""):
     if not SETTINGS.get("auto_blacklist_enabled", True): return False
     nick = _extract_nick_from_message(m)
-    if not nick: return False
+    if not nick:
+        try:
+            cid = getattr(m, "chat_id", "")
+            nick = f"chat:{cid}" if cid else ""
+        except Exception:
+            nick = ""
+    if not nick:
+        logger.warning("_instant_blacklist: не удалось извлечь ник, reason=%s", reason)
+        return False
     _add_to_blacklist(nick, auto=True)
     try:
         chat_id = getattr(m, "chat_id", "")
-        safe_nick = _safe_for_notify(nick, 120); safe_extra = _safe_for_notify(str(extra or ""), 500)
+        safe_nick = _safe_for_notify(nick, 120)
+        safe_extra = _safe_for_notify(str(extra or ""), 500)
         header = "🚨 <b>МГНОВЕННАЯ БЛОКИРОВКА</b>"
         body = (f"👤 Ник: <b>{utils.escape(safe_nick)}</b>\n"
                 f"💬 Чат: <code>{utils.escape(str(chat_id))}</code>\n"
@@ -1240,12 +1260,12 @@ def _track_suspicious(c, m, text):
         photo_ask = int(rec.get("photo_ask", 0)); photo_sent = int(rec.get("photo_sent", 0))
     trigger = ""
     if SETTINGS.get("auto_blacklist_spam", True):
-        if count >= _SPAM_LIMIT: trigger = f"{count} оффтоп за 30 мин"
-        elif similar >= _SPAM_SIMILAR_LIMIT: trigger = f"{similar} похожих подряд"
+        if count >= _SPAM_LIMIT: trigger = f"Оффтоп ({count} раз)"
+        elif similar >= _SPAM_SIMILAR_LIMIT: trigger = f"Похожие сообщения ({similar} раз)"
     if not trigger and SETTINGS.get("auto_blacklist_photo_ask", True):
-        if photo_ask >= _PHOTO_ASK_LIMIT: trigger = f"{photo_ask} вопрос «что на фото» за 30 мин"
+        if photo_ask >= _PHOTO_ASK_LIMIT: trigger = f"Вопрос «что на фото» ({photo_ask} раз)"
     if not trigger and SETTINGS.get("auto_blacklist_photo_send", True):
-        if photo_sent >= _PHOTO_SENT_LIMIT: trigger = f"{photo_sent} фото за 30 мин"
+        if photo_sent >= _PHOTO_SENT_LIMIT: trigger = f"Фото ({photo_sent} раз)"
     if not trigger: return False
     nick = _extract_nick_from_message(m)
     if not nick: return False
@@ -2276,7 +2296,7 @@ def _trigger_post_order_survey(c, m):
         send_post_order_survey(c, chat_id, chat_name)
     POOL.submit(_job)
 
-# ---------- ЗАГРУЗКА КАРТИНОК (УМЕНЬШЕНЫ ТАЙМАУТЫ) ----------
+# ---------- ЗАГРУЗКА КАРТИНОК ----------
 
 def _extract_url_as_data_url(url: str) -> str:
     u = str(url or "").strip()
@@ -2317,7 +2337,6 @@ def _extract_url_as_data_url(url: str) -> str:
     return ""
 
 def _parallel_data_urls(urls: list, max_workers: int = 4) -> list:
-    """Параллельно скачивает несколько URL в data-url. Порядок сохраняется."""
     if not urls: return []
     if len(urls) == 1:
         r = _extract_url_as_data_url(urls[0])
@@ -3102,13 +3121,32 @@ def _apply_watermark(text):
     return f"{body}\n\n{mark}"
 
 def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""):
-    if not text or not is_enabled(c): return False
-    out = _clean_ai_answer(str(text).strip())
+    if not is_enabled(c): return False
+    raw = str(text or "").strip()
+    if not raw:
+        if notify:
+            try: notify_seller(c, m, buyer_text or "", "", reason=reason, header=notify_header)
+            except Exception: pass
+        return False
+    out = _clean_ai_answer(raw)
+    _STUBS = ("Секунду, проверю 🙂", "Секунду, проверю", "Проверю...", "Проверю",
+              "Секунду", "Одну секунду")
+    if out.strip() in _STUBS or len(out.strip()) <= 2:
+        if notify:
+            try: notify_seller(c, m, buyer_text or "", "", reason=reason or "AI вернул пустышку",
+                                header=notify_header)
+            except Exception: pass
+        return False
     v = outbound_violation(out)
-    if v and v != "empty": out = refusal(v); notify = False
+    if v and v != "empty":
+        out = refusal(v); notify = False
     out = _strip_fake_order_action(out)
     if not out:
-        out = "Секунду, проверю 🙂"
+        if notify:
+            try: notify_seller(c, m, buyer_text or "", "", reason=reason or "Пустой ответ после обработки",
+                                header=notify_header)
+            except Exception: pass
+        return False
     try:
         _chat_id = str(getattr(m, "chat_id", "") or "")
         if _chat_id and _RE_REFUND_WORD.search(out):
@@ -3128,7 +3166,6 @@ def _say(c, m, text, *, notify=False, reason="", buyer_text="", notify_header=""
     return True
 
 def handle_deterministic(c, m, text):
-    """Зарезервировано. Не вызывается из handle_message (шаблоны общения отключены)."""
     return False
 
 def _obj(o, a, d=""):
@@ -3244,7 +3281,6 @@ def sync_lots(c, enrich=True):
     return len(cache)
 
 def lot_worker(c):
-    """Обновление лотов с экспоненциальным backoff при сбоях."""
     backoff = 60
     sync_lots(c, enrich=True)
     while not STOP.is_set():
@@ -3616,16 +3652,13 @@ def _api_headers(key: str) -> dict[str, str]:
     return headers
 
 def _build_request_payload(model, msgs, temperature, max_tokens, base, preset):
-    """Собирает JSON-тело запроса с учётом особенностей провайдера."""
     payload = {"model": model, "temperature": temperature, "stream": False}
-    # max_tokens / max_completion_tokens
     m_low = str(model or "").lower()
     if (m_low.startswith("o1") or m_low.startswith("o3") or m_low.startswith("gpt-5")
             or "o1-" in m_low or "o3-" in m_low):
         payload["max_completion_tokens"] = max_tokens
     else:
         payload["max_tokens"] = max_tokens
-    # system top-level для Anthropic-подобных
     if _uses_system_top_level(base, model, preset):
         system_parts = []
         clean_msgs = []
@@ -3648,7 +3681,6 @@ def _build_request_payload(model, msgs, temperature, max_tokens, base, preset):
     return payload
 
 def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens, allow_retry=True):
-    """Вызов chat/completions с обработкой ошибок, чтением тела, retry."""
     if not _is_vision_model(model):
         msgs = _strip_images_from_msgs(msgs)
     preset = _current_preset()
@@ -3663,12 +3695,10 @@ def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens, allow
             if r.status_code >= 400:
                 try: body_text = r.text[:600].replace("\n", " ")
                 except Exception: body_text = ""
-                # HTTP 429 / 5xx — retry
                 if r.status_code in (429, 500, 502, 503, 504) and attempt < attempts:
                     last_err = f"HTTP {r.status_code}: {body_text[:200]}"
                     time.sleep(1.5 * attempt)
                     continue
-                # 400 с vision — убираем картинки и пробуем снова
                 if (r.status_code == 400 and attempt < attempts
                         and any(x in body_text.lower() for x in
                                 ("vision", "image", "multimodal", "does not support", "unsupported"))):
@@ -3680,12 +3710,10 @@ def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens, allow
             text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
             text = _strip_think(text)
             if not text:
-                # Пустой ответ — retry с fallback-моделью
                 if attempt < attempts:
                     last_err = "AI вернул пустой ответ"
                     time.sleep(1.0)
                     continue
-                # Последняя попытка — fallback-модель
                 fb = _try_fallback_model(base, key, msgs, timeout, temperature, max_tokens)
                 if fb:
                     return fb
@@ -3704,7 +3732,6 @@ def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens, allow
     raise RuntimeError("Не удалось получить ответ от API.")
 
 def _try_fallback_model(base, key, msgs, timeout, temperature, max_tokens):
-    """Пробует бесплатную fallback-модель из FREE_API_OPTIONS (если совпадает провайдер)."""
     if not SETTINGS.get("fallback_model_enabled", True): return ""
     preset = _current_preset()
     for opt_key, option in FREE_API_OPTIONS.items():
@@ -3768,7 +3795,6 @@ def ask_ai(m, buyer_text, lot):
             {"type": "text", "text": effective},
             {"type": "image_url", "image_url": {"url": image_data_url, "detail": "auto"}}]})
     elif image_data_url and not vision_ok:
-        # Модель без vision — подменяем картинку текстовым описанием
         note = (f"\n\n[Покупатель прислал фото, но модель {model} не поддерживает изображения. "
                 "Вежливо скажи, что лучше описать текстом.]")
         msgs.append({"role": "user", "content": effective + note})
@@ -3795,10 +3821,7 @@ def ask_ai(m, buyer_text, lot):
             if new == first or not new: break
             first = new
     if not first or not first.strip():
-        if image_data_url:
-            first = "Не могу разобрать, что на фото. Опишите текстом, что нужно."
-        else:
-            first = _offline_lot_fallback(buyer_text_clean, lot)
+        raise RuntimeError("AI вернул пустой ответ после всех попыток.")
     if SETTINGS.get("web_search_enabled", True):
         msearch = _RE_SEARCH_MARKER.search(first)
         if msearch:
@@ -3838,44 +3861,53 @@ def ask_ai(m, buyer_text, lot):
     return _RE_SEARCH_MARKER.sub("", first).strip() or first
 
 def _offline_lot_fallback(text, lot):
-    """Резервная заглушка, если API недоступен."""
-    return "Секунду, проверю 🙂"
+    """Резерв на случай падения API. Пустая строка — _say ничего не отправит."""
+    return ""
 
 def handle_message(c, m, text):
-    wl = is_whitelisted(_extract_nick_from_message(m),
-        getattr(m, "author", None), getattr(m, "username", None),
-        getattr(m, "chat_name", None), getattr(m, "interlocutor_username", None))
+    # КРИТИЧНЫЕ проверки срабатывают ВСЕГДА — даже если покупатель в белом списке.
+    # WL больше не спасает от джейлбрейка / просьбы кода / плохого фото / оффтопа.
+
     if _is_jailbreak_attempt(text):
         _instant_blacklist(c, m, "Джейлбрейк / попытка взлома AI", text)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
     if _auto_blacklist_indecent(c, m, text):
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
     violation = classify_policy_violation(text)
     if violation:
         _instant_blacklist(c, m, f"Нарушение правил: {violation}", text)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if not wl:
-        if _is_code_request(text):
-            _instant_blacklist(c, m, "Просьба написать код / программу", text)
+
+    if _is_code_request(text):
+        _instant_blacklist(c, m, "Просьба написать код / программу", text)
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
+    if _is_bad_intent(text):
+        _instant_blacklist(c, m, "Плохой умысел (обман/обход/шантаж/угрозы)", text)
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
+    try:
+        if _is_chat_goal_bad(getattr(m, "chat_id", "")):
+            _instant_blacklist(c, m, "Плохая цель чата (по истории)", text)
             _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-        if _is_bad_intent(text):
-            _instant_blacklist(c, m, "Плохой умысел (обман/обход/шантаж/угрозы)", text)
-            _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-        try:
-            if _is_chat_goal_bad(getattr(m, "chat_id", "")):
-                _instant_blacklist(c, m, "Плохая цель чата (по истории)", text)
-                _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-        except Exception: pass
-        if _track_suspicious(c, m, text):
-            _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-        if is_offtopic(text):
-            _instant_blacklist(c, m, "Оффтоп (не по теме товара)", text)
-            _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+    except Exception: pass
+
+    if is_offtopic(text):
+        _instant_blacklist(c, m, "Оффтоп (не по теме товара)", text)
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
+    if _track_suspicious(c, m, text):
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
     lot = _get_lot(c, m, text)
+
     if _message_has_photo(m) and not str(text or "").strip():
         if not _extract_message_image(m):
             _say(c, m, "К сожалению, не удалось прочитать фото 😔 Опишите текстом что нужно.", notify=False)
             return
+
     if (lot and isinstance(lot, dict) and SETTINGS.get("lot_vision_on_the_fly", True)
             and not _message_has_photo(m)):
         lid = str(lot.get("id") or "")
@@ -3890,6 +3922,7 @@ def handle_message(c, m, text):
                         with LOCK:
                             if lid in LOTS: LOTS[lid]["_vision_fresh"] = details
                 except Exception: pass
+
     try:
         answer = ask_ai(m, text, lot)
     except Exception as e:
@@ -3902,20 +3935,27 @@ def handle_message(c, m, text):
                 body = ""
             err_text = f"HTTP {resp.status_code} · {err_text} · body={body!r}"
         logger.error("AI fail: %s", err_text)
-        if _message_has_photo(m) and not (text or "").strip():
-            _say(c, m, "📸 Не удалось обработать фото. Отправьте ещё раз или напишите текстом.")
-        else:
-            fallback = _offline_lot_fallback(text, lot)
-            _say(c, m, fallback, notify=True,
-                 notify_header="🆘 <b>AI-провайдер не ответил</b>",
-                 reason=f"API: {err_text[:200]}", buyer_text=text)
+        notify_seller(c, m, buyer_text=text or "",
+                      reason=f"API: {err_text[:200]}",
+                      header="🆘 <b>AI-провайдер не ответил</b>")
         return
-    if _is_forbidden_photo_response(answer, text):
-        if not wl: _instant_blacklist(c, m, "Запрещённое фото или отказ AI от описания", answer)
+
+    if _is_jailbreak_attempt(answer):
+        _instant_blacklist(c, m, "AI вернул джейлбрейк (модель сломана)", answer)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
-    if is_offtopic(answer) and not wl:
+
+    if _is_forbidden_photo_response(answer, text):
+        _instant_blacklist(c, m, "Запрещённое фото или отказ AI от описания", answer)
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
+    if is_offtopic(answer):
         _instant_blacklist(c, m, "AI ответил оффтопом", text)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
+    if _RE_SECRET.search(answer or ""):
+        _instant_blacklist(c, m, "AI раскрыл секретные данные", answer)
+        _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
+
     uncertain = is_uncertain_answer(answer)
     header = ""; reason = ""
     if uncertain: header = "🆘 <b>AI не смог ответить уверенно</b>"; reason = "AI не уверен"
