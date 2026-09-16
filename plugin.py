@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("FPC.KiriillBRAI")
 NAME = "KiriillBR AI 🤖"
-VERSION = "13.6.0"
+VERSION = "13.7.1"
 DESCRIPTION = ("AI-помощник продавца FunPay. Мультипровайдер (35+ эндпоинтов), Vision, web-поиск, ЧС+WL.")
 CREDITS = "@qneiz"
 UUID = "7b93d4e1-6a2c-4f8b-9c73-5e10d8a6f214"
@@ -54,6 +54,8 @@ _WEB_SEARCH_TIMEOUT = (6, 15)
 _WEB_SEARCH_MAX_BYTES = 512 * 1024
 _HTTP_UA = "Mozilla/5.0 (compatible; KiriillBRAI/1.0)"
 _IMG_FETCH_TIMEOUT = (4, 8)
+_HISTORY_TTL_SEC = 24 * 3600
+_HISTORY_CLEANUP_EVERY_SEC = 2 * 3600
 
 API_PRESETS: dict[str, tuple[str, str]] = {
     "openai":            ("OpenAI", "https://api.openai.com/v1"),
@@ -232,7 +234,7 @@ FUNPAY_RULES_SNAPSHOT = """ПРАВИЛА FUNPAY:
 [2.2.x] НИКОГДА не помогай с продажей незаконных товаров.
 """
 
-DEFAULTS = {"version": 79, "enabled": True, "setup_done": False,
+DEFAULTS = {"version": 81, "enabled": True, "setup_done": False,
     "api_provider": "openai_compatible",
     "api_preset": "openrouter",
     "api_url": "https://openrouter.ai/api/v1",
@@ -288,6 +290,7 @@ DEFAULTS = {"version": 79, "enabled": True, "setup_done": False,
 SETTINGS = dict(DEFAULTS)
 LOTS = {}
 HISTORY = {}
+HISTORY_LAST_SEEN = {}
 CHAT_HISTORY_BOOTSTRAPPED = set()
 QUEUES = {}
 ACTIVE = set()
@@ -611,6 +614,38 @@ def _strip_images_from_msgs(msgs: list) -> list:
             out.append(msg)
     return out
 
+def _safe_buyer_viewing(link: str, text: str):
+    """Безопасное создание BuyerViewing с fallback на dict-подобный объект."""
+    link = str(link or "")
+    text = str(text or "")
+    if not link and not text:
+        return None
+    try:
+        v = BuyerViewing(0, link, text, None)
+        if getattr(v, "is_viewing_lot", False) or str(getattr(v, "text", "") or "").strip():
+            return v
+    except Exception:
+        pass
+    try:
+        v = BuyerViewing(lot_id=0, link=link, text=text, photo=None)
+        if getattr(v, "is_viewing_lot", False) or str(getattr(v, "text", "") or "").strip():
+            return v
+    except Exception:
+        pass
+    class _ViewingFallback:
+        __slots__ = ("lot_id", "link", "text", "looking_link", "looking_text", "is_viewing_lot")
+        def __init__(self, _link, _text):
+            self.lot_id = 0
+            self.link = _link
+            self.text = _text
+            self.looking_link = _link
+            self.looking_text = _text
+            self.is_viewing_lot = bool(_text or _link)
+    try:
+        return _ViewingFallback(link, text)
+    except Exception:
+        return None
+
 # ---------- БАЗОВЫЕ ХЕЛПЕРЫ ----------
 
 def _merge(a, b):
@@ -690,18 +725,18 @@ def load_config():
     except (OSError, json.JSONDecodeError): return
     try:
         cv = int(SETTINGS.get("version", 0) or 0)
-        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78):
+        for kv in (11, 24, 25, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80):
             if cv < kv:
                 if kv == 55:
                     cur = str(SETTINGS.get("default_chat_role") or "").lower()
                     if cur == "seller": SETTINGS["default_chat_role"] = "auto"
                 SETTINGS["version"] = kv
                 save_config()
-        if cv < 79:
+        if cv < 81:
             SETTINGS.setdefault("fallback_model_enabled", True)
             SETTINGS.setdefault("strip_think_tags", True)
             SETTINGS.setdefault("http_retry_attempts", 2)
-            SETTINGS["version"] = 79
+            SETTINGS["version"] = 81
             save_config()
     except Exception: pass
 
@@ -810,7 +845,26 @@ def load_history_state():
             if clean:
                 HISTORY[str(cid)] = clean
                 CHAT_HISTORY_BOOTSTRAPPED.add(str(cid))
+                HISTORY_LAST_SEEN[str(cid)] = now
     except Exception: logger.debug("load_history_state failed", exc_info=True)
+
+def _cleanup_old_history(max_age: float = _HISTORY_TTL_SEC):
+    """Удаляет историю чатов, в которых не было сообщений > max_age секунд."""
+    now = time.time()
+    removed = 0
+    with LOCK:
+        for cid in list(HISTORY.keys()):
+            last = HISTORY_LAST_SEEN.get(cid, 0)
+            if not last:
+                continue
+            if now - last > max_age:
+                HISTORY.pop(cid, None)
+                HISTORY_LAST_SEEN.pop(cid, None)
+                CHAT_HISTORY_BOOTSTRAPPED.discard(str(cid))
+                removed += 1
+    if removed:
+        logger.info("HISTORY cleanup: удалено %d неактивных чатов", removed)
+    return removed
 
 def _save_buyer_counts():
     try:
@@ -1350,10 +1404,11 @@ def fetch_update_manifest(force=False):
         checked = float(UPDATE_STATE.get("checked_at", 0.0) or 0.0)
         if not force and checked and now - checked < 60 and isinstance(cached, dict): return cached, ""
     try:
-        r = requests.get(url, timeout=(6, 20), headers={"User-Agent": UPDATE_USER_AGENT,
-            "Accept": "application/json", "Cache-Control": "no-cache"})
-        r.raise_for_status()
-        manifest = _validate_manifest(_safe_json(r, "manifest"))
+        with requests.get(url, timeout=(6, 20),
+                headers={"User-Agent": UPDATE_USER_AGENT,
+                         "Accept": "application/json", "Cache-Control": "no-cache"}) as r:
+            r.raise_for_status()
+            manifest = _validate_manifest(_safe_json(r, "manifest"))
         available = _version_key(manifest["version"]) > _version_key(VERSION)
         with LOCK:
             UPDATE_STATE.update(checked_at=now, status="available" if available else "current",
@@ -1374,24 +1429,24 @@ def _plugin_file_path(c):
     return os.path.abspath(__file__)
 
 def _download(url):
-    r = requests.get(url, stream=True, timeout=(8, 45),
+    with requests.get(url, stream=True, timeout=(8, 45),
         headers={"User-Agent": UPDATE_USER_AGENT, "Accept": "text/x-python, text/plain, */*",
-        "Cache-Control": "no-cache"})
-    r.raise_for_status()
-    cl = r.headers.get("Content-Length")
-    if cl:
-        try:
-            if int(cl) > UPDATE_MAX_BYTES: raise ValueError("файл слишком большой")
-        except ValueError as e:
-            if "слишком большой" in str(e): raise
-    chunks = []; total = 0
-    for chunk in r.iter_content(chunk_size=65536):
-        if not chunk: continue
-        total += len(chunk)
-        if total > UPDATE_MAX_BYTES: raise ValueError("файл превышает допустимый размер")
-        chunks.append(chunk)
-    if total < 1000: raise ValueError("файл подозрительно мал")
-    return b"".join(chunks)
+        "Cache-Control": "no-cache"}) as r:
+        r.raise_for_status()
+        cl = r.headers.get("Content-Length")
+        if cl:
+            try:
+                if int(cl) > UPDATE_MAX_BYTES: raise ValueError("файл слишком большой")
+            except ValueError as e:
+                if "слишком большой" in str(e): raise
+        chunks = []; total = 0
+        for chunk in r.iter_content(chunk_size=65536):
+            if not chunk: continue
+            total += len(chunk)
+            if total > UPDATE_MAX_BYTES: raise ValueError("файл превышает допустимый размер")
+            chunks.append(chunk)
+        if total < 1000: raise ValueError("файл подозрительно мал")
+        return b"".join(chunks)
 
 def install_update(c, manifest=None):
     with LOCK:
@@ -1511,11 +1566,17 @@ def update_worker(c):
 
 def save_orders_worker(c):
     if STOP.wait(60.0): return
+    last_cleanup = 0.0
     while not STOP.is_set():
         try:
             save_orders_state(); save_history_state()
             _save_buyer_counts(); _save_lot_vision()
         except Exception: pass
+        now = time.time()
+        if now - last_cleanup > _HISTORY_CLEANUP_EVERY_SEC:
+            try: _cleanup_old_history()
+            except Exception: logger.debug("cleanup_old_history failed", exc_info=True)
+            last_cleanup = now
         if STOP.wait(120): break
 
 def update_status_line():
@@ -1546,11 +1607,13 @@ _STOP = {"я", "мне", "мой", "это", "этот", "эта", "эти", "д
     "давайте", "есть", "наличие", "наличии", "доступно", "актуален", "актуально", "какой", "какая",
     "какое", "какие", "подскажите", "скажите", "пожалуйста", "штук", "единиц", "количество", "осталось"}
 
-def norm(t):
-    s = str(t or "").lower().replace("ё", "е")
+def norm(t=""):
+    if not t: return ""
+    s = str(t).lower().replace("ё", "е")
     return _RE_S.sub(" ", _RE_P.sub(" ", s)).strip()
 
-def toks(t):
+def toks(t=""):
+    if not t: return []
     n = re.sub(r"(?<=\d)(?=[a-zа-я])|(?<=[a-zа-я])(?=\d)", " ", norm(t), flags=re.I)
     return [x for x in n.split() if (len(x) > 1 or x.isdigit()) and x not in _STOP]
 
@@ -2311,18 +2374,20 @@ def _extract_url_as_data_url(url: str) -> str:
     last_err = ""
     for hdr in headers_variants:
         try:
-            r = requests.get(u, timeout=_IMG_FETCH_TIMEOUT, stream=True, headers=hdr, allow_redirects=True)
-            r.raise_for_status()
-            ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if ctype and not ctype.startswith("image/"):
-                last_err = f"ct={ctype}"; continue
-            chunks = []; total = 0
-            for chunk in r.iter_content(chunk_size=65536):
-                if not chunk: continue
-                total += len(chunk)
-                if total > _VISION_MAX_BYTES:
-                    last_err = f"size>{_VISION_MAX_BYTES}"; chunks = []; break
-                chunks.append(chunk)
+            with requests.get(u, timeout=_IMG_FETCH_TIMEOUT, stream=True,
+                              headers=hdr, allow_redirects=True) as r:
+                r.raise_for_status()
+                ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if ctype and not ctype.startswith("image/"):
+                    last_err = f"ct={ctype}"
+                    continue
+                chunks = []; total = 0
+                for chunk in r.iter_content(chunk_size=65536):
+                    if not chunk: continue
+                    total += len(chunk)
+                    if total > _VISION_MAX_BYTES:
+                        last_err = f"size>{_VISION_MAX_BYTES}"; chunks = []; break
+                    chunks.append(chunk)
             if not chunks: continue
             b64 = base64.b64encode(b"".join(chunks)).decode("ascii")
             if len(b64) < 100: continue
@@ -2337,20 +2402,34 @@ def _extract_url_as_data_url(url: str) -> str:
     return ""
 
 def _parallel_data_urls(urls: list, max_workers: int = 4) -> list:
+    """Скачивает несколько URL в data-url параллельно через глобальный IMG_POOL.
+    При таймауте отменяет все невыполненные задачи, чтобы не забивать пул зомби-задачами."""
     if not urls: return []
     if len(urls) == 1:
         r = _extract_url_as_data_url(urls[0])
         return [r] if r else []
+
     results = [None] * len(urls)
+    future_map = {}
     try:
-        with ThreadPoolExecutor(max_workers=min(max_workers, len(urls))) as pool:
-            future_map = {pool.submit(_extract_url_as_data_url, u): i for i, u in enumerate(urls)}
-            for fut in as_completed(future_map, timeout=max(8, 6 * len(urls))):
-                idx = future_map[fut]
-                try: results[idx] = fut.result()
-                except Exception: results[idx] = ""
-    except Exception:
-        pass
+        future_map = {IMG_POOL.submit(_extract_url_as_data_url, u): i
+                      for i, u in enumerate(urls)}
+        for fut in as_completed(future_map, timeout=max(8, 6 * len(urls))):
+            idx = future_map[fut]
+            try:
+                results[idx] = fut.result()
+            except Exception:
+                results[idx] = ""
+    except Exception as e:
+        logger.debug("_parallel_data_urls timeout/fail: %s", e)
+        # Отменяем всё, что ещё не выполнилось — не даём зомби-задачам забить IMG_POOL
+        for fut in future_map:
+            if not fut.done():
+                try:
+                    fut.cancel()
+                except Exception:
+                    pass
+
     return [r for r in results if r]
 
 def _extract_message_image(m):
@@ -2400,18 +2479,18 @@ def _validate_image_url(url: str, min_bytes: int = None) -> tuple:
         if min_bytes is None:
             try: min_bytes = int(SETTINGS.get("lot_image_min_bytes", 5000))
             except Exception: min_bytes = 5000
-        r = requests.head(url, timeout=(4, 6), allow_redirects=True,
+        with requests.head(url, timeout=(4, 6), allow_redirects=True,
                          headers={"User-Agent": _HTTP_UA, "Referer": "https://funpay.com/",
-                                  "Accept": "image/*,*/*;q=0.8"})
-        ct = (r.headers.get("Content-Type") or "").lower().split(";")[0].strip()
-        if "image" not in ct: return (False, 0, ct)
-        cl = r.headers.get("Content-Length")
-        size = 0
-        if cl:
-            try: size = int(cl)
-            except Exception: size = 0
-        if size and size < min_bytes: return (False, size, ct)
-        return (True, size, ct)
+                                  "Accept": "image/*,*/*;q=0.8"}) as r:
+            ct = (r.headers.get("Content-Type") or "").lower().split(";")[0].strip()
+            if "image" not in ct: return (False, 0, ct)
+            cl = r.headers.get("Content-Length")
+            size = 0
+            if cl:
+                try: size = int(cl)
+                except Exception: size = 0
+            if size and size < min_bytes: return (False, size, ct)
+            return (True, size, ct)
     except Exception:
         return (False, 0, "")
 
@@ -2525,19 +2604,19 @@ def _lot_images_from_html(lot_id):
     html = ""
     for url in urls_to_try:
         try:
-            r = requests.get(url, timeout=(8, 20),
+            with requests.get(url, timeout=(8, 20),
                              headers={"User-Agent": _HTTP_UA,
                                       "Accept-Language": "ru,en;q=0.8",
                                       "Accept": "text/html,application/xhtml+xml"},
-                             stream=True, allow_redirects=True)
-            r.raise_for_status()
-            chunks = []; total = 0
-            for chunk in r.iter_content(chunk_size=65536):
-                if not chunk: continue
-                total += len(chunk)
-                if total > 3 * 1024 * 1024: break
-                chunks.append(chunk)
-            html = b"".join(chunks).decode("utf-8", errors="ignore")
+                             stream=True, allow_redirects=True) as r:
+                r.raise_for_status()
+                chunks = []; total = 0
+                for chunk in r.iter_content(chunk_size=65536):
+                    if not chunk: continue
+                    total += len(chunk)
+                    if total > 3 * 1024 * 1024: break
+                    chunks.append(chunk)
+                html = b"".join(chunks).decode("utf-8", errors="ignore")
             if html and len(html) > 500: break
         except Exception: continue
     if not html: return []
@@ -2567,6 +2646,25 @@ def _lot_images_from_html(lot_id):
         _add(m.group(1))
     for m in re.finditer(r'<source[^>]+srcset="([^"]+)"', scope, re.I):
         for part in m.group(1).split(","): _add(part.strip().split(" ")[0])
+    # ---- data-images как escaped JSON (FunPay-специфика) ----
+    for m in re.finditer(r'data-images=["\'](\[{.*?}\])["\']', html, re.I | re.DOTALL):
+        try:
+            from urllib.parse import unquote
+            js_str = unquote(m.group(1)).replace("&quot;", '"').replace("&#039;", "'")
+            js_data = json.loads(js_str)
+            for img_obj in js_data:
+                if isinstance(img_obj, dict) and img_obj.get("url"):
+                    _add(img_obj["url"])
+                elif isinstance(img_obj, str):
+                    _add(img_obj)
+        except Exception: pass
+    # ---- Любые JSON-массивы с url внутри <script> ----
+    for m in re.finditer(r'<script[^>]*>(.*?)</script>', html, re.I | re.S):
+        body = m.group(1)
+        if "funpay" not in body.lower() and '"url"' not in body.lower(): continue
+        for mm in re.finditer(r'"(?:url|image|imageUrl|preview)"\s*:\s*"(https?:\\?/\\?/[^"]+\.(?:jpe?g|png|webp|gif|bmp))"', body, re.I):
+            try: _add(mm.group(1).replace("\\/", "/"))
+            except Exception: pass
     for m in re.finditer(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html, re.I):
         _add(m.group(1))
     for m in re.finditer(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html, re.I):
@@ -2670,11 +2768,11 @@ def _vision_extract_lot_details(image_urls):
                                    {"type": "text", "text": _VISION_LOT_PROMPT},
                                    {"type": "image_url", "image_url": {"url": du, "detail": "low"}}]}],
                                "temperature": 0.0, "max_tokens": max_tokens, "stream": False}
-                    r = requests.post(base + "/chat/completions",
-                        headers=_api_headers(key), json=payload,
-                        timeout=(20, max(60, int(SETTINGS.get("ai_timeout", 120)))))
-                    r.raise_for_status()
-                    data = _safe_json(r, "lot_vision")
+                    with requests.post(base + "/chat/completions",
+                            headers=_api_headers(key), json=payload,
+                            timeout=(20, max(60, int(SETTINGS.get("ai_timeout", 120))))) as r:
+                        r.raise_for_status()
+                        data = _safe_json(r, "lot_vision")
                     resp_text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
                     resp_text = _strip_think(resp_text)
                     if resp_text: break
@@ -2723,13 +2821,13 @@ def _vision_extract_lot_details(image_urls):
                 "Объедини всё в ОДИН отчёт по тому же шаблону (эмодзи-заголовки сохрани). "
                 "Если предметы повторяются — суммируй количества. НЕ теряй ни одной цифры. "
                 "Отвечай ТОЛЬКО шаблоном, без вступлений.\n\n" + merged)
-            r = requests.post(base + "/chat/completions",
-                headers=_api_headers(key),
-                json={"model": model, "messages": [{"role": "user", "content": merge_prompt}],
-                      "temperature": 0.0, "max_tokens": max_tokens, "stream": False},
-                timeout=(20, max(60, int(SETTINGS.get("ai_timeout", 120)))))
-            r.raise_for_status()
-            data = _safe_json(r, "lot_vision_merge")
+            with requests.post(base + "/chat/completions",
+                    headers=_api_headers(key),
+                    json={"model": model, "messages": [{"role": "user", "content": merge_prompt}],
+                          "temperature": 0.0, "max_tokens": max_tokens, "stream": False},
+                    timeout=(20, max(60, int(SETTINGS.get("ai_timeout", 120))))) as r:
+                r.raise_for_status()
+                data = _safe_json(r, "lot_vision_merge")
             mt = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
             mt = _strip_think(mt)
             if (mt and len(mt) > 80 and any(m in mt for m in ("🎮", "👤", "🎁", "💰"))
@@ -2819,19 +2917,19 @@ def _vision_probe_api():
                 "Vision не сработает. Возьмите gpt-4o, gemini-2.x, claude-3.5+.")
     test_png_b64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
     try:
-        r = requests.post(base + "/chat/completions",
+        with requests.post(base + "/chat/completions",
             headers=_api_headers(key),
             json={"model": model,
                   "messages": [{"role": "user", "content": [
                       {"type": "text", "text": "Ответь одним словом: что видишь?"},
                       {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_png_b64}", "detail": "low"}}]}],
                   "temperature": 0.0, "max_tokens": 30, "stream": False},
-            timeout=(15, 60))
-        if r.status_code >= 400:
-            try: body = r.text[:400]
-            except Exception: body = ""
-            return _explain_http_error(r.status_code, body)
-        data = _safe_json(r, "vision_probe")
+            timeout=(15, 60)) as r:
+            if r.status_code >= 400:
+                try: body = r.text[:400]
+                except Exception: body = ""
+                return _explain_http_error(r.status_code, body)
+            data = _safe_json(r, "vision_probe")
         ans = _strip_think(str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip())
         if not ans:
             return ("❌ Модель вернула пустой ответ на картинку.\n\n"
@@ -3000,18 +3098,18 @@ def _web_search_lite(query, max_results=5):
     try:
         q = str(query or "").strip()[:250]
         if not q: return []
-        r = requests.post("https://html.duckduckgo.com/html/",
+        with requests.post("https://html.duckduckgo.com/html/",
             data={"q": q, "kl": "ru-ru"},
             headers={"User-Agent": _HTTP_UA, "Accept-Language": "ru,en;q=0.8"},
-            timeout=_WEB_SEARCH_TIMEOUT, stream=True)
-        r.raise_for_status()
-        chunks = []; total = 0
-        for chunk in r.iter_content(chunk_size=65536):
-            if not chunk: continue
-            total += len(chunk)
-            if total > _WEB_SEARCH_MAX_BYTES: break
-            chunks.append(chunk)
-        html = b"".join(chunks).decode("utf-8", errors="ignore")
+            timeout=_WEB_SEARCH_TIMEOUT, stream=True) as r:
+            r.raise_for_status()
+            chunks = []; total = 0
+            for chunk in r.iter_content(chunk_size=65536):
+                if not chunk: continue
+                total += len(chunk)
+                if total > _WEB_SEARCH_MAX_BYTES: break
+                chunks.append(chunk)
+            html = b"".join(chunks).decode("utf-8", errors="ignore")
         results = []
         for m in re.finditer(
             r'<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?'
@@ -3086,6 +3184,7 @@ def _bootstrap_chat_history(c, m, current_text):
         existing = list(HISTORY.get(chat_key, []))
         if existing: HISTORY[chat_key] = (list(imported) + existing[-5:])[-_HISTORY_HARD_CAP:]
         else: HISTORY[chat_key] = imported[-_HISTORY_HARD_CAP:]
+        HISTORY_LAST_SEEN[chat_key] = time.time()
 
 def _recent_assistant_said_about(chat_id, pattern):
     rx = re.compile(pattern, re.I)
@@ -3305,10 +3404,12 @@ def lot_worker(c):
 def add_history(chat_id, role, text):
     t = str(text or "").strip()[:3000]
     if not t: return
+    key = str(chat_id)
     with LOCK:
-        h = HISTORY.setdefault(str(chat_id), [])
+        h = HISTORY.setdefault(key, [])
         h.append({"role": role, "content": t})
         if len(h) > _HISTORY_HARD_CAP: del h[:-_HISTORY_HARD_CAP]
+        HISTORY_LAST_SEEN[key] = time.time()
 
 def _compress_history_item(item, is_old=False):
     if not isinstance(item, dict): return None
@@ -3384,12 +3485,7 @@ def _get_viewing(c, m):
                 link = getattr(full, "looking_link", None) or ""
                 text = getattr(full, "looking_text", None) or ""
                 if link or text:
-                    try:
-                        vv = BuyerViewing(0, link, text, None)
-                        if getattr(vv, "is_viewing_lot", False) or text:
-                            viewing = vv
-                    except Exception:
-                        viewing = None
+                    viewing = _safe_buyer_viewing(link, text)
         except Exception as e:
             logger.debug("_get_viewing chat.looking_link fallback failed: %s", e)
     with LOCK:
@@ -3681,44 +3777,61 @@ def _build_request_payload(model, msgs, temperature, max_tokens, base, preset):
     return payload
 
 def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens, allow_retry=True):
+    # Работаем с локальной копией — не мутируем переданный список
+    working_msgs = list(msgs) if isinstance(msgs, list) else msgs
     if not _is_vision_model(model):
-        msgs = _strip_images_from_msgs(msgs)
+        working_msgs = _strip_images_from_msgs(working_msgs)
     preset = _current_preset()
     attempts = max(1, int(SETTINGS.get("http_retry_attempts", 2) or 2)) if allow_retry else 1
     last_err = None
+    vision_stripped = False  # защита от повторного снятия картинок
+
     for attempt in range(1, attempts + 1):
         try:
-            payload = _build_request_payload(model, msgs, temperature, max_tokens, base, preset)
-            r = requests.post(base + "/chat/completions",
-                headers=_api_headers(key), json=payload,
-                timeout=(10, max(30, int(timeout))))
-            if r.status_code >= 400:
-                try: body_text = r.text[:600].replace("\n", " ")
-                except Exception: body_text = ""
-                if r.status_code in (429, 500, 502, 503, 504) and attempt < attempts:
-                    last_err = f"HTTP {r.status_code}: {body_text[:200]}"
-                    time.sleep(1.5 * attempt)
-                    continue
-                if (r.status_code == 400 and attempt < attempts
-                        and any(x in body_text.lower() for x in
-                                ("vision", "image", "multimodal", "does not support", "unsupported"))):
-                    msgs = _strip_images_from_msgs(msgs)
-                    last_err = f"HTTP 400 (vision): {body_text[:200]}"
-                    continue
-                raise requests.HTTPError(f"HTTP {r.status_code}: {body_text[:400]}", response=r)
-            data = _safe_json(r, "ask_ai")
+            payload = _build_request_payload(model, working_msgs, temperature,
+                                             max_tokens, base, preset)
+            with requests.post(base + "/chat/completions",
+                    headers=_api_headers(key), json=payload,
+                    timeout=(10, max(30, int(timeout)))) as r:
+                if r.status_code >= 400:
+                    try:
+                        body_text = r.text[:600].replace("\n", " ")
+                    except Exception:
+                        body_text = ""
+                    # Retry на транзиентные ошибки
+                    if r.status_code in (429, 500, 502, 503, 504) and attempt < attempts:
+                        last_err = f"HTTP {r.status_code}: {body_text[:200]}"
+                        time.sleep(1.5 * attempt)
+                        continue
+                    # Vision-фоллбэк: модель отбила картинку → снимаем её и пробуем ещё раз
+                    vision_hit = any(x in body_text.lower() for x in
+                                     ("vision", "image", "multimodal",
+                                      "does not support", "unsupported"))
+                    if (r.status_code == 400 and vision_hit
+                            and not vision_stripped and attempt < attempts):
+                        working_msgs = _strip_images_from_msgs(working_msgs)
+                        vision_stripped = True
+                        last_err = f"HTTP 400 (vision fallback): {body_text[:200]}"
+                        logger.info("_call_ai_api: модель отбила картинки → повтор без изображений")
+                        continue
+                    raise requests.HTTPError(f"HTTP {r.status_code}: {body_text[:400]}", response=r)
+                data = _safe_json(r, "ask_ai")
+
             text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
             text = _strip_think(text)
-            if not text:
-                if attempt < attempts:
-                    last_err = "AI вернул пустой ответ"
-                    time.sleep(1.0)
-                    continue
-                fb = _try_fallback_model(base, key, msgs, timeout, temperature, max_tokens)
-                if fb:
-                    return fb
-                raise RuntimeError("AI вернул пустой ответ.")
-            return text
+            if text:
+                return text
+
+            if attempt < attempts:
+                last_err = "AI вернул пустой ответ"
+                time.sleep(1.0)
+                continue
+
+            fb = _try_fallback_model(base, key, working_msgs, timeout, temperature, max_tokens)
+            if fb:
+                return fb
+            raise RuntimeError("AI вернул пустой ответ.")
+
         except requests.HTTPError:
             raise
         except requests.RequestException as e:
@@ -3727,6 +3840,7 @@ def _call_ai_api(base, key, model, msgs, timeout, temperature, max_tokens, allow
                 time.sleep(1.2 * attempt)
                 continue
             raise RuntimeError(last_err)
+
     if last_err:
         raise RuntimeError(last_err)
     raise RuntimeError("Не удалось получить ответ от API.")
@@ -3739,11 +3853,11 @@ def _try_fallback_model(base, key, msgs, timeout, temperature, max_tokens):
             continue
         try:
             payload = _build_request_payload(option["model"], msgs, temperature, max_tokens, base, preset)
-            r = requests.post(base + "/chat/completions",
-                headers=_api_headers(key), json=payload,
-                timeout=(10, max(30, int(timeout))))
-            if r.status_code >= 400: continue
-            data = r.json()
+            with requests.post(base + "/chat/completions",
+                    headers=_api_headers(key), json=payload,
+                    timeout=(10, max(30, int(timeout)))) as r:
+                if r.status_code >= 400: continue
+                data = r.json()
             text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
             text = _strip_think(text)
             if text:
@@ -3865,9 +3979,6 @@ def _offline_lot_fallback(text, lot):
     return ""
 
 def handle_message(c, m, text):
-    # КРИТИЧНЫЕ проверки срабатывают ВСЕГДА — даже если покупатель в белом списке.
-    # WL больше не спасает от джейлбрейка / просьбы кода / плохого фото / оффтопа.
-
     if _is_jailbreak_attempt(text):
         _instant_blacklist(c, m, "Джейлбрейк / попытка взлома AI", text)
         _say(c, m, "Извините, я не могу помочь с этим.", notify=False); return
@@ -3974,12 +4085,21 @@ def handle_message(c, m, text):
     _say(c, m, answer, notify=notify, notify_header=header, reason=reason, buyer_text=text)
 
 def _drain(chat):
+    """Обработчик очереди одного чата. Чат защищён от race-condition: остаётся в ACTIVE
+    до полного опустошения QUEUES[chat]."""
     while True:
         with LOCK:
+            if STOP.is_set():
+                QUEUES.pop(chat, None)
+                ACTIVE.discard(chat)
+                return
             q = QUEUES.get(chat)
-            if STOP.is_set() or not q:
-                QUEUES.pop(chat, None); ACTIVE.discard(chat); return
+            if not q:
+                QUEUES.pop(chat, None)
+                ACTIVE.discard(chat)
+                return
             c, m, text = q.popleft()
+        # ---- Обработка ВНЕ LOCK. Чат по-прежнему в ACTIVE, второй поток не стартует ----
         try:
             delay = max(0.0, float(SETTINGS.get("response_delay", 0.3)))
             if delay: time.sleep(delay)
@@ -3991,7 +4111,8 @@ def _drain(chat):
                 if hasattr(m, attr):
                     try: setattr(m, attr, None)
                     except Exception: pass
-        except Exception: logger.exception("queue handler chat=%s", chat)
+        except Exception:
+            logger.exception("queue handler chat=%s", chat)
 
 def _enqueue(c, m, text):
     chat = str(getattr(m, "chat_id", "") or "")
@@ -4057,8 +4178,8 @@ def on_last_chat(c, e):
             if getattr(m, "author_id", 0) in (0, getattr(c.account, "id", None)): return
             if not getattr(m, "buyer_viewing", None) and getattr(full, "looking_link", None):
                 try:
-                    m.buyer_viewing = BuyerViewing(getattr(m, "interlocutor_id", None) or 0,
-                        full.looking_link, getattr(full, "looking_text", None), None)
+                    m.buyer_viewing = _safe_buyer_viewing(
+                        full.looking_link, getattr(full, "looking_text", None) or "")
                 except Exception: pass
             text = (getattr(m, "text", None) or "").strip()
             has_image = _message_has_photo(m)
@@ -4319,10 +4440,10 @@ def init_telegram(cardinal):
         if not base or not key:
             bot.send_message(call.message.chat.id, "❌ URL или ключ не заданы."); return
         try:
-            r = requests.get(base + "/models",
-                headers=_api_headers(key), timeout=(8, 30))
-            r.raise_for_status()
-            data = r.json()
+            with requests.get(base + "/models",
+                headers=_api_headers(key), timeout=(8, 30)) as r:
+                r.raise_for_status()
+                data = r.json()
             items = data.get("data") or []
             names = []
             for item in items:
@@ -4381,6 +4502,8 @@ def init_telegram(cardinal):
                B(f"🧠 Think {utils.bool_to_text(SETTINGS.get('strip_think_tags', True))}", callback_data=f"{CB}:tog:thinktags"))
         kb.row(B(f"🛡 HTML {utils.bool_to_text(SETTINGS.get('sanitize_html_output', True))}", callback_data=f"{CB}:tog:htmlsafe"),
                B(f"🔧 Balance {utils.bool_to_text(SETTINGS.get('balance_html_output', True))}", callback_data=f"{CB}:tog:htmlbalance"))
+        # ВНИМАНИЕ: «pureleat» (через 'a') — историческое имя колбэка для совместимости.
+        # Не переименовывать без обновления tg.cbq_handler(toggle_pureleat, ...).
         kb.row(B(f"🎭 Анти-leet {utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}", callback_data=f"{CB}:tog:deleet"),
                B(f"🔬 Pure {utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}", callback_data=f"{CB}:tog:pureleat"))
         kb.row(B(f"🔍 Web {utils.bool_to_text(SETTINGS.get('web_search_enabled', True))}", callback_data=f"{CB}:tog:websearch"),
@@ -4789,7 +4912,7 @@ def init_telegram(cardinal):
         with LOCK:
             for chat_id in list(HISTORY.keys()):
                 CHAT_HISTORY_BOOTSTRAPPED.add(str(chat_id))
-            HISTORY.clear(); VIEWING_CACHE.clear()
+            HISTORY.clear(); HISTORY_LAST_SEEN.clear(); VIEWING_CACHE.clear()
             CHAT_LOT.clear(); CHAT_LOT_AT.clear()
             SELLER_NOTIFY_AT.clear(); DONE.clear(); SPAM_WATCH.clear()
         try: os.path.exists(HISTORY_PATH) and os.remove(HISTORY_PATH)
@@ -4916,6 +5039,8 @@ def init_telegram(cardinal):
                B(f"🗑 Оффтоп {utils.bool_to_text(SETTINGS.get('auto_blacklist_spam', True))}", callback_data=f"{CB}:bl_spam_toggle"))
         kb.row(B(f"📸 Вопрос {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_ask', True))}", callback_data=f"{CB}:bl_photo_toggle"),
                B(f"📷 Фото×3 {utils.bool_to_text(SETTINGS.get('auto_blacklist_photo_send', True))}", callback_data=f"{CB}:bl_photo_send_toggle"))
+        # ВНИМАНИЕ: «pureleat» (через 'a') — историческое имя колбэка для совместимости.
+        # Не переименовывать без обновления tg.cbq_handler(toggle_pureleat, ...).
         kb.row(B(f"🎭 Анти-leet {utils.bool_to_text(SETTINGS.get('deleet_enabled', True))}", callback_data=f"{CB}:tog:deleet"),
                B(f"🔬 Pure {utils.bool_to_text(SETTINGS.get('deleet_pure_normalize', True))}", callback_data=f"{CB}:tog:pureleat"))
         kb.add(B("◀️ К ЧС", callback_data=f"{CB}:bl"))
@@ -5047,15 +5172,15 @@ def init_telegram(cardinal):
         b64 = base64.b64encode(fb).decode("ascii")
         data_url = f"data:image/jpeg;base64,{b64}"
         try:
-            r = requests.post(base + "/chat/completions",
+            with requests.post(base + "/chat/completions",
                 headers=_api_headers(key),
                 json={"model": model, "messages": [{"role": "user", "content": [
                     {"type": "text", "text": _VISION_PROMPT},
                     {"type": "image_url", "image_url": {"url": data_url, "detail": "auto"}}]}],
                     "temperature": 0.2, "max_tokens": 800},
-                timeout=(10, max(30, int(SETTINGS.get("ai_timeout", 120) or 120))))
-            r.raise_for_status()
-            data = _safe_json(r, "test_photo")
+                timeout=(10, max(30, int(SETTINGS.get("ai_timeout", 120) or 120)))) as r:
+                r.raise_for_status()
+                data = _safe_json(r, "test_photo")
             ans = _strip_think(str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()) or "(пусто)"
             bot.reply_to(m, f"🖼 <b>Ответ AI:</b>\n\n{utils.escape(ans[:3500])}",
                 reply_markup=K().add(B("◀️ Назад", callback_data=f"{CB}:m:api")))
